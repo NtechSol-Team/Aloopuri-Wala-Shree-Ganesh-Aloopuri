@@ -12,7 +12,7 @@ services:
     plan: free
     rootDir: .
     buildCommand: >
-      npm install &&
+      npm install --include=dev &&
       npx prisma generate --schema=apps/api/prisma/schema.prisma &&
       npx prisma migrate deploy --schema=apps/api/prisma/schema.prisma &&
       npm run api:build
@@ -55,7 +55,7 @@ services:
     runtime: node
     plan: free
     rootDir: .
-    buildCommand: npm install && npm run web:build
+    buildCommand: npm install --include=dev && npm run web:build
     startCommand: npm run start --workspace @scfc/web
     envVars:
       - key: NODE_ENV
