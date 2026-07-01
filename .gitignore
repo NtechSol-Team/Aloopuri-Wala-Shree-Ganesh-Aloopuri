@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment (NEVER commit real secrets)
+.env
+.env.local
+.env.*.local
+apps/api/.env
+apps/web/.env.local
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Prisma
+apps/api/prisma/*.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Test / coverage
+coverage/
+
+# Docker volumes (if mapped locally)
+.docker-data/
+
+# Uploads (local file storage)
+apps/api/uploads/*
+!apps/api/uploads/.gitkeep

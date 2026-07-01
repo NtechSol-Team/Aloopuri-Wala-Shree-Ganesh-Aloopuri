@@ -1,0 +1,30 @@
+# Surat Food Chain — local development infrastructure.
+# Postgres 15 only. No Redis: pub/sub is PostgreSQL LISTEN/NOTIFY, the job
+# queue is pg-boss, and API/KPI caching is in-process node-cache.
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: scfc_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-surat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-surat_dev_pwd}
+      POSTGRES_DB: ${POSTGRES_DB:-surat_food_chain}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - scfc_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-surat} -d ${POSTGRES_DB:-surat_food_chain}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    command:
+      - "postgres"
+      # pg-boss + LISTEN/NOTIFY benefit from a few more connections and logical decoding-friendly defaults.
+      - "-c"
+      - "max_connections=200"
+
+volumes:
+  scfc_pgdata:
+    name: scfc_pgdata

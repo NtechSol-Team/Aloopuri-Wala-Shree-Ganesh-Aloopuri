@@ -1,0 +1,274 @@
+import { Prisma, BillStatus, PaymentChannel, PaymentMethod, PaymentStatus, UserRole } from '@prisma/client';
+import { startOfMonth } from 'date-fns';
+import { prisma } from '../../config/prisma';
+import { cache, CacheTag } from '../../config/cache';
+import { AppError } from '../../shared/utils/AppError';
+import { nextDocNumber } from '../../shared/utils/docNumber';
+import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
+import { emitRealtime } from '../../sockets/realtime';
+import { RealtimeEvent } from '../../sockets/events';
+import { razorpay, verifyCheckoutSignature, verifyWebhookSignature } from '../../config/razorpay';
+import { env } from '../../config/env';
+import type { AuthUser } from '../../shared/types/api';
+import type { CashPaymentInput, ListPaymentsQuery, VerifyRazorpayInput } from './payments.schema';
+
+interface RecordPaymentArgs {
+  billId: string;
+  amount: Prisma.Decimal;
+  channel: PaymentChannel;
+  method: PaymentMethod;
+  receivedById?: string;
+  createdById?: string;
+  notes?: string;
+  receiptPhotoUrl?: string;
+  razorpay?: { orderId: string; paymentId: string; signature: string };
+}
+
+/**
+ * Record a payment (INSERT-ONLY) and reconcile the bill. Guards against
+ * over-payment. All money math is server-side.
+ */
+async function recordPayment(args: RecordPaymentArgs) {
+  const result = await prisma.$transaction(async (tx) => {
+    const bill = await tx.bill.findFirst({ where: { id: args.billId, isDeleted: false } });
+    if (!bill) throw AppError.notFound('Bill not found');
+    if (bill.status === BillStatus.PAID) throw AppError.invalidState('This bill is already fully paid');
+    if (bill.status === BillStatus.CANCELLED) throw AppError.invalidState('This bill is cancelled');
+
+    const balance = new Prisma.Decimal(bill.balanceDue);
+    if (args.amount.greaterThan(balance)) {
+      throw AppError.badRequest(`Amount exceeds balance due (${balance.toString()})`, undefined, 'amount');
+    }
+
+    const paymentNumber = await nextDocNumber(tx, 'PAYMENT');
+    const payment = await tx.payment.create({
+      data: {
+        paymentNumber,
+        billId: bill.id,
+        outletId: bill.outletId,
+        channel: args.channel,
+        method: args.method,
+        amount: args.amount,
+        receivedById: args.receivedById,
+        createdById: args.createdById,
+        notes: args.notes,
+        receiptPhotoUrl: args.receiptPhotoUrl,
+        status: PaymentStatus.SUCCESS,
+        razorpayOrderId: args.razorpay?.orderId,
+        razorpayPaymentId: args.razorpay?.paymentId,
+        razorpaySignature: args.razorpay?.signature,
+      },
+    });
+
+    const newPaid = new Prisma.Decimal(bill.amountPaid).add(args.amount);
+    const newBalance = new Prisma.Decimal(bill.grandTotal).sub(newPaid);
+    const newStatus = newBalance.lessThanOrEqualTo(0) ? BillStatus.PAID : BillStatus.PARTIALLY_PAID;
+    const updatedBill = await tx.bill.update({
+      where: { id: bill.id },
+      data: { amountPaid: newPaid, balanceDue: newBalance, status: newStatus },
+      select: { id: true, billNumber: true, status: true, balanceDue: true, outletId: true },
+    });
+
+    return { payment, bill: updatedBill };
+  });
+
+  cache.invalidateTags(CacheTag.PAYMENTS, CacheTag.BILLS, CacheTag.DASHBOARD, CacheTag.outlet(result.bill.outletId));
+  await emitRealtime(
+    RealtimeEvent.PAYMENT_RECEIVED,
+    { paymentNumber: result.payment.paymentNumber, amount: Number(result.payment.amount), billNumber: result.bill.billNumber, billStatus: result.bill.status },
+    { global: true, outletId: result.bill.outletId },
+  );
+  return result;
+}
+
+export async function recordCashPayment(input: CashPaymentInput, user: AuthUser) {
+  return recordPayment({
+    billId: input.billId,
+    amount: new Prisma.Decimal(input.amount),
+    channel: PaymentChannel.CASH,
+    method: PaymentMethod.CASH,
+    receivedById: user.id,
+    createdById: user.id,
+    notes: input.notes,
+    receiptPhotoUrl: input.receiptPhotoUrl,
+  });
+}
+
+/** Create a Razorpay order for the bill's outstanding balance. */
+export async function createRazorpayOrder(billId: string, user: AuthUser) {
+  const bill = await prisma.bill.findFirst({ where: { id: billId, isDeleted: false } });
+  if (!bill) throw AppError.notFound('Bill not found');
+  if (user.role !== UserRole.SUPER_ADMIN && bill.outletId !== user.outletId) throw AppError.forbidden();
+  if (bill.status === BillStatus.PAID) throw AppError.invalidState('Bill already paid');
+
+  const amountPaise = Math.round(Number(bill.balanceDue) * 100);
+  try {
+    const order = await razorpay.orders.create({
+      amount: amountPaise,
+      currency: 'INR',
+      receipt: bill.billNumber,
+      notes: { billId: bill.id, outletId: bill.outletId },
+    });
+    return { orderId: order.id, amount: amountPaise, currency: 'INR', keyId: env.RAZORPAY_KEY_ID };
+  } catch (err) {
+    throw AppError.payment(`Could not initiate payment: ${(err as Error).message}`);
+  }
+}
+
+/** Verify the checkout signature and record the digital payment. */
+export async function verifyRazorpayPayment(input: VerifyRazorpayInput, user: AuthUser) {
+  const valid = verifyCheckoutSignature({
+    orderId: input.razorpayOrderId,
+    paymentId: input.razorpayPaymentId,
+    signature: input.razorpaySignature,
+  });
+  if (!valid) throw AppError.payment('Payment signature verification failed');
+
+  const bill = await prisma.bill.findFirst({ where: { id: input.billId, isDeleted: false } });
+  if (!bill) throw AppError.notFound('Bill not found');
+  if (user.role !== UserRole.SUPER_ADMIN && bill.outletId !== user.outletId) throw AppError.forbidden();
+
+  // Idempotency: ignore if this payment id was already recorded.
+  const existing = await prisma.payment.findFirst({ where: { razorpayPaymentId: input.razorpayPaymentId } });
+  if (existing) return { alreadyRecorded: true };
+
+  return recordPayment({
+    billId: bill.id,
+    amount: new Prisma.Decimal(bill.balanceDue),
+    channel: PaymentChannel.DIGITAL,
+    method: PaymentMethod.RAZORPAY,
+    createdById: user.id,
+    razorpay: { orderId: input.razorpayOrderId, paymentId: input.razorpayPaymentId, signature: input.razorpaySignature },
+  });
+}
+
+export async function listPayments(user: AuthUser, query: ListPaymentsQuery) {
+  const scoped = user.role === UserRole.FRANCHISE_OWNER || user.role === UserRole.CASHIER;
+  const where: Prisma.PaymentWhereInput = {
+    isDeleted: false,
+    ...(scoped ? { outletId: user.outletId ?? '__none__' } : query.outletId ? { outletId: query.outletId } : {}),
+    ...(query.billId ? { billId: query.billId } : {}),
+  };
+  const { skip, take } = toSkipTake(query);
+  const [rows, total] = await Promise.all([
+    prisma.payment.findMany({
+      where, orderBy: { paymentDate: 'desc' }, skip, take,
+      select: {
+        id: true, paymentNumber: true, amount: true, channel: true, method: true, paymentDate: true,
+        bill: { select: { billNumber: true } }, outlet: { select: { name: true } },
+      },
+    }),
+    prisma.payment.count({ where }),
+  ]);
+  return { rows, meta: buildPaginationMeta(query, total) };
+}
+
+/** Payment dashboard: receivables, overdue, outlet-wise outstanding, aging. */
+export async function getPaymentSummary(user: AuthUser) {
+  const scoped = user.role === UserRole.FRANCHISE_OWNER ? user.outletId ?? '__none__' : undefined;
+  const cacheKey = `payments:summary:${scoped ?? 'GLOBAL'}`;
+
+  return cache.getOrSet(cacheKey, [CacheTag.PAYMENTS, CacheTag.BILLS], async () => {
+    const outstandingWhere: Prisma.BillWhereInput = {
+      isDeleted: false,
+      status: { in: [BillStatus.UNPAID, BillStatus.PARTIALLY_PAID] },
+      ...(scoped ? { outletId: scoped } : {}),
+    };
+
+    const [receivables, collectedThisMonth, byOutlet, aging] = await Promise.all([
+      prisma.bill.aggregate({ _sum: { balanceDue: true }, where: outstandingWhere }),
+      prisma.payment.aggregate({ _sum: { amount: true }, where: { isDeleted: false, paymentDate: { gte: startOfMonth(new Date()) }, ...(scoped ? { outletId: scoped } : {}) } }),
+      prisma.bill.groupBy({ by: ['outletId'], _sum: { balanceDue: true }, where: outstandingWhere }),
+      agingReport(scoped),
+    ]);
+
+    // Resolve outlet names for the outstanding breakdown.
+    const outletIds = byOutlet.map((b) => b.outletId);
+    const outlets = await prisma.outlet.findMany({ where: { id: { in: outletIds } }, select: { id: true, name: true } });
+    const nameOf = new Map(outlets.map((o) => [o.id, o.name]));
+
+    return {
+      totalReceivables: Number(receivables._sum.balanceDue ?? 0),
+      collectedThisMonth: Number(collectedThisMonth._sum.amount ?? 0),
+      overdueAmount: aging.buckets.reduce((s, b) => (b.label !== 'current' ? s + b.amount : s), 0),
+      outletOutstanding: byOutlet
+        .map((b) => ({ outletId: b.outletId, outletName: nameOf.get(b.outletId) ?? 'Unknown', outstanding: Number(b._sum.balanceDue ?? 0) }))
+        .sort((a, b) => b.outstanding - a.outstanding),
+      aging: aging.buckets,
+    };
+  });
+}
+
+async function agingReport(outletId?: string) {
+  // Days overdue buckets on outstanding bills.
+  const rows = await prisma.$queryRawUnsafe<Array<{ bucket: string; amount: number }>>(
+    `SELECT
+        CASE
+          WHEN due_date >= now() THEN 'current'
+          WHEN now()::date - due_date::date BETWEEN 1 AND 7 THEN '1-7'
+          WHEN now()::date - due_date::date BETWEEN 8 AND 15 THEN '8-15'
+          WHEN now()::date - due_date::date BETWEEN 16 AND 30 THEN '16-30'
+          ELSE '30+'
+        END AS bucket,
+        COALESCE(SUM(balance_due), 0)::float AS amount
+      FROM bills
+      WHERE is_deleted = false AND status IN ('UNPAID','PARTIALLY_PAID')
+        ${outletId ? `AND outlet_id = '${outletId}'::uuid` : ''}
+      GROUP BY 1`,
+  );
+  const order = ['current', '1-7', '8-15', '16-30', '30+'];
+  const map = new Map(rows.map((r) => [r.bucket, r.amount]));
+  return { buckets: order.map((label) => ({ label, amount: map.get(label) ?? 0 })) };
+}
+
+/**
+ * Razorpay webhook (backup to client-side verify). Verifies the signature, then
+ * idempotently records captured payments by mapping the order back to its bill.
+ */
+export async function handleWebhook(rawBody: Buffer, signature: string, body: RazorpayWebhookBody) {
+  if (!verifyWebhookSignature(rawBody, signature)) {
+    throw AppError.badRequest('Invalid webhook signature', undefined, 'signature');
+  }
+  if (body.event !== 'payment.captured') return { ignored: true };
+
+  const entity = body.payload?.payment?.entity;
+  if (!entity?.id || !entity.order_id) return { ignored: true };
+
+  const existing = await prisma.payment.findFirst({ where: { razorpayPaymentId: entity.id } });
+  if (existing) return { alreadyRecorded: true };
+
+  const order = await razorpay.orders.fetch(entity.order_id);
+  const billId = (order.notes as Record<string, string> | undefined)?.billId;
+  if (!billId) return { ignored: true };
+
+  const bill = await prisma.bill.findFirst({ where: { id: billId, isDeleted: false } });
+  if (!bill || bill.status === BillStatus.PAID || bill.status === BillStatus.CANCELLED) return { ignored: true };
+
+  const captured = new Prisma.Decimal(entity.amount).div(100);
+  const balance = new Prisma.Decimal(bill.balanceDue);
+  const amount = captured.greaterThan(balance) ? balance : captured;
+  if (amount.lessThanOrEqualTo(0)) return { ignored: true };
+
+  await recordPayment({
+    billId: bill.id,
+    amount,
+    channel: PaymentChannel.DIGITAL,
+    method: PaymentMethod.RAZORPAY,
+    razorpay: { orderId: entity.order_id, paymentId: entity.id, signature: 'webhook' },
+  });
+  return { recorded: true };
+}
+
+interface RazorpayWebhookBody {
+  event: string;
+  payload?: { payment?: { entity?: { id?: string; order_id?: string; amount: number } } };
+}
+
+export const paymentsService = {
+  recordCashPayment,
+  createRazorpayOrder,
+  verifyRazorpayPayment,
+  listPayments,
+  getPaymentSummary,
+  handleWebhook,
+};

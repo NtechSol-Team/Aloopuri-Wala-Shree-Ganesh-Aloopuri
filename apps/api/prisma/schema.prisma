@@ -1,0 +1,931 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Surat Food Chain — Prisma schema
+//
+// Conventions (applied to every domain table):
+//   • id            UUID PK, DB-generated via gen_random_uuid()
+//   • createdAt     TIMESTAMPTZ default now()
+//   • updatedAt     TIMESTAMPTZ @updatedAt
+//   • isDeleted     soft delete (no hard deletes in a financial system)
+//   • createdById   the user who created the row (app-enforced)
+//
+// Money is ALWAYS Decimal(12,2). Tax rate is Decimal(5,2). Quantities that may
+// be fractional (BOM ratios, consumption) use Decimal(12,4).
+//
+// Advanced DB objects that Prisma does not model — audit triggers, materialized
+// views and their refresh function — live in a follow-up SQL migration
+// (see prisma/migrations/*_audit_and_views). They are drift-exempt.
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgcrypto, pg_trgm]
+}
+
+// ─────────────────────────────── ENUMS ──────────────────────────────────────
+
+enum UserRole {
+  SUPER_ADMIN
+  GODOWN_MANAGER
+  FRANCHISE_OWNER
+  CASHIER
+}
+
+enum MeasurementUnit {
+  KG
+  GRAM
+  LITRE
+  ML
+  PIECE
+  PACKET
+  BOX
+  DOZEN
+}
+
+enum StockTransferStatus {
+  DRAFT
+  DISPATCHED
+  RECEIVED
+  CANCELLED
+}
+
+enum TransferDestination {
+  MAIN_BRANCH
+  OUTLET
+}
+
+enum OutletOrderStatus {
+  PENDING
+  CONFIRMED
+  DISPATCHED
+  DELIVERED
+  CANCELLED
+}
+
+enum BillStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+// Coarse channel: digital gateway vs manual cash entry.
+enum PaymentChannel {
+  DIGITAL
+  CASH
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  NET_BANKING
+  RAZORPAY
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum SupplierBillStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+}
+
+enum PurchaseLineKind {
+  RAW_MATERIAL
+  FINISHED_GOOD
+  OTHER
+}
+
+enum ExpenseLocation {
+  GODOWN
+  MAIN_BRANCH
+  GENERAL
+}
+
+enum PosSessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum PosTransactionStatus {
+  COMPLETED
+  VOID
+  HELD
+}
+
+enum PosPaymentMode {
+  CASH
+  CARD
+  UPI
+  SPLIT
+}
+
+enum AuditAction {
+  INSERT
+  UPDATE
+  DELETE
+}
+
+// ─────────────────────────────── AUTH / USERS ───────────────────────────────
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @unique @map("user_code") // human-friendly login id e.g. EMP001
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  phone        String?
+  role         UserRole
+  outletId     String?  @map("outlet_id") @db.Uuid
+  isActive     Boolean  @default(true) @map("is_active")
+  isDeleted    Boolean  @default(false) @map("is_deleted")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById  String?  @map("created_by") @db.Uuid
+
+  outlet   Outlet?       @relation("OutletMembers", fields: [outletId], references: [id])
+  sessions UserSession[]
+
+  @@index([role])
+  @@index([outletId])
+  @@index([isDeleted])
+  @@map("users")
+}
+
+model UserSession {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  refreshTokenHash String    @map("refresh_token_hash")
+  deviceName       String?   @map("device_name")
+  ipAddress        String?   @map("ip_address")
+  userAgent        String?   @map("user_agent")
+  lastActiveAt     DateTime  @default(now()) @map("last_active_at") @db.Timestamptz(6)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  isDeleted        Boolean   @default(false) @map("is_deleted")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshTokenHash])
+  @@index([expiresAt])
+  @@map("user_sessions")
+}
+
+// ─────────────────────────────── OUTLETS ────────────────────────────────────
+
+model Outlet {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  code             String   @unique
+  address          String?
+  phone            String?
+  ownerUserId      String?  @map("owner_user_id") @db.Uuid // app-enforced ref to users.id
+  creditPeriodDays Int      @default(15) @map("credit_period_days")
+  isActive         Boolean  @default(true) @map("is_active")
+  isDeleted        Boolean  @default(false) @map("is_deleted")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById      String?  @map("created_by") @db.Uuid
+
+  members         User[]          @relation("OutletMembers")
+  orders          OutletOrder[]
+  bills           Bill[]
+  payments        Payment[]
+  outletStock     OutletStock[]
+  posSessions     PosSession[]
+  directTransfers StockTransfer[] @relation("OutletDirectTransfers")
+
+  @@index([isActive])
+  @@index([isDeleted])
+  @@map("outlets")
+}
+
+// ─────────────────────────────── CATALOG ────────────────────────────────────
+
+model ProductCategory {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  isDeleted   Boolean  @default(false) @map("is_deleted")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?  @map("created_by") @db.Uuid
+
+  products Product[]
+
+  @@map("product_categories")
+}
+
+model Product {
+  id                   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                 String
+  sku                  String          @unique
+  categoryId           String          @map("category_id") @db.Uuid
+  unit                 MeasurementUnit
+  basePrice            Decimal         @map("base_price") @db.Decimal(12, 2)
+  mrp                  Decimal         @db.Decimal(12, 2)
+  taxPercent           Decimal         @default(0) @map("tax_percent") @db.Decimal(5, 2)
+  photoUrl             String?         @map("photo_url")
+  reorderLevel         Decimal         @default(0) @map("reorder_level") @db.Decimal(12, 2)
+  batchTrackingEnabled Boolean         @default(false) @map("batch_tracking_enabled")
+  isActive             Boolean         @default(true) @map("is_active")
+  isDeleted            Boolean         @default(false) @map("is_deleted")
+  createdAt            DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById          String?         @map("created_by") @db.Uuid
+
+  category          ProductCategory      @relation(fields: [categoryId], references: [id])
+  bom               BillOfMaterials[]
+  godownStock       GodownStock?
+  mainBranchStock   MainBranchStock?
+  outletStock       OutletStock[]
+  transferItems     StockTransferItem[]
+  orderItems        OutletOrderItem[]
+  billItems         BillItem[]
+  productionBatches ProductionBatch[]
+  posItems          PosTransactionItem[]
+
+  @@index([categoryId])
+  @@index([isActive])
+  @@index([isDeleted])
+  // Trigram GIN indexes for fast fuzzy search on product name + SKU.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([sku(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("products")
+}
+
+model RawMaterial {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  unit         MeasurementUnit
+  supplierName String?         @map("supplier_name")
+  reorderLevel Decimal         @default(0) @map("reorder_level") @db.Decimal(12, 2)
+  currentStock Decimal         @default(0) @map("current_stock") @db.Decimal(12, 2)
+  costPerUnit  Decimal         @default(0) @map("cost_per_unit") @db.Decimal(12, 2)
+  isActive     Boolean         @default(true) @map("is_active")
+  isDeleted    Boolean         @default(false) @map("is_deleted")
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById  String?         @map("created_by") @db.Uuid
+
+  bom        BillOfMaterials[]
+  intake     RawMaterialIntake[]
+  batchItems ProductionBatchItem[]
+
+  @@index([isActive])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("raw_materials")
+}
+
+model BillOfMaterials {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId     String   @map("product_id") @db.Uuid
+  rawMaterialId String   @map("raw_material_id") @db.Uuid
+  quantity      Decimal  @db.Decimal(12, 4) // raw material qty per 1 unit of product
+  isDeleted     Boolean  @default(false) @map("is_deleted")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById   String?  @map("created_by") @db.Uuid
+
+  product     Product     @relation(fields: [productId], references: [id])
+  rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
+
+  @@unique([productId, rawMaterialId])
+  @@index([productId])
+  @@index([rawMaterialId])
+  @@map("bill_of_materials")
+}
+
+// ─────────────────────────────── PRODUCTION ─────────────────────────────────
+
+model ProductionBatch {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchNumber       String   @unique @map("batch_number")
+  productId         String   @map("product_id") @db.Uuid
+  quantityProduced  Decimal  @map("quantity_produced") @db.Decimal(12, 2)
+  totalMaterialCost Decimal  @default(0) @map("total_material_cost") @db.Decimal(12, 2)
+  productionDate    DateTime @map("production_date") @db.Timestamptz(6)
+  notes             String?
+  isDeleted         Boolean  @default(false) @map("is_deleted")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById       String?  @map("created_by") @db.Uuid
+
+  product Product               @relation(fields: [productId], references: [id])
+  items   ProductionBatchItem[]
+
+  @@index([productId, productionDate])
+  @@index([productionDate])
+  @@map("production_batches")
+}
+
+model ProductionBatchItem {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId          String   @map("batch_id") @db.Uuid
+  rawMaterialId    String   @map("raw_material_id") @db.Uuid
+  quantityConsumed Decimal  @map("quantity_consumed") @db.Decimal(12, 4)
+  unitCostSnapshot Decimal  @map("unit_cost_snapshot") @db.Decimal(12, 2)
+  lineCost         Decimal  @map("line_cost") @db.Decimal(12, 2)
+  isDeleted        Boolean  @default(false) @map("is_deleted")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  batch       ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  rawMaterial RawMaterial     @relation(fields: [rawMaterialId], references: [id])
+
+  @@index([batchId])
+  @@index([rawMaterialId])
+  @@map("production_batch_items")
+}
+
+model RawMaterialIntake {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  rawMaterialId String   @map("raw_material_id") @db.Uuid
+  quantity      Decimal  @db.Decimal(12, 2)
+  costPerUnit   Decimal  @map("cost_per_unit") @db.Decimal(12, 2)
+  totalCost     Decimal  @map("total_cost") @db.Decimal(12, 2)
+  supplierName  String?  @map("supplier_name")
+  invoiceNumber String?  @map("invoice_number")
+  intakeDate    DateTime @map("intake_date") @db.Timestamptz(6)
+  notes          String?
+  hsnCode        String?  @map("hsn_code")
+  taxRate        Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount      Decimal  @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  supplierBillId String?  @map("supplier_bill_id") @db.Uuid
+  isDeleted      Boolean  @default(false) @map("is_deleted")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById    String?  @map("created_by") @db.Uuid
+
+  rawMaterial  RawMaterial   @relation(fields: [rawMaterialId], references: [id])
+  supplierBill SupplierBill? @relation(fields: [supplierBillId], references: [id])
+
+  @@index([rawMaterialId, intakeDate])
+  @@index([supplierBillId])
+  @@map("raw_material_intake")
+}
+
+// ─────────────────────────────── STOCK LEDGERS ──────────────────────────────
+
+model GodownStock {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId String   @unique @map("product_id") @db.Uuid
+  quantity  Decimal  @default(0) @db.Decimal(12, 2)
+  isDeleted Boolean  @default(false) @map("is_deleted")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("godown_stock")
+}
+
+model MainBranchStock {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId String   @unique @map("product_id") @db.Uuid
+  quantity  Decimal  @default(0) @db.Decimal(12, 2)
+  isDeleted Boolean  @default(false) @map("is_deleted")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("main_branch_stock")
+}
+
+model OutletStock {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId  String   @map("outlet_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  quantity  Decimal  @default(0) @db.Decimal(12, 2)
+  isDeleted Boolean  @default(false) @map("is_deleted")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  outlet  Outlet  @relation(fields: [outletId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([outletId, productId])
+  @@index([outletId])
+  @@index([productId])
+  @@map("outlet_stock")
+}
+
+// ─────────────────────────────── STOCK TRANSFERS ────────────────────────────
+
+model StockTransfer {
+  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transferNumber      String              @unique @map("transfer_number")
+  status              StockTransferStatus @default(DRAFT)
+  destinationType     TransferDestination @default(MAIN_BRANCH) @map("destination_type")
+  destinationOutletId String?             @map("destination_outlet_id") @db.Uuid
+  transferDate        DateTime            @map("transfer_date") @db.Timestamptz(6)
+  dispatchedAt        DateTime?           @map("dispatched_at") @db.Timestamptz(6)
+  receivedAt          DateTime?           @map("received_at") @db.Timestamptz(6)
+  vehicleNumber       String?             @map("vehicle_number")
+  notes               String?
+  isDeleted           Boolean             @default(false) @map("is_deleted")
+  createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById         String?             @map("created_by") @db.Uuid
+
+  items            StockTransferItem[]
+  destinationOutlet Outlet?            @relation("OutletDirectTransfers", fields: [destinationOutletId], references: [id])
+
+  @@index([status, transferDate])
+  @@index([destinationOutletId])
+  @@map("stock_transfers")
+}
+
+model StockTransferItem {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transferId String   @map("transfer_id") @db.Uuid
+  productId  String   @map("product_id") @db.Uuid
+  quantity   Decimal  @db.Decimal(12, 2)
+  isDeleted  Boolean  @default(false) @map("is_deleted")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id])
+
+  @@index([transferId])
+  @@index([productId])
+  @@map("stock_transfer_items")
+}
+
+// ─────────────────────────────── OUTLET ORDERS ──────────────────────────────
+
+model OutletOrder {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderNumber  String            @unique @map("order_number")
+  outletId     String            @map("outlet_id") @db.Uuid
+  status       OutletOrderStatus @default(PENDING)
+  orderDate    DateTime          @default(now()) @map("order_date") @db.Timestamptz(6)
+  confirmedAt  DateTime?         @map("confirmed_at") @db.Timestamptz(6)
+  dispatchedAt DateTime?         @map("dispatched_at") @db.Timestamptz(6)
+  deliveredAt  DateTime?         @map("delivered_at") @db.Timestamptz(6)
+  notes        String?
+  isDeleted    Boolean           @default(false) @map("is_deleted")
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById  String?           @map("created_by") @db.Uuid
+
+  outlet Outlet            @relation(fields: [outletId], references: [id])
+  items  OutletOrderItem[]
+  bill   Bill?
+
+  @@index([outletId, status])
+  @@index([status, orderDate])
+  @@map("outlet_orders")
+}
+
+model OutletOrderItem {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId           String   @map("order_id") @db.Uuid
+  productId         String   @map("product_id") @db.Uuid
+  requestedQuantity Decimal  @map("requested_quantity") @db.Decimal(12, 2)
+  confirmedQuantity Decimal? @map("confirmed_quantity") @db.Decimal(12, 2)
+  unitPriceSnapshot Decimal? @map("unit_price_snapshot") @db.Decimal(12, 2)
+  isDeleted         Boolean  @default(false) @map("is_deleted")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  order   OutletOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product     @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("outlet_order_items")
+}
+
+// ─────────────────────────────── BILLING ────────────────────────────────────
+
+model Bill {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  billNumber  String     @unique @map("bill_number") // BL-2025-00142
+  outletId    String     @map("outlet_id") @db.Uuid
+  orderId     String?    @unique @map("order_id") @db.Uuid
+  billDate    DateTime   @default(now()) @map("bill_date") @db.Timestamptz(6)
+  dueDate     DateTime   @map("due_date") @db.Timestamptz(6)
+  subTotal    Decimal    @map("sub_total") @db.Decimal(12, 2)
+  taxTotal    Decimal    @map("tax_total") @db.Decimal(12, 2)
+  grandTotal  Decimal    @map("grand_total") @db.Decimal(12, 2)
+  amountPaid  Decimal    @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  balanceDue  Decimal    @map("balance_due") @db.Decimal(12, 2)
+  status      BillStatus @default(UNPAID)
+  pdfUrl      String?    @map("pdf_url")
+  lockedAt    DateTime?  @map("locked_at") @db.Timestamptz(6)
+  isDeleted   Boolean    @default(false) @map("is_deleted")
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?    @map("created_by") @db.Uuid
+
+  outlet   Outlet       @relation(fields: [outletId], references: [id])
+  order    OutletOrder? @relation(fields: [orderId], references: [id])
+  items    BillItem[]
+  payments Payment[]
+
+  @@index([outletId, status])
+  @@index([status, dueDate])
+  @@index([billDate])
+  @@map("bills")
+}
+
+model BillItem {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  billId              String    @map("bill_id") @db.Uuid
+  productId           String    @map("product_id") @db.Uuid
+  productNameSnapshot String    @map("product_name_snapshot")
+  quantity            Decimal   @db.Decimal(12, 2)
+  rate                Decimal   @db.Decimal(12, 2)
+  taxPercent          Decimal   @map("tax_percent") @db.Decimal(5, 2)
+  taxAmount           Decimal   @map("tax_amount") @db.Decimal(12, 2)
+  lineTotal           Decimal   @map("line_total") @db.Decimal(12, 2)
+  lockedAt            DateTime? @map("locked_at") @db.Timestamptz(6)
+  isDeleted           Boolean   @default(false) @map("is_deleted")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  bill    Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([billId])
+  @@index([productId])
+  @@map("bill_items")
+}
+
+model BillAudit {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  billId      String      @map("bill_id") @db.Uuid
+  action      AuditAction
+  oldValue    Json?       @map("old_value")
+  newValue    Json?       @map("new_value")
+  changedById String?     @map("changed_by") @db.Uuid
+  changedAt   DateTime    @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  @@index([billId])
+  @@index([changedAt])
+  @@map("bill_audit")
+}
+
+// ─────────────────────────────── PAYMENTS (insert-only) ─────────────────────
+
+model Payment {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentNumber     String         @unique @map("payment_number")
+  billId            String?        @map("bill_id") @db.Uuid
+  outletId          String         @map("outlet_id") @db.Uuid
+  channel           PaymentChannel
+  method            PaymentMethod
+  amount            Decimal        @db.Decimal(12, 2)
+  paymentDate       DateTime       @default(now()) @map("payment_date") @db.Timestamptz(6)
+  receivedById      String?        @map("received_by") @db.Uuid
+  razorpayOrderId   String?        @map("razorpay_order_id")
+  razorpayPaymentId String?        @map("razorpay_payment_id")
+  razorpaySignature String?        @map("razorpay_signature")
+  status            PaymentStatus  @default(SUCCESS)
+  notes             String?
+  receiptPhotoUrl   String?        @map("receipt_photo_url")
+  isDeleted         Boolean        @default(false) @map("is_deleted")
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById       String?        @map("created_by") @db.Uuid
+
+  bill   Bill?  @relation(fields: [billId], references: [id])
+  outlet Outlet @relation(fields: [outletId], references: [id])
+
+  @@index([billId])
+  @@index([outletId, paymentDate])
+  @@index([razorpayPaymentId])
+  @@index([status])
+  @@map("payments")
+}
+
+model PaymentAudit {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentId   String      @map("payment_id") @db.Uuid
+  action      AuditAction
+  oldValue    Json?       @map("old_value")
+  newValue    Json?       @map("new_value")
+  changedById String?     @map("changed_by") @db.Uuid
+  changedAt   DateTime    @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  @@index([paymentId])
+  @@index([changedAt])
+  @@map("payment_audit")
+}
+
+model StockTransferAudit {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transferId  String      @map("transfer_id") @db.Uuid
+  action      AuditAction
+  oldValue    Json?       @map("old_value")
+  newValue    Json?       @map("new_value")
+  changedById String?     @map("changed_by") @db.Uuid
+  changedAt   DateTime    @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  @@index([transferId])
+  @@index([changedAt])
+  @@map("stock_transfer_audit")
+}
+
+model ProductionBatchAudit {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId     String      @map("batch_id") @db.Uuid
+  action      AuditAction
+  oldValue    Json?       @map("old_value")
+  newValue    Json?       @map("new_value")
+  changedById String?     @map("changed_by") @db.Uuid
+  changedAt   DateTime    @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  @@index([batchId])
+  @@index([changedAt])
+  @@map("production_batch_audit")
+}
+
+// ─────────────────────────────── EXPENSES ───────────────────────────────────
+
+model ExpenseCategory {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique
+  isSystem    Boolean  @default(false) @map("is_system")
+  isActive    Boolean  @default(true) @map("is_active")
+  isDeleted   Boolean  @default(false) @map("is_deleted")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?  @map("created_by") @db.Uuid
+
+  expenses Expense[]
+
+  @@map("expense_categories")
+}
+
+model Expense {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  categoryId      String          @map("category_id") @db.Uuid
+  amount          Decimal         @db.Decimal(12, 2)
+  expenseDate     DateTime        @map("expense_date") @db.Timestamptz(6)
+  paymentMethod   PaymentMethod   @map("payment_method")
+  paidTo          String?         @map("paid_to")
+  supplierName    String?         @map("supplier_name")
+  invoiceNumber   String?         @map("invoice_number")
+  location        ExpenseLocation @default(GENERAL)
+  note            String?
+  receiptPhotoUrl String?         @map("receipt_photo_url")
+  hsnCode         String?         @map("hsn_code")
+  taxRate         Decimal         @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount       Decimal         @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  supplierBillId  String?         @map("supplier_bill_id") @db.Uuid
+  isDeleted       Boolean         @default(false) @map("is_deleted")
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById     String?         @map("created_by") @db.Uuid
+
+  category     ExpenseCategory @relation(fields: [categoryId], references: [id])
+  supplierBill SupplierBill?   @relation(fields: [supplierBillId], references: [id])
+
+  @@index([categoryId, expenseDate])
+  @@index([location, expenseDate])
+  @@index([expenseDate])
+  @@index([supplierBillId])
+  @@map("expenses")
+}
+
+// ─────────────────────────────── POS ────────────────────────────────────────
+
+model PosSession {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionNumber String           @unique @map("session_number")
+  outletId      String?          @map("outlet_id") @db.Uuid // null = main branch POS
+  openedById    String           @map("opened_by") @db.Uuid
+  openedAt      DateTime         @default(now()) @map("opened_at") @db.Timestamptz(6)
+  closedAt      DateTime?        @map("closed_at") @db.Timestamptz(6)
+  status        PosSessionStatus @default(OPEN)
+  openingCash   Decimal          @default(0) @map("opening_cash") @db.Decimal(12, 2)
+  closingCash   Decimal?         @map("closing_cash") @db.Decimal(12, 2)
+  totalSales    Decimal          @default(0) @map("total_sales") @db.Decimal(12, 2)
+  cashCollected Decimal          @default(0) @map("cash_collected") @db.Decimal(12, 2)
+  cardCollected Decimal          @default(0) @map("card_collected") @db.Decimal(12, 2)
+  upiCollected  Decimal          @default(0) @map("upi_collected") @db.Decimal(12, 2)
+  voidCount     Int              @default(0) @map("void_count")
+  isDeleted     Boolean          @default(false) @map("is_deleted")
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  outlet       Outlet?          @relation(fields: [outletId], references: [id])
+  transactions PosTransaction[]
+
+  @@index([outletId, status])
+  @@index([status])
+  @@map("pos_sessions")
+}
+
+model PosTransaction {
+  id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiptNumber     String               @unique @map("receipt_number")
+  sessionId         String               @map("session_id") @db.Uuid
+  outletId          String?              @map("outlet_id") @db.Uuid
+  status            PosTransactionStatus @default(COMPLETED)
+  customerName      String?              @map("customer_name")
+  customerPhone     String?              @map("customer_phone")
+  subTotal          Decimal              @map("sub_total") @db.Decimal(12, 2)
+  itemDiscount      Decimal              @default(0) @map("item_discount") @db.Decimal(12, 2)
+  billDiscount      Decimal              @default(0) @map("bill_discount") @db.Decimal(12, 2)
+  taxTotal          Decimal              @map("tax_total") @db.Decimal(12, 2)
+  grandTotal        Decimal              @map("grand_total") @db.Decimal(12, 2)
+  paymentMode       PosPaymentMode       @map("payment_mode")
+  cashReceived      Decimal?             @map("cash_received") @db.Decimal(12, 2)
+  changeGiven       Decimal?             @map("change_given") @db.Decimal(12, 2)
+  cashAmount        Decimal              @default(0) @map("cash_amount") @db.Decimal(12, 2)
+  cardAmount        Decimal              @default(0) @map("card_amount") @db.Decimal(12, 2)
+  upiAmount         Decimal              @default(0) @map("upi_amount") @db.Decimal(12, 2)
+  voidReason        String?              @map("void_reason")
+  soldById          String               @map("sold_by") @db.Uuid
+  soldAt            DateTime             @default(now()) @map("sold_at") @db.Timestamptz(6)
+  clientUuid        String?              @unique @map("client_uuid") @db.Uuid // offline idempotency key
+  syncedFromOffline Boolean              @default(false) @map("synced_from_offline")
+  isDeleted         Boolean              @default(false) @map("is_deleted")
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  session PosSession           @relation(fields: [sessionId], references: [id])
+  items   PosTransactionItem[]
+
+  @@index([sessionId])
+  @@index([outletId, soldAt])
+  @@index([status])
+  @@map("pos_transactions")
+}
+
+model PosTransactionItem {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transactionId       String   @map("transaction_id") @db.Uuid
+  productId           String   @map("product_id") @db.Uuid
+  productNameSnapshot String   @map("product_name_snapshot")
+  quantity            Decimal  @db.Decimal(12, 2)
+  unitPrice           Decimal  @map("unit_price") @db.Decimal(12, 2)
+  discount            Decimal  @default(0) @db.Decimal(12, 2)
+  taxPercent          Decimal  @map("tax_percent") @db.Decimal(5, 2)
+  taxAmount           Decimal  @map("tax_amount") @db.Decimal(12, 2)
+  lineTotal           Decimal  @map("line_total") @db.Decimal(12, 2)
+  isDeleted           Boolean  @default(false) @map("is_deleted")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  transaction PosTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  product     Product        @relation(fields: [productId], references: [id])
+
+  @@index([transactionId])
+  @@index([productId])
+  @@map("pos_transaction_items")
+}
+
+// ─────────────────────────────── ANALYTICS ──────────────────────────────────
+
+// Periodic KPI snapshots (distinct from the SQL materialized views, which are
+// created in the audit_and_views migration and refreshed by a pg-boss job).
+model AnalyticsSnapshot {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  snapshotType String   @map("snapshot_type")
+  snapshotDate DateTime @map("snapshot_date") @db.Date
+  scope        String   @default("GLOBAL") // 'GLOBAL' or an outlet id
+  data         Json
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([snapshotType, snapshotDate, scope])
+  @@index([snapshotType, snapshotDate])
+  @@map("analytics_snapshots")
+}
+
+// Atomic per-document-type counters for human-friendly numbers
+// (bills, orders, transfers, batches, payments, POS receipts, user codes).
+model DocumentCounter {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key       String   @unique // e.g. BILL, ORDER, TRANSFER, BATCH, PAYMENT, POS_RECEIPT
+  value     BigInt   @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("document_counters")
+}
+
+// ─────────────────────────────── ACCOUNTS PAYABLE ───────────────────────────
+
+// A supplier purchase bill (payable). Raw-material goods receipts and "other"
+// expense lines link back to it; supplier payments settle the balance.
+model SupplierBill {
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  billNumber    String             @unique @map("bill_number")
+  supplierName  String?            @map("supplier_name")
+  supplierGstin String?            @map("supplier_gstin")
+  invoiceNumber String?            @map("invoice_number")
+  billDate      DateTime           @default(now()) @map("bill_date") @db.Timestamptz(6)
+  taxableAmount Decimal            @default(0) @map("taxable_amount") @db.Decimal(12, 2)
+  cgst          Decimal            @default(0) @db.Decimal(12, 2)
+  sgst          Decimal            @default(0) @db.Decimal(12, 2)
+  igst          Decimal            @default(0) @db.Decimal(12, 2)
+  taxAmount     Decimal            @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  totalAmount   Decimal            @map("total_amount") @db.Decimal(12, 2)
+  amountPaid    Decimal            @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  balanceDue    Decimal            @map("balance_due") @db.Decimal(12, 2)
+  status        SupplierBillStatus @default(UNPAID)
+  paymentMethod PaymentMethod?     @map("payment_method")
+  notes         String?
+  isDeleted     Boolean            @default(false) @map("is_deleted")
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById   String?            @map("created_by") @db.Uuid
+
+  payments     SupplierPayment[]
+  intakeLines  RawMaterialIntake[]
+  expenseLines Expense[]
+  items        SupplierBillItem[]
+
+  @@index([status, billDate])
+  @@index([supplierName])
+  @@map("supplier_bills")
+}
+
+// Itemized line of a supplier purchase bill (raw material / finished good / other).
+model SupplierBillItem {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  supplierBillId String           @map("supplier_bill_id") @db.Uuid
+  kind           PurchaseLineKind
+  refId          String?          @map("ref_id") @db.Uuid // rawMaterialId / productId / categoryId
+  name           String // snapshot of the item/category name
+  hsnCode        String?          @map("hsn_code")
+  quantity       Decimal?         @db.Decimal(12, 2)
+  unitCost       Decimal?         @map("unit_cost") @db.Decimal(12, 2)
+  taxRate        Decimal          @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  taxableAmount  Decimal          @map("taxable_amount") @db.Decimal(12, 2)
+  taxAmount      Decimal          @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  lineTotal      Decimal          @map("line_total") @db.Decimal(12, 2)
+  isDeleted      Boolean          @default(false) @map("is_deleted")
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  bill SupplierBill @relation(fields: [supplierBillId], references: [id], onDelete: Cascade)
+
+  @@index([supplierBillId])
+  @@map("supplier_bill_items")
+}
+
+// Insert-only payment made to a supplier against a bill.
+model SupplierPayment {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentNumber  String        @unique @map("payment_number")
+  supplierBillId String        @map("supplier_bill_id") @db.Uuid
+  amount         Decimal       @db.Decimal(12, 2)
+  method         PaymentMethod
+  paymentDate    DateTime      @default(now()) @map("payment_date") @db.Timestamptz(6)
+  notes          String?
+  paidById       String?       @map("paid_by") @db.Uuid
+  isDeleted      Boolean       @default(false) @map("is_deleted")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById    String?       @map("created_by") @db.Uuid
+
+  bill SupplierBill @relation(fields: [supplierBillId], references: [id])
+
+  @@index([supplierBillId])
+  @@index([paymentDate])
+  @@map("supplier_payments")
+}
+
+// ─────────────────────────────── CUSTOMER MASTER (GST) ──────────────────────
+
+model Customer {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  gstin       String?
+  legalName   String?  @map("legal_name")
+  tradeName   String?  @map("trade_name")
+  stateCode   String?  @map("state_code")
+  stateName   String?  @map("state_name")
+  address     String?
+  phone       String?
+  email       String?
+  isActive    Boolean  @default(true) @map("is_active")
+  isDeleted   Boolean  @default(false) @map("is_deleted")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?  @map("created_by") @db.Uuid
+
+  @@index([gstin])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("customers")
+}

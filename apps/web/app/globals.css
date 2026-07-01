@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens (HSL) derived from the brand palette:
+ *   white #FFFFFF · surface #F8F9FA · indigo #3730A3 · green #16A34A
+ *   amber #D97706 · red #DC2626 · text #111827 · muted #6B7280
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;        /* #111827 */
+    --surface: 210 17% 98%;           /* #F8F9FA */
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --primary: 245 51% 41%;           /* #3730A3 */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 17% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 17% 96%;
+    --muted-foreground: 220 9% 46%;   /* #6B7280 */
+
+    --accent: 245 51% 96%;
+    --accent-foreground: 245 51% 41%;
+
+    --success: 142 71% 37%;           /* #16A34A */
+    --warning: 32 95% 44%;            /* #D97706 */
+    --danger: 0 72% 51%;              /* #DC2626 */
+
+    --border: 220 13% 91%;
+    --input: 220 13% 87%;
+    --ring: 245 51% 41%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-surface text-foreground;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Thin, unobtrusive scrollbars for data-dense screens. */
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+}

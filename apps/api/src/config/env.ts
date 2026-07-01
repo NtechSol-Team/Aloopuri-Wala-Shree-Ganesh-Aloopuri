@@ -1,0 +1,55 @@
+import path from 'node:path';
+import dotenv from 'dotenv';
+import { z } from 'zod';
+
+// Single source of truth: the monorepo-root .env. When the API runs (tsx/node)
+// the cwd is apps/api, so the root is two levels up.
+dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
+// Also allow a local apps/api/.env to override during isolated runs.
+dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: false });
+
+const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  API_PORT: z.coerce.number().int().positive().default(4000),
+
+  DATABASE_URL: z.string().url(),
+
+  JWT_ACCESS_SECRET: z.string().min(16, 'JWT_ACCESS_SECRET must be at least 16 chars'),
+  JWT_REFRESH_SECRET: z.string().min(16, 'JWT_REFRESH_SECRET must be at least 16 chars'),
+  JWT_ACCESS_TTL: z.string().default('15m'),
+  JWT_REFRESH_TTL: z.string().default('30d'),
+
+  WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
+
+  RAZORPAY_KEY_ID: z.string().default('rzp_test_placeholder'),
+  RAZORPAY_KEY_SECRET: z.string().default('placeholder_secret'),
+  RAZORPAY_WEBHOOK_SECRET: z.string().default('placeholder_webhook_secret'),
+
+  // GST: home state for CGST/SGST vs IGST, and GSTzen GSTIN-lookup provider.
+  HOME_STATE_CODE: z.string().default('24'), // Gujarat
+  GSTZEN_API_KEY: z.string().default(''),
+  GSTZEN_API_URL: z.string().default('https://my.gstzen.in/api/gstin-validator/'),
+
+  UPLOAD_DIR: z.string().default('uploads'),
+  MAX_UPLOAD_MB: z.coerce.number().int().positive().default(5),
+
+  KPI_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+  MATERIALIZED_VIEW_REFRESH_CRON: z.string().default('*/15 * * * *'),
+});
+
+const parsed = envSchema.safeParse(process.env);
+
+if (!parsed.success) {
+  // Fail fast at startup — never boot with an invalid configuration.
+  const issues = parsed.error.issues
+    .map((i) => `  • ${i.path.join('.')}: ${i.message}`)
+    .join('\n');
+  // eslint-disable-next-line no-console
+  console.error(`\n❌ Invalid environment configuration:\n${issues}\n`);
+  process.exit(1);
+}
+
+export const env = parsed.data;
+export type Env = typeof env;
+export const isProd = env.NODE_ENV === 'production';
+export const isDev = env.NODE_ENV === 'development';
