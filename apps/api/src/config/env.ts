@@ -35,6 +35,7 @@ const envSchema = z.object({
 
   KPI_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
   MATERIALIZED_VIEW_REFRESH_CRON: z.string().default('*/15 * * * *'),
+  SUPPLIER_BILL_REMINDER_CRON: z.string().default('0 8 * * *'), // daily 8am: flags bills due in 10 or 5 days
 });
 
 const parsed = envSchema.safeParse(process.env);

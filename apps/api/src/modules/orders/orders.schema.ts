@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OutletOrderStatus } from '@prisma/client';
+import { FulfillmentSource, OutletOrderStatus } from '@prisma/client';
 import { paginationQuerySchema } from '../../shared/utils/pagination';
 
 export const createOrderSchema = z.object({
@@ -16,9 +16,15 @@ export const createOrderSchema = z.object({
 });
 
 export const confirmOrderSchema = z.object({
-  // Optional per-line quantity adjustments (partial fulfilment).
+  // Which location the order will be pulled from at delivery time.
+  fulfillmentSource: z.nativeEnum(FulfillmentSource).default(FulfillmentSource.MAIN_BRANCH),
+  // Optional per-line quantity/price adjustments (partial fulfilment, price override at confirmation).
   items: z
-    .array(z.object({ itemId: z.string().uuid(), confirmedQuantity: z.coerce.number().min(0) }))
+    .array(z.object({
+      itemId: z.string().uuid(),
+      confirmedQuantity: z.coerce.number().min(0),
+      unitPrice: z.coerce.number().nonnegative().optional(),
+    }))
     .optional(),
 });
 

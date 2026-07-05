@@ -21,6 +21,8 @@ const EVENT_COPY: Record<string, (data: Record<string, unknown>) => string> = {
   stock_low: (d) => `Low stock: ${(d.productName as string) ?? 'a product'}`,
   transfer_status_changed: (d) => `Transfer ${(d.transferNumber as string) ?? ''} → ${(d.status as string) ?? ''}`,
   report_ready: () => `Your download is ready`,
+  payment_due_reminder: (d) =>
+    `Due in ${(d.daysLeft as number) ?? '?'} day(s): ${(d.billNumber as string) ?? ''} · ₹${((d.balanceDue as number) ?? 0).toLocaleString('en-IN')} to ${(d.supplierName as string) ?? 'supplier'}`,
 };
 
 // Which React Query keys to invalidate when an event arrives.
@@ -31,6 +33,7 @@ const INVALIDATE_ON: Record<string, string[]> = {
   bill_generated: ['bills', 'dashboard'],
   stock_low: ['inventory', 'dashboard'],
   transfer_status_changed: ['transfers', 'inventory'],
+  payment_due_reminder: ['payables', 'dashboard'],
 };
 
 /**

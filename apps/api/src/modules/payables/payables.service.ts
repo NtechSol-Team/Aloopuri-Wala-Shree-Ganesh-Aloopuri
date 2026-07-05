@@ -18,7 +18,7 @@ export async function listPayables(query: ListPayablesQuery) {
   const [rows, total] = await Promise.all([
     prisma.supplierBill.findMany({
       where, orderBy: { billDate: 'desc' }, skip, take,
-      select: { id: true, billNumber: true, supplierName: true, invoiceNumber: true, billDate: true, totalAmount: true, amountPaid: true, balanceDue: true, status: true },
+      select: { id: true, billNumber: true, supplierName: true, invoiceNumber: true, billDate: true, dueDate: true, totalAmount: true, amountPaid: true, balanceDue: true, status: true },
     }),
     prisma.supplierBill.count({ where }),
   ]);

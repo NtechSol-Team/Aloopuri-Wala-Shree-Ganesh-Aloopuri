@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { addDays } from 'date-fns';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
@@ -213,6 +214,9 @@ export async function logPurchase(input: import('./production.schema').RecordPur
     // 1) The payable bill (header) with GST breakup.
     const balance = billTotal.sub(paidNow);
     const status = balance.lessThanOrEqualTo(0) ? 'PAID' : paidNow.greaterThan(0) ? 'PARTIALLY_PAID' : 'UNPAID';
+    // Credit terms only mean anything while a balance remains.
+    const creditDays = balance.greaterThan(0) ? input.creditDays : undefined;
+    const dueDate = creditDays ? addDays(input.intakeDate, creditDays) : null;
     const bill = await tx.supplierBill.create({
       data: {
         billNumber: await nextDocNumber(tx, 'SUPPLIER_BILL'),
@@ -228,6 +232,8 @@ export async function logPurchase(input: import('./production.schema').RecordPur
         balanceDue: balance,
         status,
         paymentMethod: input.paymentMethod,
+        creditDays,
+        dueDate,
         notes: input.notes,
         createdById: userId,
       },
@@ -325,6 +331,7 @@ export async function listPurchases(query: ListPurchasesQuery = {}) {
     select: {
       id: true, billNumber: true, supplierName: true, supplierGstin: true, invoiceNumber: true, billDate: true,
       taxableAmount: true, taxAmount: true, totalAmount: true, amountPaid: true, balanceDue: true, status: true,
+      creditDays: true, dueDate: true,
       _count: { select: { items: true } },
     },
   });

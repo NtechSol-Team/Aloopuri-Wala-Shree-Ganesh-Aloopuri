@@ -1,4 +1,4 @@
-import { Prisma, OutletOrderStatus, UserRole } from '@prisma/client';
+import { Prisma, FulfillmentSource, OutletOrderStatus, UserRole } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
@@ -15,6 +15,21 @@ const orderInclude = {
   outlet: { select: { id: true, name: true } },
   bill: { select: { id: true, billNumber: true, grandTotal: true, status: true } },
 } satisfies Prisma.OutletOrderInclude;
+
+/** Where confirmed stock is decremented from at delivery — set on the order at confirm time. */
+function sourceStockModel(source: FulfillmentSource) {
+  return source === FulfillmentSource.GODOWN
+    ? {
+        label: 'godown',
+        find: (tx: Prisma.TransactionClient, productId: string) => tx.godownStock.findUnique({ where: { productId } }),
+        dec: (tx: Prisma.TransactionClient, productId: string, qty: Prisma.Decimal) => tx.godownStock.update({ where: { productId }, data: { quantity: { decrement: qty } } }),
+      }
+    : {
+        label: 'main-branch',
+        find: (tx: Prisma.TransactionClient, productId: string) => tx.mainBranchStock.findUnique({ where: { productId } }),
+        dec: (tx: Prisma.TransactionClient, productId: string, qty: Prisma.Decimal) => tx.mainBranchStock.update({ where: { productId }, data: { quantity: { decrement: qty } } }),
+      };
+}
 
 function resolveOutletId(user: AuthUser, requested?: string): string {
   if (user.role === UserRole.SUPER_ADMIN) {
@@ -86,24 +101,26 @@ async function loadForTransition(id: string) {
   return order;
 }
 
-/** PENDING → CONFIRMED, with optional partial quantities + price snapshot. */
+/** PENDING → CONFIRMED, with optional partial quantities + a price override, and the fulfilment source (main branch or godown). */
 export async function confirmOrder(_user: AuthUser, id: string, input: ConfirmOrderInput) {
   const order = await loadForTransition(id);
   if (order.status !== OutletOrderStatus.PENDING) throw AppError.invalidState('Only pending orders can be confirmed');
 
-  const overrides = new Map((input.items ?? []).map((i) => [i.itemId, i.confirmedQuantity]));
+  const overrides = new Map((input.items ?? []).map((i) => [i.itemId, i]));
 
   const updated = await prisma.$transaction(async (tx) => {
     for (const item of order.items) {
-      const confirmedQuantity = overrides.has(item.id) ? overrides.get(item.id)! : Number(item.requestedQuantity);
+      const override = overrides.get(item.id);
+      const confirmedQuantity = override ? override.confirmedQuantity : Number(item.requestedQuantity);
+      const unitPriceSnapshot = override?.unitPrice ?? item.product.basePrice;
       await tx.outletOrderItem.update({
         where: { id: item.id },
-        data: { confirmedQuantity, unitPriceSnapshot: item.product.basePrice },
+        data: { confirmedQuantity, unitPriceSnapshot },
       });
     }
     return tx.outletOrder.update({
       where: { id },
-      data: { status: OutletOrderStatus.CONFIRMED, confirmedAt: new Date() },
+      data: { status: OutletOrderStatus.CONFIRMED, confirmedAt: new Date(), fulfillmentSource: input.fulfillmentSource },
       include: orderInclude,
     });
   });
@@ -139,22 +156,25 @@ export async function dispatchOrder(user: AuthUser, id: string) {
   return order;
 }
 
-/** DISPATCHED → DELIVERED, moving stock main branch → outlet. */
+/** DISPATCHED → DELIVERED, moving stock from the confirmed fulfilment source → outlet. */
 export async function deliverOrder(_user: AuthUser, id: string) {
   const order = await loadForTransition(id);
   if (order.status !== OutletOrderStatus.DISPATCHED) throw AppError.invalidState('Only dispatched orders can be delivered');
 
+  // Orders confirmed before this field existed default to main-branch (the prior fixed behaviour).
+  const model = sourceStockModel(order.fulfillmentSource ?? FulfillmentSource.MAIN_BRANCH);
+
   const updated = await prisma.$transaction(async (tx) => {
     for (const item of order.items) {
       const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
-      const main = await tx.mainBranchStock.findUnique({ where: { productId: item.productId } });
-      if (!main || new Prisma.Decimal(main.quantity).lessThan(qty)) {
-        throw AppError.insufficientStock(`Not enough main-branch stock for ${item.product.name}: need ${qty}, have ${main?.quantity ?? 0}`);
+      const stock = await model.find(tx, item.productId);
+      if (!stock || new Prisma.Decimal(stock.quantity).lessThan(qty)) {
+        throw AppError.insufficientStock(`Not enough ${model.label} stock for ${item.product.name}: need ${qty}, have ${stock?.quantity ?? 0}`);
       }
     }
     for (const item of order.items) {
       const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
-      await tx.mainBranchStock.update({ where: { productId: item.productId }, data: { quantity: { decrement: qty } } });
+      await model.dec(tx, item.productId, qty);
       await tx.outletStock.upsert({
         where: { outletId_productId: { outletId: order.outletId, productId: item.productId } },
         create: { outletId: order.outletId, productId: item.productId, quantity: qty },

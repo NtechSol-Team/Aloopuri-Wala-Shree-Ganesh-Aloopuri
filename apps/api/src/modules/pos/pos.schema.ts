@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PosPaymentMode } from '@prisma/client';
+import { KotStatus, PosPaymentMode } from '@prisma/client';
 
 export const openSessionSchema = z.object({
   openingCash: z.coerce.number().nonnegative().default(0),
@@ -33,7 +33,10 @@ export const createTransactionSchema = z.object({
 
 export const voidTransactionSchema = z.object({ reason: z.string().min(2).max(200) });
 
+export const updateKotSchema = z.object({ status: z.enum([KotStatus.READY, KotStatus.DELIVERED]) });
+
 export type OpenSessionInput = z.infer<typeof openSessionSchema>;
 export type CloseSessionInput = z.infer<typeof closeSessionSchema>;
 export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;
 export type VoidTransactionInput = z.infer<typeof voidTransactionSchema>;
+export type UpdateKotInput = z.infer<typeof updateKotSchema>;

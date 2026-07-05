@@ -92,6 +92,8 @@ export interface PurchaseBill {
   amountPaid: string;
   balanceDue: string;
   status: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
+  creditDays: number | null;
+  dueDate: string | null;
   _count: { items: number };
 }
 
@@ -138,6 +140,7 @@ export function useRecordPurchase() {
   return useMutation({
     mutationFn: async (input: {
       supplierName?: string; supplierGstin?: string; invoiceNumber?: string; notes?: string; paymentMethod?: string; amountPaidNow?: number;
+      intakeDate?: string; creditDays?: number;
       items: PurchaseItemInput[];
     }) => (await api.post<ApiSuccess<{ billNumber: string; totalCost: string; amountPaid: string; balanceDue: string; status: string; lineCount: number }>>('/production/purchases', input)).data.data,
     onSuccess: () => {

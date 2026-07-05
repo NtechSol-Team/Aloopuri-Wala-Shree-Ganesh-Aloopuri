@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
 
 export type OrderStatus = 'PENDING' | 'CONFIRMED' | 'DISPATCHED' | 'DELIVERED' | 'CANCELLED';
+export type FulfillmentSource = 'MAIN_BRANCH' | 'GODOWN';
 
 export interface OrderItem {
   id: string;
@@ -19,6 +20,7 @@ export interface Order {
   status: OrderStatus;
   orderDate: string;
   notes: string | null;
+  fulfillmentSource: FulfillmentSource | null;
   items: OrderItem[];
   outlet: { id: string; name: string };
   bill: { id: string; billNumber: string; grandTotal: string; status: string } | null;
@@ -36,6 +38,21 @@ export function useCreateOrder() {
   return useMutation({
     mutationFn: async (input: { items: Array<{ productId: string; requestedQuantity: number }>; notes?: string }) =>
       (await api.post<ApiSuccess<Order>>('/orders', input)).data.data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
+export function useConfirmOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, fulfillmentSource, items }: {
+      id: string;
+      fulfillmentSource: FulfillmentSource;
+      items: Array<{ itemId: string; confirmedQuantity: number; unitPrice?: number }>;
+    }) => (await api.post<ApiSuccess<Order>>(`/orders/${id}/confirm`, { fulfillmentSource, items })).data.data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['orders'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });

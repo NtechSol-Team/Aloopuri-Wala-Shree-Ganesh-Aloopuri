@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { format } from 'date-fns';
+import { format, differenceInCalendarDays } from 'date-fns';
 import { Plus, Search, Eye, ShoppingBag, Boxes, Package, Tag, IndianRupee } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,19 @@ const KIND_META: Record<string, { label: string; icon: typeof Boxes }> = {
   FINISHED_GOOD: { label: 'Finished good', icon: Package },
   OTHER: { label: 'Other', icon: Tag },
 };
+
+/** Due-date pill: red once overdue, amber inside the 5-day reminder window, muted otherwise. */
+function DueCell({ dueDate }: { dueDate: string | null }) {
+  if (!dueDate) return <span className="text-muted-foreground">—</span>;
+  const days = differenceInCalendarDays(new Date(dueDate), new Date());
+  const cls = days < 0 ? 'text-danger font-semibold' : days <= 5 ? 'text-warning font-semibold' : 'text-muted-foreground';
+  return (
+    <span className={cls}>
+      {format(new Date(dueDate), 'dd MMM yyyy')}
+      {days < 0 ? ` · ${Math.abs(days)}d overdue` : days <= 10 ? ` · ${days}d left` : ''}
+    </span>
+  );
+}
 
 export default function PurchasesPage() {
   const [status, setStatus] = useState('');
@@ -60,7 +73,7 @@ export default function PurchasesPage() {
         ) : (
           <Table>
             <THead>
-              <TR><TH>Bill #</TH><TH>Supplier</TH><TH>GSTIN</TH><TH>Date</TH><TH className="text-right">Taxable</TH><TH className="text-right">GST</TH><TH className="text-right">Total</TH><TH className="text-right">Balance</TH><TH>Status</TH><TH /></TR>
+              <TR><TH>Bill #</TH><TH>Supplier</TH><TH>GSTIN</TH><TH>Date</TH><TH className="text-right">Taxable</TH><TH className="text-right">GST</TH><TH className="text-right">Total</TH><TH className="text-right">Balance</TH><TH>Due</TH><TH>Status</TH><TH /></TR>
             </THead>
             <TBody>
               {data.map((b) => (
@@ -73,6 +86,7 @@ export default function PurchasesPage() {
                   <TD className="text-right text-muted-foreground">{formatINR(b.taxAmount)}</TD>
                   <TD className="text-right font-medium">{formatINR(b.totalAmount)}</TD>
                   <TD className={cn('text-right', Number(b.balanceDue) > 0 && 'text-danger')}>{formatINR(b.balanceDue)}</TD>
+                  <TD><DueCell dueDate={b.dueDate} /></TD>
                   <TD><Badge variant={statusBadgeVariant(b.status)}>{b.status.replace('_', ' ')}</Badge></TD>
                   <TD className="text-right">
                     <div className="flex items-center justify-end gap-1">
@@ -150,6 +164,9 @@ function PurchaseDetailDialog({ id, onClose, onPay }: { id: string | null; onClo
               <Row label="Grand total" value={formatINR(bill.totalAmount)} bold />
               <Row label="Paid" value={formatINR(bill.amountPaid)} className="text-success" />
               <Row label="Balance" value={formatINR(bill.balanceDue)} className="text-danger" bold />
+              {bill.dueDate && (
+                <Row label={`Credit terms (net ${bill.creditDays}d)`} value={<DueCell dueDate={bill.dueDate} />} />
+              )}
             </div>
 
             {bill.payments.length > 0 && (
@@ -178,6 +195,6 @@ function PurchaseDetailDialog({ id, onClose, onPay }: { id: string | null; onClo
   );
 }
 
-function Row({ label, value, bold, muted, className }: { label: string; value: string; bold?: boolean; muted?: boolean; className?: string }) {
+function Row({ label, value, bold, muted, className }: { label: string; value: React.ReactNode; bold?: boolean; muted?: boolean; className?: string }) {
   return <div className={cn('flex justify-between', bold && 'border-t border-border pt-1 font-semibold', muted && 'text-muted-foreground', className)}><span>{label}</span><span>{value}</span></div>;
 }

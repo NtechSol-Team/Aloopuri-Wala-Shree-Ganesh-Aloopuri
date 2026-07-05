@@ -56,6 +56,7 @@ const productSelect = {
   photoUrl: true,
   batchTrackingEnabled: true,
   isActive: true,
+  isPosEnabled: true,
   category: { select: { id: true, name: true } },
 } satisfies Prisma.ProductSelect;
 

@@ -14,7 +14,7 @@ import { outletsRouter } from '../modules/outlets/outlets.routes';
 import { inventoryRouter } from '../modules/inventory/inventory.routes';
 import { accountingRouter } from '../modules/accounting/accounting.routes';
 import { payablesRouter } from '../modules/payables/payables.routes';
-import { customersRouter } from '../modules/customers/customers.routes';
+import { contactsRouter } from '../modules/contacts/contacts.routes';
 
 /**
  * Central API router. Feature module routers are mounted here as they are built
@@ -42,7 +42,7 @@ export function buildApiRouter(): Router {
   router.use('/inventory', inventoryRouter);
   router.use('/accounting', accountingRouter);
   router.use('/payables', payablesRouter);
-  router.use('/customers', customersRouter);
+  router.use('/contacts', contactsRouter);
 
   return router;
 }

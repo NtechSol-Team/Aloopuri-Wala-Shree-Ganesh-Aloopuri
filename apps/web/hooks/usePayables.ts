@@ -12,6 +12,7 @@ export interface PayableBill {
   supplierName: string | null;
   invoiceNumber: string | null;
   billDate: string;
+  dueDate: string | null;
   totalAmount: string;
   amountPaid: string;
   balanceDue: string;

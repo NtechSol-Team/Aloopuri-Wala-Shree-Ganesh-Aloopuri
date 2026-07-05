@@ -16,10 +16,10 @@ export interface GstLookupResult {
   source: 'gstzen' | 'validation';
 }
 
-/** Resolve a GSTIN (validate + GSTzen enrich). Used by customer + purchase forms. */
+/** Resolve a GSTIN (validate + GSTzen enrich). Used by contact + purchase forms. */
 export function useGstLookup() {
   return useMutation({
     mutationFn: async (gstin: string) =>
-      (await api.get<ApiSuccess<GstLookupResult>>('/customers/lookup', { params: { gstin } })).data.data,
+      (await api.get<ApiSuccess<GstLookupResult>>('/contacts/lookup', { params: { gstin } })).data.data,
   });
 }

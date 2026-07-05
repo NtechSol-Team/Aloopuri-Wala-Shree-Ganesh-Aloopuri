@@ -9,6 +9,7 @@ node_modules/
 .env.*.local
 apps/api/.env
 apps/web/.env.local
+.mcp.json
 
 # Build outputs
 dist/

@@ -1,4 +1,4 @@
-import { Prisma, PosPaymentMode, PosSessionStatus, PosTransactionStatus, UserRole } from '@prisma/client';
+import { Prisma, KotStatus, PosPaymentMode, PosSessionStatus, PosTransactionStatus, UserRole } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
@@ -6,7 +6,24 @@ import { nextDocNumber } from '../../shared/utils/docNumber';
 import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
 import type { AuthUser } from '../../shared/types/api';
-import type { CreateTransactionInput, OpenSessionInput, VoidTransactionInput } from './pos.schema';
+import type { CreateTransactionInput, OpenSessionInput, UpdateKotInput, VoidTransactionInput } from './pos.schema';
+
+/**
+ * Reserve the next daily order-token for a POS location. Uses DocumentCounter
+ * with a per-outlet-per-day key so it is atomic under concurrency and resets
+ * every day (key: TOKEN:<outlet|MAIN>:<yyyymmdd>).
+ */
+async function nextTokenNumber(tx: Prisma.TransactionClient, outletId: string | null): Promise<number> {
+  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const key = `TOKEN:${outletId ?? 'MAIN'}:${day}`;
+  const counter = await tx.documentCounter.upsert({
+    where: { key },
+    create: { key, value: BigInt(1) },
+    update: { value: { increment: BigInt(1) } },
+    select: { value: true },
+  });
+  return Number(counter.value);
+}
 
 /** Resolve the outlet a POS session/sale belongs to. Admin without outlet = main branch (null). */
 function resolveOutlet(user: AuthUser, requested?: string): string | null {
@@ -145,9 +162,10 @@ export async function createTransaction(user: AuthUser, input: CreateTransaction
     for (const line of lineData) await model.dec(tx, line.productId, line.quantity);
 
     const receiptNumber = await nextDocNumber(tx, 'POS_RECEIPT');
+    const tokenNumber = await nextTokenNumber(tx, session.outletId);
     const created = await tx.posTransaction.create({
       data: {
-        receiptNumber, sessionId: session.id, outletId: session.outletId, status: PosTransactionStatus.COMPLETED,
+        receiptNumber, tokenNumber, sessionId: session.id, outletId: session.outletId, status: PosTransactionStatus.COMPLETED,
         customerName: input.customerName, customerPhone: input.customerPhone,
         subTotal, itemDiscount: itemDiscountTotal, billDiscount, taxTotal, grandTotal,
         paymentMode: input.paymentMode, cashReceived, changeGiven, cashAmount, cardAmount, upiAmount,
@@ -170,6 +188,12 @@ export async function createTransaction(user: AuthUser, input: CreateTransaction
 
   cache.invalidateTags(CacheTag.POS, CacheTag.INVENTORY, CacheTag.DASHBOARD, ...(session.outletId ? [CacheTag.outlet(session.outletId)] : []));
   await emitRealtime(RealtimeEvent.POS_SALE, { receiptNumber: txn.receiptNumber, grandTotal: Number(txn.grandTotal) }, { global: true, outletId: session.outletId });
+  // Kitchen board: new ticket entering PREPARING.
+  await emitRealtime(
+    RealtimeEvent.POS_KOT,
+    { id: txn.id, tokenNumber: txn.tokenNumber, kotStatus: txn.kotStatus, action: 'created' },
+    { global: true, outletId: session.outletId },
+  );
   return txn;
 }
 
@@ -221,11 +245,54 @@ export async function listTransactions(sessionId: string) {
   });
 }
 
+export async function getTransaction(user: AuthUser, id: string) {
+  const txn = await prisma.posTransaction.findFirst({ where: { id, isDeleted: false }, include: { items: true } });
+  if (!txn) throw AppError.notFound('Transaction not found');
+  if (user.role !== UserRole.SUPER_ADMIN && txn.outletId !== user.outletId) throw AppError.forbidden();
+  return txn;
+}
+
+/** Kitchen board: today's active tickets (PREPARING/READY) for the user's POS location. */
+export async function kitchenQueue(user: AuthUser) {
+  const outletId = resolveOutlet(user, undefined);
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  return prisma.posTransaction.findMany({
+    where: {
+      outletId: outletId ?? null,
+      isDeleted: false,
+      status: PosTransactionStatus.COMPLETED,
+      kotStatus: { in: [KotStatus.PREPARING, KotStatus.READY] },
+      soldAt: { gte: startOfDay },
+    },
+    orderBy: { soldAt: 'asc' },
+    select: {
+      id: true, tokenNumber: true, kotStatus: true, soldAt: true, customerName: true,
+      items: { select: { productNameSnapshot: true, quantity: true } },
+    },
+  });
+}
+
+export async function updateKotStatus(user: AuthUser, id: string, input: UpdateKotInput) {
+  const txn = await prisma.posTransaction.findFirst({ where: { id, isDeleted: false } });
+  if (!txn) throw AppError.notFound('Transaction not found');
+  if (user.role !== UserRole.SUPER_ADMIN && txn.outletId !== user.outletId) throw AppError.forbidden();
+  if (txn.status !== PosTransactionStatus.COMPLETED) throw AppError.invalidState('Only completed sales have kitchen tickets');
+
+  const updated = await prisma.posTransaction.update({ where: { id }, data: { kotStatus: input.status } });
+  await emitRealtime(
+    RealtimeEvent.POS_KOT,
+    { id: updated.id, tokenNumber: updated.tokenNumber, kotStatus: updated.kotStatus, action: 'updated' },
+    { global: true, outletId: txn.outletId },
+  );
+  return updated;
+}
+
 /** Products with the POS location's current stock, for the product grid. */
 export async function posProducts(user: AuthUser) {
   const outletId = resolveOutlet(user, undefined);
   const products = await prisma.product.findMany({
-    where: { isDeleted: false, isActive: true },
+    where: { isDeleted: false, isActive: true, isPosEnabled: true },
     orderBy: { name: 'asc' },
     select: { id: true, name: true, sku: true, unit: true, mrp: true, taxPercent: true, photoUrl: true, category: { select: { id: true, name: true } } },
   });
@@ -233,10 +300,26 @@ export async function posProducts(user: AuthUser) {
     ? await prisma.outletStock.findMany({ where: { outletId }, select: { productId: true, quantity: true } })
     : await prisma.mainBranchStock.findMany({ select: { productId: true, quantity: true } });
   const stockMap = new Map(stocks.map((s) => [s.productId, Number(s.quantity)]));
-  return products.map((p) => ({ ...p, stock: stockMap.get(p.id) ?? 0 }));
+
+  // Bestsellers: top products by units sold at this location in the last 30 days.
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const top = await prisma.posTransactionItem.groupBy({
+    by: ['productId'],
+    where: {
+      isDeleted: false,
+      transaction: { outletId: outletId ?? null, status: PosTransactionStatus.COMPLETED, isDeleted: false, soldAt: { gte: since } },
+    },
+    _sum: { quantity: true },
+    orderBy: { _sum: { quantity: 'desc' } },
+    take: 8,
+  });
+  const popular = new Set(top.map((t) => t.productId));
+
+  return products.map((p) => ({ ...p, stock: stockMap.get(p.id) ?? 0, popular: popular.has(p.id) }));
 }
 
 export const posService = {
   openSession, getCurrentSession, closeSession, getSessionSummary,
-  createTransaction, voidTransaction, listTransactions, posProducts,
+  createTransaction, voidTransaction, listTransactions, getTransaction, posProducts,
+  kitchenQueue, updateKotStatus,
 };

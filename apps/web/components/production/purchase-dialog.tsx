@@ -1,58 +1,84 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { addDays, format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { Plus, Trash2, Boxes, Tag, Sparkles, Package } from 'lucide-react';
+import { Plus, Trash2, Boxes, Tag, Sparkles, Package, Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
+import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useRawMaterials, useProducts } from '@/hooks/useProducts';
 import { useExpenseCategories } from '@/hooks/useExpenses';
 import { useRecordPurchase, type PurchaseItemInput } from '@/hooks/useProduction';
+import { useContacts } from '@/hooks/useContacts';
 import { useGstLookup } from '@/hooks/useGst';
 
 const METHODS = ['CASH', 'UPI', 'BANK_TRANSFER', 'CARD'];
 const HOME_STATE = '24'; // Gujarat
 const GST_RATES = [0, 5, 12, 18, 28];
+const CREDIT_DAY_OPTIONS = [7, 15, 30, 45, 60];
+const today = () => format(new Date(), 'yyyy-MM-dd');
 
 type Line =
   | { kind: 'RAW_MATERIAL'; rawMaterialId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode: string }
   | { kind: 'FINISHED_GOOD'; productId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode: string }
   | { kind: 'OTHER'; categoryId: string; description: string; amount: number; taxRate: number; hsnCode: string };
 
+const KIND_META: Record<Line['kind'], { label: string; icon: typeof Boxes }> = {
+  RAW_MATERIAL: { label: 'Raw material', icon: Boxes },
+  FINISHED_GOOD: { label: 'Finished good', icon: Package },
+  OTHER: { label: 'Other', icon: Tag },
+};
+
 export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { data: materials } = useRawMaterials();
   const { data: productsData } = useProducts();
   const { data: categories } = useExpenseCategories();
+  const { data: suppliers } = useContacts({ type: 'SUPPLIER' });
   const record = useRecordPurchase();
   const lookup = useGstLookup();
+
   const [supplierName, setSupplier] = useState('');
   const [supplierGstin, setGstin] = useState('');
   const [supplierState, setSupplierState] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [invoiceNumber, setInvoice] = useState('');
+  const [billDate, setBillDate] = useState(today());
   const [paymentMethod, setMethod] = useState('CASH');
   const [payMode, setPayMode] = useState<'full' | 'credit' | 'partial'>('full');
   const [customPaid, setCustomPaid] = useState(0);
+  const [creditDays, setCreditDays] = useState(30);
   const [lines, setLines] = useState<Line[]>([]);
+  const supplierBoxRef = useRef<HTMLDivElement>(null);
 
   const rmList = materials?.rows ?? [];
   const prodList = productsData?.rows ?? [];
   const catList = categories ?? [];
+  const supplierList = suppliers ?? [];
   const newRawLine = (): Line => { const f = rmList[0]; return { kind: 'RAW_MATERIAL', rawMaterialId: f?.id ?? '', quantity: 1, costPerUnit: Number(f?.costPerUnit ?? 0), taxRate: 5, hsnCode: '' }; };
   const newFgLine = (): Line => { const f = prodList[0]; return { kind: 'FINISHED_GOOD', productId: f?.id ?? '', quantity: 1, costPerUnit: Number(f?.basePrice ?? 0), taxRate: Number(f?.taxPercent ?? 5), hsnCode: '' }; };
   const newOtherLine = (): Line => ({ kind: 'OTHER', categoryId: catList[0]?.id ?? '', description: '', amount: 0, taxRate: 18, hsnCode: '' });
 
   useEffect(() => {
     if (open) {
-      setSupplier(''); setGstin(''); setSupplierState(''); setInvoice(''); setMethod('CASH'); setPayMode('full'); setCustomPaid(0);
+      setSupplier(''); setGstin(''); setSupplierState(''); setShowSuggestions(false);
+      setInvoice(''); setBillDate(today()); setMethod('CASH'); setPayMode('full'); setCustomPaid(0); setCreditDays(30);
       setLines(rmList.length ? [newRawLine()] : catList.length ? [newOtherLine()] : []);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, materials, categories]);
+
+  // Close the supplier suggestion list on outside click.
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => { if (supplierBoxRef.current && !supplierBoxRef.current.contains(e.target as Node)) setShowSuggestions(false); };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
 
   const update = (i: number, patch: Partial<Line>) => setLines((l) => l.map((row, idx) => (idx === i ? ({ ...row, ...patch } as Line) : row)));
   const setKind = (i: number, kind: Line['kind']) => setLines((l) => l.map((row, idx) => (idx === i ? (kind === 'RAW_MATERIAL' ? newRawLine() : kind === 'FINISHED_GOOD' ? newFgLine() : newOtherLine()) : row)));
@@ -70,6 +96,22 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const igst = intraState ? 0 : taxTotal;
   const paidNow = payMode === 'full' ? grand : payMode === 'credit' ? 0 : Math.min(Math.max(0, customPaid), grand);
   const balance = Math.max(0, grand - paidNow);
+  const dueDatePreview = balance > 0 && creditDays > 0 ? addDays(new Date(billDate), creditDays) : null;
+
+  const supplierSuggestions = useMemo(() => {
+    const q = supplierName.trim().toLowerCase();
+    if (!q) return [];
+    return supplierList.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 6);
+  }, [supplierList, supplierName]);
+
+  const pickSupplier = (id: string) => {
+    const s = supplierList.find((x) => x.id === id);
+    if (!s) return;
+    setSupplier(s.name);
+    setGstin(s.gstin ?? '');
+    setSupplierState(s.stateName ?? '');
+    setShowSuggestions(false);
+  };
 
   const fetchGstin = () => {
     const g = supplierGstin.trim().toUpperCase();
@@ -99,7 +141,12 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           : { kind: 'OTHER', categoryId: l.categoryId, description: l.description || undefined, amount: l.amount, taxRate: l.taxRate, hsnCode: l.hsnCode || undefined },
     );
     record.mutate(
-      { supplierName: supplierName || undefined, supplierGstin: supplierGstin || undefined, invoiceNumber: invoiceNumber || undefined, paymentMethod, amountPaidNow: paidNow, items },
+      {
+        supplierName: supplierName || undefined, supplierGstin: supplierGstin || undefined, invoiceNumber: invoiceNumber || undefined,
+        intakeDate: billDate, paymentMethod, amountPaidNow: paidNow,
+        creditDays: balance > 0 ? creditDays : undefined,
+        items,
+      },
       {
         onSuccess: (r) => { toast.success(`Purchase ${r.billNumber} · ${formatINR(r.totalCost)} · ${r.status.replace('_', ' ').toLowerCase()}`); onOpenChange(false); },
         onError: (e) => toast.error(apiErrorMessage(e)),
@@ -109,14 +156,43 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl">
+      <DialogContent className="max-w-5xl">
         <DialogHeader>
           <DialogTitle>Record GST Purchase Bill</DialogTitle>
           <DialogDescription>Raw materials go to inventory (cost ex-GST); GST is captured as input tax credit. Other items book as expenses.</DialogDescription>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div ref={supplierBoxRef} className="relative col-span-2 space-y-1.5 sm:col-span-1">
+            <Label>Supplier name</Label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                value={supplierName}
+                onChange={(e) => { setSupplier(e.target.value); setShowSuggestions(true); }}
+                onFocus={() => setShowSuggestions(true)}
+                placeholder="e.g. APMC Surat"
+                autoComplete="off"
+              />
+            </div>
+            {showSuggestions && supplierSuggestions.length > 0 && (
+              <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-border bg-card shadow-lg">
+                {supplierSuggestions.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onMouseDown={() => pickSupplier(s.id)}
+                    className="flex w-full flex-col items-start px-3 py-1.5 text-left text-body hover:bg-accent"
+                  >
+                    <span className="font-medium">{s.name}</span>
+                    {(s.gstin || s.phone) && <span className="text-caption text-muted-foreground">{[s.gstin, s.phone].filter(Boolean).join(' · ')}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="col-span-2 space-y-1.5 sm:col-span-1">
             <Label>Supplier GSTIN</Label>
             <div className="flex gap-2">
               <Input value={supplierGstin} onChange={(e) => setGstin(e.target.value.toUpperCase())} placeholder="24ABCDE1234F1Z5" maxLength={15} />
@@ -124,56 +200,113 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             </div>
             {supplierState && <p className="text-caption text-muted-foreground">{supplierState} · {intraState ? 'CGST+SGST' : 'IGST'}</p>}
           </div>
-          <div className="space-y-1.5"><Label>Supplier name</Label><Input value={supplierName} onChange={(e) => setSupplier(e.target.value)} placeholder="e.g. APMC Surat" /></div>
+          <div className="space-y-1.5"><Label>Bill date</Label><Input type="date" value={billDate} onChange={(e) => setBillDate(e.target.value)} max={today()} /></div>
           <div className="space-y-1.5"><Label>Invoice No.</Label><Input value={invoiceNumber} onChange={(e) => setInvoice(e.target.value)} placeholder="e.g. INV-1042" /></div>
         </div>
 
-        <div className="max-h-[34vh] space-y-2 overflow-y-auto scrollbar-thin pr-1">
-          <Label>Lines</Label>
-          {lines.map((line, i) => (
-            <div key={i} className="rounded-md border border-border p-2">
-              <div className="mb-2 flex items-center gap-2">
-                <div className="flex overflow-hidden rounded-md border border-border">
-                  <button type="button" onClick={() => setKind(i, 'RAW_MATERIAL')} className={cn('flex items-center gap-1 px-2.5 py-1 text-caption font-medium', line.kind === 'RAW_MATERIAL' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground')}><Boxes className="h-3.5 w-3.5" /> Raw</button>
-                  <button type="button" onClick={() => setKind(i, 'FINISHED_GOOD')} className={cn('flex items-center gap-1 px-2.5 py-1 text-caption font-medium', line.kind === 'FINISHED_GOOD' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground')}><Package className="h-3.5 w-3.5" /> Finished Good</button>
-                  <button type="button" onClick={() => setKind(i, 'OTHER')} className={cn('flex items-center gap-1 px-2.5 py-1 text-caption font-medium', line.kind === 'OTHER' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground')}><Tag className="h-3.5 w-3.5" /> Other</button>
-                </div>
-                <span className="ml-auto text-caption font-medium text-muted-foreground">{formatINR(lineBase(line) + lineTax(line))}</span>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => remove(i)}><Trash2 className="h-4 w-4 text-danger" /></Button>
-              </div>
+        <div className="max-h-[38vh] overflow-y-auto rounded-md border border-border scrollbar-thin">
+          <Table>
+            <THead>
+              <TR>
+                <TH className="w-[104px]">Type</TH>
+                <TH className="min-w-[180px]">Item</TH>
+                <TH className="w-[90px]">HSN</TH>
+                <TH className="w-[70px] text-right">Qty</TH>
+                <TH className="w-[100px] text-right">Rate / Amount</TH>
+                <TH className="w-[100px] text-right">Taxable</TH>
+                <TH className="w-[110px] text-right">GST</TH>
+                <TH className="w-[100px] text-right">Total</TH>
+                <TH className="w-8" />
+              </TR>
+            </THead>
+            <TBody>
+              {lines.map((line, i) => {
+                return (
+                  <TR key={i}>
+                    <TD className="px-1.5 py-1.5">
+                      <div className="flex overflow-hidden rounded-md border border-border">
+                        {(Object.keys(KIND_META) as Line['kind'][]).map((k) => {
+                          const Icon = KIND_META[k].icon;
+                          return (
+                            <button
+                              key={k}
+                              type="button"
+                              title={KIND_META[k].label}
+                              onClick={() => setKind(i, k)}
+                              className={cn('flex h-8 w-8 items-center justify-center', line.kind === k ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-accent')}
+                            >
+                              <Icon className="h-3.5 w-3.5" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </TD>
 
-              {line.kind === 'RAW_MATERIAL' ? (
-                <div className="grid grid-cols-[1fr_70px_90px_84px_90px] gap-2">
-                  <Select value={line.rawMaterialId} onChange={(e) => onMaterial(i, e.target.value)}>{rmList.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}</Select>
-                  <Input type="number" step="0.01" placeholder="Qty" value={line.quantity} onChange={(e) => update(i, { quantity: Number(e.target.value) } as Partial<Line>)} />
-                  <Input type="number" step="0.01" placeholder="Cost" value={line.costPerUnit} onChange={(e) => update(i, { costPerUnit: Number(e.target.value) } as Partial<Line>)} />
-                  <Select value={line.taxRate} onChange={(e) => update(i, { taxRate: Number(e.target.value) } as Partial<Line>)}>{GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}</Select>
-                  <Input placeholder="HSN" value={line.hsnCode} onChange={(e) => update(i, { hsnCode: e.target.value } as Partial<Line>)} />
-                </div>
-              ) : line.kind === 'FINISHED_GOOD' ? (
-                <div className="grid grid-cols-[1fr_70px_90px_84px_90px] gap-2">
-                  <Select value={line.productId} onChange={(e) => onProduct(i, e.target.value)}>{prodList.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>)}</Select>
-                  <Input type="number" step="0.01" placeholder="Qty" value={line.quantity} onChange={(e) => update(i, { quantity: Number(e.target.value) } as Partial<Line>)} />
-                  <Input type="number" step="0.01" placeholder="Cost" value={line.costPerUnit} onChange={(e) => update(i, { costPerUnit: Number(e.target.value) } as Partial<Line>)} />
-                  <Select value={line.taxRate} onChange={(e) => update(i, { taxRate: Number(e.target.value) } as Partial<Line>)}>{GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}</Select>
-                  <Input placeholder="HSN" value={line.hsnCode} onChange={(e) => update(i, { hsnCode: e.target.value } as Partial<Line>)} />
-                </div>
-              ) : (
-                <div className="grid grid-cols-[180px_1fr_84px_90px_90px] gap-2">
-                  <Select value={line.categoryId} onChange={(e) => update(i, { categoryId: e.target.value } as Partial<Line>)}>{catList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select>
-                  <Input placeholder="Description" value={line.description} onChange={(e) => update(i, { description: e.target.value } as Partial<Line>)} />
-                  <Select value={line.taxRate} onChange={(e) => update(i, { taxRate: Number(e.target.value) } as Partial<Line>)}>{GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}</Select>
-                  <Input placeholder="HSN/SAC" value={line.hsnCode} onChange={(e) => update(i, { hsnCode: e.target.value } as Partial<Line>)} />
-                  <Input type="number" step="0.01" placeholder="Amount" value={line.amount} onChange={(e) => update(i, { amount: Number(e.target.value) } as Partial<Line>)} />
-                </div>
+                    <TD className="px-1.5 py-1.5">
+                      {line.kind === 'RAW_MATERIAL' ? (
+                        <Select className="h-8" value={line.rawMaterialId} onChange={(e) => onMaterial(i, e.target.value)}>
+                          {rmList.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
+                        </Select>
+                      ) : line.kind === 'FINISHED_GOOD' ? (
+                        <Select className="h-8" value={line.productId} onChange={(e) => onProduct(i, e.target.value)}>
+                          {prodList.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>)}
+                        </Select>
+                      ) : (
+                        <div className="space-y-1">
+                          <Select className="h-8" value={line.categoryId} onChange={(e) => update(i, { categoryId: e.target.value } as Partial<Line>)}>
+                            {catList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </Select>
+                          <Input className="h-7 text-caption" placeholder="Description (optional)" value={line.description} onChange={(e) => update(i, { description: e.target.value } as Partial<Line>)} />
+                        </div>
+                      )}
+                    </TD>
+
+                    <TD className="px-1.5 py-1.5"><Input className="h-8" placeholder="HSN" value={line.hsnCode} onChange={(e) => update(i, { hsnCode: e.target.value } as Partial<Line>)} /></TD>
+
+                    <TD className="px-1.5 py-1.5">
+                      {line.kind === 'OTHER' ? (
+                        <p className="text-right text-muted-foreground">—</p>
+                      ) : (
+                        <Input type="number" step="0.01" className="h-8 text-right" value={line.quantity} onChange={(e) => update(i, { quantity: Number(e.target.value) } as Partial<Line>)} />
+                      )}
+                    </TD>
+
+                    <TD className="px-1.5 py-1.5">
+                      {line.kind === 'OTHER' ? (
+                        <Input type="number" step="0.01" className="h-8 text-right" value={line.amount} onChange={(e) => update(i, { amount: Number(e.target.value) } as Partial<Line>)} />
+                      ) : (
+                        <Input type="number" step="0.01" className="h-8 text-right" value={line.costPerUnit} onChange={(e) => update(i, { costPerUnit: Number(e.target.value) } as Partial<Line>)} />
+                      )}
+                    </TD>
+
+                    <TD className="px-1.5 py-1.5 text-right font-medium">{formatINR(lineBase(line))}</TD>
+
+                    <TD className="px-1.5 py-1.5">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Select className="h-8 w-16" value={line.taxRate} onChange={(e) => update(i, { taxRate: Number(e.target.value) } as Partial<Line>)}>
+                          {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
+                        </Select>
+                        <span className="w-14 shrink-0 text-right text-caption text-muted-foreground">{formatINR(lineTax(line))}</span>
+                      </div>
+                    </TD>
+
+                    <TD className="px-1.5 py-1.5 text-right font-semibold">{formatINR(lineBase(line) + lineTax(line))}</TD>
+
+                    <TD className="px-1 py-1.5"><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => remove(i)}><Trash2 className="h-4 w-4 text-danger" /></Button></TD>
+                  </TR>
+                );
+              })}
+              {lines.length === 0 && (
+                <TR><TD colSpan={9} className="py-8 text-center text-muted-foreground">No lines yet — add one below.</TD></TR>
               )}
-            </div>
-          ))}
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newRawLine()])} disabled={rmList.length === 0}><Plus className="h-4 w-4" /> Raw material</Button>
-            <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newFgLine()])} disabled={prodList.length === 0}><Plus className="h-4 w-4" /> Finished good</Button>
-            <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newOtherLine()])} disabled={catList.length === 0}><Plus className="h-4 w-4" /> Other item</Button>
-          </div>
+            </TBody>
+          </Table>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newRawLine()])} disabled={rmList.length === 0}><Plus className="h-4 w-4" /> Raw material</Button>
+          <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newFgLine()])} disabled={prodList.length === 0}><Plus className="h-4 w-4" /> Finished good</Button>
+          <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newOtherLine()])} disabled={catList.length === 0}><Plus className="h-4 w-4" /> Other item</Button>
         </div>
 
         {/* GST summary */}
@@ -202,6 +335,24 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             <Select className="h-9 w-40" value={paymentMethod} onChange={(e) => setMethod(e.target.value)}>{METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}</Select>
             <div className="ml-auto text-right text-caption"><span className="text-success">Paying {formatINR(paidNow)}</span>{balance > 0 && <span className="ml-2 text-danger">Balance {formatINR(balance)}</span>}</div>
           </div>
+
+          {balance > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+              <span className="text-caption font-medium text-muted-foreground">Credit days</span>
+              {CREDIT_DAY_OPTIONS.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setCreditDays(d)}
+                  className={cn('rounded-md border px-2.5 py-1 text-caption font-semibold', creditDays === d ? 'border-primary bg-accent text-primary' : 'border-border text-muted-foreground')}
+                >
+                  {d}
+                </button>
+              ))}
+              <Input type="number" className="h-8 w-20" value={creditDays} onChange={(e) => setCreditDays(Math.max(0, Number(e.target.value)))} />
+              {dueDatePreview && <span className="ml-auto text-caption text-muted-foreground">Due <b className="text-foreground">{format(dueDatePreview, 'dd MMM yyyy')}</b> · reminders 10 &amp; 5 days before</span>}
+            </div>
+          )}
         </div>
 
         <DialogFooter>

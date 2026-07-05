@@ -5,6 +5,7 @@ import { logger } from '../config/logger';
 export const JobName = {
   REFRESH_ANALYTICS: 'refresh-analytics-views',
   GENERATE_BILL_PDF: 'generate-bill-pdf',
+  SUPPLIER_BILL_REMINDERS: 'supplier-bill-reminders',
 } as const;
 
 export type JobNameValue = (typeof JobName)[keyof typeof JobName];
@@ -37,12 +38,15 @@ export async function startJobs(): Promise<void> {
   // Lazy-load handlers to avoid circular imports with feature modules.
   const { refreshAnalyticsHandler } = await import('./handlers/refreshAnalytics');
   const { generateBillPdfHandler } = await import('./handlers/generateBillPdf');
+  const { supplierBillRemindersHandler } = await import('./handlers/supplierBillReminders');
 
   await boss.work(JobName.REFRESH_ANALYTICS, refreshAnalyticsHandler);
   await boss.work(JobName.GENERATE_BILL_PDF, generateBillPdfHandler);
+  await boss.work(JobName.SUPPLIER_BILL_REMINDERS, supplierBillRemindersHandler);
 
-  // Schedule recurring analytics refresh.
+  // Schedule recurring analytics refresh + daily supplier-bill due-date sweep.
   await boss.schedule(JobName.REFRESH_ANALYTICS, env.MATERIALIZED_VIEW_REFRESH_CRON, {});
+  await boss.schedule(JobName.SUPPLIER_BILL_REMINDERS, env.SUPPLIER_BILL_REMINDER_CRON, {});
 
   logger.info('pg-boss started (queues + scheduled jobs registered)');
 }

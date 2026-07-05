@@ -12,7 +12,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import {
-  useCategories, useCreateCategory, useProducts, useDeleteProduct,
+  useCategories, useCreateCategory, useProducts, useDeleteProduct, useSaveProduct,
   type Product,
 } from '@/hooks/useProducts';
 import { ProductFormDialog } from '@/components/products/product-form-dialog';
@@ -54,6 +54,17 @@ function ProductsTab() {
   const [creating, setCreating] = useState(false);
   const [bomProduct, setBomProduct] = useState<Product | null>(null);
   const del = useDeleteProduct();
+  const save = useSaveProduct();
+
+  const togglePos = (p: Product) => {
+    save.mutate(
+      { id: p.id, isPosEnabled: !p.isPosEnabled },
+      {
+        onSuccess: () => toast.success(p.isPosEnabled ? `${p.name} hidden from POS` : `${p.name} now sellable at POS`),
+        onError: (e) => toast.error(apiErrorMessage(e)),
+      },
+    );
+  };
 
   return (
     <Card className="overflow-hidden">
@@ -75,7 +86,7 @@ function ProductsTab() {
             <TR>
               <TH>Product</TH><TH>SKU</TH><TH>Category</TH><TH>Unit</TH>
               <TH className="text-right">Base</TH><TH className="text-right">MRP</TH><TH className="text-right">Tax</TH>
-              <TH>Status</TH><TH className="text-right">Actions</TH>
+              <TH>Status</TH><TH>POS</TH><TH className="text-right">Actions</TH>
             </TR>
           </THead>
           <TBody>
@@ -89,6 +100,11 @@ function ProductsTab() {
                 <TD className="text-right">{formatINR(p.mrp)}</TD>
                 <TD className="text-right">{Number(p.taxPercent)}%</TD>
                 <TD><Badge variant={p.isActive ? 'success' : 'neutral'}>{p.isActive ? 'Active' : 'Inactive'}</Badge></TD>
+                <TD>
+                  <button onClick={() => togglePos(p)} title="Click to toggle POS availability">
+                    <Badge variant={p.isPosEnabled ? 'success' : 'neutral'}>{p.isPosEnabled ? 'POS' : 'Hidden'}</Badge>
+                  </button>
+                </TD>
                 <TD>
                   <div className="flex justify-end gap-1">
                     <Button variant="ghost" size="icon" title="Bill of materials" onClick={() => setBomProduct(p)}><ListTree className="h-4 w-4" /></Button>

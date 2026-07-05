@@ -9,8 +9,8 @@ import { requireRole } from '../../shared/guards/roleGuard';
 import { created, ok } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import {
-  closeSessionSchema, createTransactionSchema, openSessionSchema, voidTransactionSchema,
-  type CreateTransactionInput, type OpenSessionInput, type VoidTransactionInput,
+  closeSessionSchema, createTransactionSchema, openSessionSchema, updateKotSchema, voidTransactionSchema,
+  type CreateTransactionInput, type OpenSessionInput, type UpdateKotInput, type VoidTransactionInput,
 } from './pos.schema';
 import { posService } from './pos.service';
 
@@ -33,6 +33,11 @@ router.get('/sessions/:id/summary', validate({ params: idParam }), asyncHandler(
 
 router.get('/transactions', validate({ query: z.object({ sessionId: z.string().uuid() }) }), asyncHandler(async (req: Request, res: Response) => ok(res, await posService.listTransactions(req.query.sessionId as string))));
 router.post('/transactions', validate({ body: createTransactionSchema }), asyncHandler(async (req: Request, res: Response) => created(res, await posService.createTransaction(user(req), req.body as CreateTransactionInput), 'Sale completed')));
+router.get('/transactions/:id', validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await posService.getTransaction(user(req), req.params.id))));
 router.post('/transactions/:id/void', validate({ params: idParam, body: voidTransactionSchema }), asyncHandler(async (req: Request, res: Response) => ok(res, await posService.voidTransaction(user(req), req.params.id, req.body as VoidTransactionInput), 'Transaction voided')));
+
+// Kitchen board: active tickets + ticket status advance.
+router.get('/kitchen', asyncHandler(async (req: Request, res: Response) => ok(res, await posService.kitchenQueue(user(req)))));
+router.patch('/transactions/:id/kot', validate({ params: idParam, body: updateKotSchema }), asyncHandler(async (req: Request, res: Response) => ok(res, await posService.updateKotStatus(user(req), req.params.id, req.body as UpdateKotInput), 'Ticket updated')));
 
 export const posRouter = router;

@@ -67,6 +67,12 @@ enum OutletOrderStatus {
   CANCELLED
 }
 
+// Where confirmed stock is pulled from when the order is delivered.
+enum FulfillmentSource {
+  MAIN_BRANCH
+  GODOWN
+}
+
 enum BillStatus {
   UNPAID
   PARTIALLY_PAID
@@ -122,6 +128,13 @@ enum PosTransactionStatus {
   COMPLETED
   VOID
   HELD
+}
+
+// Kitchen order ticket lifecycle for the prep-counter board.
+enum KotStatus {
+  PREPARING
+  READY
+  DELIVERED
 }
 
 enum PosPaymentMode {
@@ -244,6 +257,10 @@ model Product {
   reorderLevel         Decimal         @default(0) @map("reorder_level") @db.Decimal(12, 2)
   batchTrackingEnabled Boolean         @default(false) @map("batch_tracking_enabled")
   isActive             Boolean         @default(true) @map("is_active")
+  // Whether this product is sellable directly at the POS counter (distinct from
+  // being an active catalog item — e.g. wholesale-only products can stay active
+  // for franchise ordering but be hidden from the cashier's tap-to-sell grid).
+  isPosEnabled         Boolean         @default(true) @map("is_pos_enabled")
   isDeleted            Boolean         @default(false) @map("is_deleted")
   createdAt            DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt            DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -480,6 +497,8 @@ model OutletOrder {
   confirmedAt  DateTime?         @map("confirmed_at") @db.Timestamptz(6)
   dispatchedAt DateTime?         @map("dispatched_at") @db.Timestamptz(6)
   deliveredAt  DateTime?         @map("delivered_at") @db.Timestamptz(6)
+  // Set at confirmation: which location stock is pulled from on delivery.
+  fulfillmentSource FulfillmentSource? @map("fulfillment_source")
   notes        String?
   isDeleted    Boolean           @default(false) @map("is_deleted")
   createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -756,6 +775,8 @@ model PosTransaction {
   cardAmount        Decimal              @default(0) @map("card_amount") @db.Decimal(12, 2)
   upiAmount         Decimal              @default(0) @map("upi_amount") @db.Decimal(12, 2)
   voidReason        String?              @map("void_reason")
+  tokenNumber       Int?                 @map("token_number") // daily order token, resets per outlet per day
+  kotStatus         KotStatus            @default(PREPARING) @map("kot_status")
   soldById          String               @map("sold_by") @db.Uuid
   soldAt            DateTime             @default(now()) @map("sold_at") @db.Timestamptz(6)
   clientUuid        String?              @unique @map("client_uuid") @db.Uuid // offline idempotency key
@@ -770,6 +791,7 @@ model PosTransaction {
   @@index([sessionId])
   @@index([outletId, soldAt])
   @@index([status])
+  @@index([outletId, kotStatus])
   @@map("pos_transactions")
 }
 
@@ -845,6 +867,9 @@ model SupplierBill {
   balanceDue    Decimal            @map("balance_due") @db.Decimal(12, 2)
   status        SupplierBillStatus @default(UNPAID)
   paymentMethod PaymentMethod?     @map("payment_method")
+  // Credit terms: set only when the bill isn't paid in full at entry.
+  creditDays    Int?               @map("credit_days")
+  dueDate       DateTime?          @map("due_date") @db.Timestamptz(6)
   notes         String?
   isDeleted     Boolean            @default(false) @map("is_deleted")
   createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -858,6 +883,7 @@ model SupplierBill {
 
   @@index([status, billDate])
   @@index([supplierName])
+  @@index([status, dueDate])
   @@map("supplier_bills")
 }
 
@@ -906,26 +932,40 @@ model SupplierPayment {
   @@map("supplier_payments")
 }
 
-// ─────────────────────────────── CUSTOMER MASTER (GST) ──────────────────────
+// ─────────────────────────────── CONTACT MASTER (GST) ───────────────────────
 
-model Customer {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+enum ContactType {
+  CUSTOMER
+  SUPPLIER
+  OTHER
+}
+
+model Contact {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type        ContactType @default(CUSTOMER)
   name        String
   gstin       String?
-  legalName   String?  @map("legal_name")
-  tradeName   String?  @map("trade_name")
-  stateCode   String?  @map("state_code")
-  stateName   String?  @map("state_name")
+  legalName   String?     @map("legal_name")
+  tradeName   String?     @map("trade_name")
+  stateCode   String?     @map("state_code")
+  stateName   String?     @map("state_name")
   address     String?
   phone       String?
+  whatsapp    String?
   email       String?
-  isActive    Boolean  @default(true) @map("is_active")
-  isDeleted   Boolean  @default(false) @map("is_deleted")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdById String?  @map("created_by") @db.Uuid
+  // Bank details — all optional, mainly useful for suppliers/other paid by transfer.
+  bankAccountHolder String? @map("bank_account_holder")
+  bankName          String? @map("bank_name")
+  bankAccountNumber String? @map("bank_account_number")
+  bankIfsc          String? @map("bank_ifsc")
+  isActive    Boolean     @default(true) @map("is_active")
+  isDeleted   Boolean     @default(false) @map("is_deleted")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?     @map("created_by") @db.Uuid
 
+  @@index([type])
   @@index([gstin])
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
-  @@map("customers")
+  @@map("contacts")
 }

@@ -13,6 +13,7 @@ export interface PosProduct {
   taxPercent: string;
   photoUrl: string | null;
   stock: number;
+  popular: boolean;
   category: { id: string; name: string };
 }
 
@@ -25,7 +26,41 @@ export interface PosSession {
   openedAt: string;
 }
 
+export type KotStatus = 'PREPARING' | 'READY' | 'DELIVERED';
+
 export interface PosTxnItem { productId: string; quantity: number; discount: number }
+
+export interface PosTxnItemDetail {
+  id: string;
+  productNameSnapshot: string;
+  quantity: string;
+  unitPrice: string;
+  discount: string;
+  taxAmount: string;
+  lineTotal: string;
+}
+
+export interface PosTxn {
+  id: string;
+  receiptNumber: string;
+  tokenNumber: number | null;
+  status: 'COMPLETED' | 'VOID' | 'HELD';
+  kotStatus: KotStatus;
+  customerName: string | null;
+  customerPhone: string | null;
+  subTotal: string;
+  itemDiscount: string;
+  billDiscount: string;
+  taxTotal: string;
+  grandTotal: string;
+  paymentMode: 'CASH' | 'CARD' | 'UPI' | 'SPLIT';
+  cashReceived: string | null;
+  changeGiven: string | null;
+  voidReason: string | null;
+  soldAt: string;
+  items: PosTxnItemDetail[];
+}
+
 export interface CreateTxnPayload {
   sessionId: string;
   clientUuid?: string;
@@ -49,6 +84,15 @@ export interface SessionSummary {
   transactionCount: number;
   voidCount: number;
   openingCash: number;
+}
+
+export interface KitchenTicket {
+  id: string;
+  tokenNumber: number | null;
+  kotStatus: KotStatus;
+  soldAt: string;
+  customerName: string | null;
+  items: Array<{ productNameSnapshot: string; quantity: string }>;
 }
 
 export function usePosProducts() {
@@ -86,10 +130,44 @@ export function useSessionSummary(id: string | null) {
 export function useCreateSale() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: CreateTxnPayload) => (await api.post<ApiSuccess<{ receiptNumber: string; grandTotal: string; changeGiven: string | null }>>('/pos/transactions', payload)).data.data,
+    mutationFn: async (payload: CreateTxnPayload) => (await api.post<ApiSuccess<PosTxn>>('/pos/transactions', payload)).data.data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pos', 'products'] });
       qc.invalidateQueries({ queryKey: ['pos', 'summary'] });
+      qc.invalidateQueries({ queryKey: ['pos', 'txns'] });
+      qc.invalidateQueries({ queryKey: ['pos', 'kitchen'] });
     },
+  });
+}
+
+export function useSessionTransactions(sessionId: string | null) {
+  return useQuery({
+    queryKey: ['pos', 'txns', sessionId],
+    enabled: !!sessionId,
+    queryFn: async () => (await api.get<ApiSuccess<PosTxn[]>>('/pos/transactions', { params: { sessionId } })).data.data,
+  });
+}
+
+export function useVoidTransaction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => (await api.post(`/pos/transactions/${id}/void`, { reason })).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pos'] }),
+  });
+}
+
+export function useKitchenQueue() {
+  return useQuery({
+    queryKey: ['pos', 'kitchen'],
+    queryFn: async () => (await api.get<ApiSuccess<KitchenTicket[]>>('/pos/kitchen')).data.data,
+    refetchInterval: 15_000, // realtime socket is primary; this is the safety net
+  });
+}
+
+export function useUpdateKot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: 'READY' | 'DELIVERED' }) => (await api.patch(`/pos/transactions/${id}/kot`, { status })).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pos', 'kitchen'] }),
   });
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { format } from 'date-fns';
+import { format, differenceInCalendarDays } from 'date-fns';
 import { Wallet, TrendingUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, IndianRupee } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge, statusBadgeVariant } from '@/components/ui/badge';
@@ -17,6 +17,19 @@ import { PaySupplierDialog } from '@/components/payables/pay-supplier-dialog';
 
 const AGING_COLOR: Record<string, string> = { current: 'bg-success', '0-7': 'bg-success', '1-7': 'bg-warning', '8-15': 'bg-warning', '16-30': 'bg-danger', '30+': 'bg-danger' };
 const AGING_LABEL: Record<string, string> = { current: 'Not due', '0-7': '0–7 days', '1-7': '1–7 days', '8-15': '8–15 days', '16-30': '16–30 days', '30+': '30+ days' };
+
+/** Due-date pill: red once overdue, amber inside the 5-day reminder window, muted otherwise. */
+function DueCell({ dueDate }: { dueDate: string | null }) {
+  if (!dueDate) return <span className="text-muted-foreground">—</span>;
+  const days = differenceInCalendarDays(new Date(dueDate), new Date());
+  const cls = days < 0 ? 'text-danger font-semibold' : days <= 5 ? 'text-warning font-semibold' : 'text-muted-foreground';
+  return (
+    <span className={cls}>
+      {format(new Date(dueDate), 'dd MMM yyyy')}
+      {days < 0 ? ` · ${Math.abs(days)}d overdue` : days <= 10 ? ` · ${days}d left` : ''}
+    </span>
+  );
+}
 
 export default function PaymentsPage() {
   const role = useAuthStore((s) => s.user?.role);
@@ -150,7 +163,7 @@ function PayablesView() {
         </CardHeader>
         {!bills?.length ? <p className="py-10 text-center text-body text-muted-foreground">No supplier bills.</p> : (
           <Table>
-            <THead><TR><TH>Bill #</TH><TH>Supplier</TH><TH>Invoice</TH><TH>Date</TH><TH className="text-right">Total</TH><TH className="text-right">Balance</TH><TH>Status</TH><TH className="text-right">Action</TH></TR></THead>
+            <THead><TR><TH>Bill #</TH><TH>Supplier</TH><TH>Invoice</TH><TH>Date</TH><TH className="text-right">Total</TH><TH className="text-right">Balance</TH><TH>Due</TH><TH>Status</TH><TH className="text-right">Action</TH></TR></THead>
             <TBody>
               {bills.map((b) => (
                 <TR key={b.id}>
@@ -160,6 +173,7 @@ function PayablesView() {
                   <TD>{format(new Date(b.billDate), 'dd MMM yyyy')}</TD>
                   <TD className="text-right">{formatINR(b.totalAmount)}</TD>
                   <TD className={cn('text-right', Number(b.balanceDue) > 0 && 'font-medium text-danger')}>{formatINR(b.balanceDue)}</TD>
+                  <TD><DueCell dueDate={b.dueDate} /></TD>
                   <TD><Badge variant={statusBadgeVariant(b.status)}>{b.status.replace('_', ' ')}</Badge></TD>
                   <TD className="text-right">
                     {b.status !== 'PAID'

@@ -27,6 +27,7 @@ export const createProductSchema = z.object({
 });
 export const updateProductSchema = createProductSchema.partial().extend({
   isActive: z.boolean().optional(),
+  isPosEnabled: z.boolean().optional(),
 });
 
 export const listProductsQuerySchema = paginationQuerySchema.extend({

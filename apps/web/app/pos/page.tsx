@@ -1,18 +1,44 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
-import { Search, Plus, Minus, Trash2, X, Pause, Play, ArrowLeft, Wifi, WifiOff, Receipt } from 'lucide-react';
+import {
+  Search, Plus, Minus, Trash2, Pause, Play, ArrowLeft, Wifi, WifiOff, Receipt,
+  ChefHat, ReceiptText, Power, Star, Keyboard, X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
-import { useCurrentSession, useOpenSession, useCloseSession, usePosProducts, useCreateSale, useSessionSummary, type PosProduct, type CreateTxnPayload } from '@/hooks/usePos';
+import { useAuthStore } from '@/store/auth.store';
+import {
+  useCurrentSession, useOpenSession, usePosProducts, useCreateSale, useSessionSummary,
+  type PosProduct, type PosTxn, type CreateTxnPayload,
+} from '@/hooks/usePos';
 import { usePosCart, cartTotals } from '@/store/pos-cart.store';
 import { enqueueSale, flushQueue, queueSize } from '@/lib/offline-queue';
+import { beepAdd, beepError, beepSuccess } from '@/lib/beep';
+import { PaymentDialog, type PayMode } from '@/components/pos/payment-dialog';
+import { SuccessOverlay } from '@/components/pos/success-overlay';
+import { EodDialog } from '@/components/pos/eod-dialog';
+import { TxnsDrawer } from '@/components/pos/txns-drawer';
+
+/** Stable accent color per category for tiles/avatars. */
+const CAT_COLORS = [
+  'bg-orange-500/15 text-orange-600',
+  'bg-emerald-500/15 text-emerald-600',
+  'bg-sky-500/15 text-sky-600',
+  'bg-violet-500/15 text-violet-600',
+  'bg-rose-500/15 text-rose-600',
+  'bg-amber-500/15 text-amber-700',
+];
+function catColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  return CAT_COLORS[Math.abs(h) % CAT_COLORS.length];
+}
 
 export default function PosPage() {
   const { data: session, isLoading } = useCurrentSession();
@@ -21,34 +47,60 @@ export default function PosPage() {
   return <PosTerminal sessionId={session.id} sessionNumber={session.sessionNumber} />;
 }
 
+// ─────────────────────────────── Open session ───────────────────────────────
 function OpenSessionScreen() {
   const open = useOpenSession();
   const [cash, setCash] = useState(2000);
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4">
-      <Receipt className="h-12 w-12 text-primary" />
-      <h1 className="text-page-heading font-bold">Open POS Session</h1>
-      <div className="w-64 space-y-2">
+    <div className="flex h-full flex-col items-center justify-center gap-6 p-6">
+      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8 shadow-sm">
+        <div className="mb-6 flex flex-col items-center gap-2 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground"><Receipt className="h-7 w-7" /></div>
+          <h1 className="text-page-heading font-bold">Open POS Session</h1>
+          <p className="text-body text-muted-foreground">Count the drawer before you start selling.</p>
+        </div>
         <label className="text-body font-medium">Opening cash in drawer</label>
-        <Input type="number" value={cash} onChange={(e) => setCash(Number(e.target.value))} className="h-12 text-lg" />
+        <Input type="number" value={cash} onChange={(e) => setCash(Number(e.target.value))} className="mt-1.5 h-14 text-center text-2xl font-bold" />
+        <div className="mt-2 flex gap-2">
+          {[1000, 2000, 5000].map((v) => (
+            <button key={v} onClick={() => setCash(v)} className={cn('flex-1 rounded-md border py-1.5 text-caption font-semibold', cash === v ? 'border-primary text-primary' : 'border-border text-muted-foreground')}>
+              {formatINR(v)}
+            </button>
+          ))}
+        </div>
+        <Button size="lg" className="mt-5 h-12 w-full" loading={open.isPending} onClick={() => open.mutate(cash, { onError: (e) => toast.error(apiErrorMessage(e)) })}>
+          Start Selling
+        </Button>
       </div>
-      <Button size="lg" loading={open.isPending} onClick={() => open.mutate(cash, { onError: (e) => toast.error(apiErrorMessage(e)) })}>Start Selling</Button>
       <Button asChild variant="ghost"><Link href="/"><ArrowLeft className="h-4 w-4" /> Back to Dashboard</Link></Button>
     </div>
   );
 }
 
+// ─────────────────────────────── POS terminal ───────────────────────────────
 function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionNumber: string }) {
   const { data: products, isLoading } = usePosProducts();
+  const { data: summary } = useSessionSummary(sessionId);
+  const cashierName = useAuthStore((s) => s.user?.name);
   const cart = usePosCart();
   const totals = cartTotals(cart.items, cart.billDiscount);
   const sale = useCreateSale();
+
   const [search, setSearch] = useState('');
   const [activeCat, setActiveCat] = useState('all');
   const [online, setOnline] = useState(true);
   const [pendingSync, setPendingSync] = useState(0);
   const [payOpen, setPayOpen] = useState(false);
   const [eodOpen, setEodOpen] = useState(false);
+  const [txnsOpen, setTxnsOpen] = useState(false);
+  const [successTxn, setSuccessTxn] = useState<PosTxn | null>(null);
+  const [qtyBuffer, setQtyBuffer] = useState('');
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const [expandedLine, setExpandedLine] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const dialogOpen = payOpen || eodOpen || txnsOpen || !!successTxn;
 
   // Online/offline detection + background sync.
   useEffect(() => {
@@ -72,17 +124,70 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const categories = useMemo(() => {
     const map = new Map<string, string>();
     (products ?? []).forEach((p) => map.set(p.category.id, p.category.name));
-    return [{ id: 'all', name: 'All' }, ...[...map].map(([id, name]) => ({ id, name }))];
+    const hasPopular = (products ?? []).some((p) => p.popular);
+    return [
+      { id: 'all', name: 'All' },
+      ...(hasPopular ? [{ id: 'popular', name: '★ Popular' }] : []),
+      ...[...map].map(([id, name]) => ({ id, name })),
+    ];
   }, [products]);
 
-  const filtered = (products ?? []).filter(
-    (p) => (activeCat === 'all' || p.category.id === activeCat) && (search === '' || p.name.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase())),
+  const filtered = useMemo(
+    () =>
+      (products ?? []).filter(
+        (p) =>
+          (activeCat === 'all' || (activeCat === 'popular' ? p.popular : p.category.id === activeCat)) &&
+          (search === '' || p.name.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase())),
+      ),
+    [products, activeCat, search],
   );
 
-  const completeSale = (payload: Omit<CreateTxnPayload, 'sessionId' | 'items' | 'clientUuid'>) => {
+  /** Add a product honoring the typed-ahead quantity buffer, with feedback. */
+  const addProduct = (p: PosProduct) => {
+    if (p.stock <= 0) { beepError(); toast.error(`${p.name} is out of stock`); return; }
+    const buffered = parseFloat(qtyBuffer);
+    const existing = cart.items.find((i) => i.productId === p.id);
+    cart.addItem({ productId: p.id, name: p.name, unit: p.unit, mrp: Number(p.mrp), taxPercent: Number(p.taxPercent) });
+    if (!Number.isNaN(buffered) && buffered > 0) cart.setQty(p.id, (existing?.quantity ?? 0) + buffered);
+    setQtyBuffer('');
+    beepAdd();
+    setFlashId(p.id);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashId(null), 350);
+  };
+
+  /** Barcode/SKU fast path: Enter in search adds the exact or only match. */
+  const onSearchEnter = () => {
+    const q = search.trim().toLowerCase();
+    if (!q) return;
+    const exact = (products ?? []).find((p) => p.sku.toLowerCase() === q);
+    const target = exact ?? (filtered.length === 1 ? filtered[0] : undefined);
+    if (target) { addProduct(target); setSearch(''); } else { beepError(); }
+  };
+
+  // Global shortcuts: F2 search · F4 sales · F8 hold · F9 pay · digits = qty buffer.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (dialogOpen) return;
+      if (e.key === 'F2') { e.preventDefault(); searchRef.current?.focus(); return; }
+      if (e.key === 'F4') { e.preventDefault(); setTxnsOpen(true); return; }
+      if (e.key === 'F8') { e.preventDefault(); cart.hold(); return; }
+      if (e.key === 'F9') { e.preventDefault(); if (cart.items.length) setPayOpen(true); return; }
+      const inInput = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA';
+      if (e.key === 'Escape') { setQtyBuffer(''); if (!inInput) setSearch(''); return; }
+      if (inInput) return;
+      if (/^[0-9.]$/.test(e.key)) setQtyBuffer((b) => (e.key === '.' && b.includes('.') ? b : (b + e.key).slice(0, 6)));
+      else if (e.key === 'Backspace') setQtyBuffer((b) => b.slice(0, -1));
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [dialogOpen, cart]);
+
+  const completeSale = (payload: { paymentMode: PayMode; cashReceived?: number; split?: { cash: number; card: number; upi: number } }) => {
     const full: CreateTxnPayload = {
       sessionId,
       clientUuid: crypto.randomUUID(),
+      billDiscount: cart.billDiscount,
       items: cart.items.map((i) => ({ productId: i.productId, quantity: i.quantity, discount: i.discount })),
       ...payload,
     };
@@ -96,210 +201,260 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
     }
     sale.mutate(full, {
       onSuccess: (res) => {
-        toast.success(`Sale ${res.receiptNumber} complete${res.changeGiven && Number(res.changeGiven) > 0 ? ` · Change ${formatINR(res.changeGiven)}` : ''}`);
+        beepSuccess();
         cart.clear();
         setPayOpen(false);
+        setSuccessTxn(res);
       },
-      onError: (e) => toast.error(apiErrorMessage(e)),
+      onError: (e) => { beepError(); toast.error(apiErrorMessage(e)); },
     });
   };
 
+  const popular = (products ?? []).filter((p) => p.popular).slice(0, 8);
+
   return (
-    <div className="grid h-full grid-cols-1 lg:grid-cols-[1fr_360px]">
+    <div className="relative grid h-full grid-cols-1 lg:grid-cols-[1fr_380px]">
       {/* LEFT: products */}
       <div className="flex h-full flex-col overflow-hidden border-r border-border">
+        {/* Top bar */}
         <div className="flex items-center gap-2 border-b border-border bg-card p-3">
           <Button asChild variant="ghost" size="icon"><Link href="/"><ArrowLeft className="h-5 w-5" /></Link></Button>
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
-            <Input autoFocus placeholder="Search or scan SKU..." className="h-11 pl-10 text-base" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Input
+              ref={searchRef}
+              autoFocus
+              placeholder="Scan barcode or search… (F2)"
+              className="h-11 pl-10 text-base"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSearchEnter(); } }}
+            />
           </div>
+          {qtyBuffer && (
+            <button onClick={() => setQtyBuffer('')} className="flex items-center gap-1 rounded-md bg-primary px-3 py-2 font-bold text-primary-foreground">
+              {qtyBuffer} × <X className="h-3.5 w-3.5" />
+            </button>
+          )}
           <span className={cn('flex items-center gap-1 rounded-md px-2 py-1 text-caption font-medium', online ? 'text-success' : 'text-danger')}>
-            {online ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}{online ? 'Online' : 'Offline'}{pendingSync > 0 && ` · ${pendingSync} queued`}
+            {online ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+            {online ? 'Online' : 'Offline'}
+            {pendingSync > 0 && ` · ${pendingSync} queued`}
           </span>
         </div>
+
+        {/* Category chips */}
         <div className="flex gap-2 overflow-x-auto border-b border-border bg-card p-2 scrollbar-thin">
           {categories.map((c) => (
-            <button key={c.id} onClick={() => setActiveCat(c.id)} className={cn('whitespace-nowrap rounded-md px-3 py-1.5 text-body font-medium', activeCat === c.id ? 'bg-primary text-primary-foreground' : 'bg-surface text-foreground')}>{c.name}</button>
+            <button
+              key={c.id}
+              onClick={() => setActiveCat(c.id)}
+              className={cn(
+                'whitespace-nowrap rounded-full px-3.5 py-1.5 text-body font-semibold transition-colors',
+                activeCat === c.id ? 'bg-primary text-primary-foreground' : 'bg-surface text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {c.name}
+            </button>
           ))}
         </div>
-        <div className="grid flex-1 grid-cols-2 content-start gap-3 overflow-y-auto p-3 scrollbar-thin sm:grid-cols-3 xl:grid-cols-4">
-          {isLoading
-            ? Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="h-32" />)
-            : filtered.map((p) => <ProductCard key={p.id} product={p} onAdd={() => cart.addItem({ productId: p.id, name: p.name, unit: p.unit, mrp: Number(p.mrp), taxPercent: Number(p.taxPercent) })} />)}
-        </div>
-      </div>
 
-      {/* RIGHT: cart + payment */}
-      <div className="flex h-full flex-col bg-card">
-        <div className="flex items-center justify-between border-b border-border p-3">
-          <div>
-            <p className="text-caption text-muted-foreground">Session {sessionNumber}</p>
-            <p className="text-label font-semibold">Current Bill</p>
-          </div>
-          <div className="flex gap-1">
-            <Button variant="ghost" size="icon" title="Hold" onClick={cart.hold}><Pause className="h-5 w-5" /></Button>
-            <Button variant="ghost" size="icon" title="End of day" onClick={() => setEodOpen(true)}><Receipt className="h-5 w-5" /></Button>
-          </div>
-        </div>
-
-        {cart.held.length > 0 && (
-          <div className="flex flex-wrap gap-1 border-b border-border bg-surface p-2">
-            {cart.held.map((h) => (
-              <button key={h.id} onClick={() => cart.resume(h.id)} className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-caption">
-                <Play className="h-3 w-3" /> {h.items.length} items
+        {/* Quick picks */}
+        {popular.length > 0 && activeCat === 'all' && !search && (
+          <div className="flex gap-2 overflow-x-auto border-b border-border bg-surface/60 p-2 scrollbar-thin">
+            {popular.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => addProduct(p)}
+                disabled={p.stock <= 0}
+                className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-body font-medium shadow-sm transition-transform active:scale-95 disabled:opacity-40"
+              >
+                <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                {p.name}
+                <span className="font-bold text-primary">{formatINR(p.mrp)}</span>
               </button>
             ))}
           </div>
         )}
 
+        {/* Product grid */}
+        <div className="grid flex-1 auto-rows-min grid-cols-2 gap-3 overflow-y-auto p-3 scrollbar-thin sm:grid-cols-3 xl:grid-cols-4">
+          {isLoading
+            ? Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="h-32" />)
+            : filtered.map((p) => <ProductCard key={p.id} product={p} flashing={flashId === p.id} onAdd={() => addProduct(p)} />)}
+          {!isLoading && filtered.length === 0 && (
+            <p className="col-span-full py-16 text-center text-body text-muted-foreground">No products match &ldquo;{search}&rdquo;</p>
+          )}
+        </div>
+
+        {/* Shortcut hints */}
+        <div className="hidden items-center gap-4 border-t border-border bg-card px-4 py-1.5 text-caption text-muted-foreground lg:flex">
+          <Keyboard className="h-3.5 w-3.5" />
+          <span><b>F2</b> Search</span>
+          <span><b>F4</b> Sales</span>
+          <span><b>F8</b> Hold</span>
+          <span><b>F9</b> Pay</span>
+          <span>Type a number, then tap a product to set quantity</span>
+        </div>
+      </div>
+
+      {/* RIGHT: cart */}
+      <div className="flex h-full flex-col bg-card">
+        {/* Session header */}
+        <div className="border-b border-border p-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-caption text-muted-foreground">Session {sessionNumber}{cashierName ? ` · ${cashierName}` : ''}</p>
+              <p className="text-label font-semibold">Current Bill</p>
+            </div>
+            <div className="flex gap-1">
+              <Button asChild variant="ghost" size="icon" title="Kitchen board"><Link href="/pos/kitchen"><ChefHat className="h-5 w-5" /></Link></Button>
+              <Button variant="ghost" size="icon" title="Today's sales (F4)" onClick={() => setTxnsOpen(true)}><ReceiptText className="h-5 w-5" /></Button>
+              <Button variant="ghost" size="icon" title="Hold bill (F8)" onClick={cart.hold}><Pause className="h-5 w-5" /></Button>
+              <Button variant="ghost" size="icon" title="End of day" onClick={() => setEodOpen(true)}><Power className="h-5 w-5 text-danger" /></Button>
+            </div>
+          </div>
+          {summary && (
+            <div className="mt-2 flex gap-2">
+              <StatPill label="Sales" value={formatINR(summary.totalSales)} />
+              <StatPill label="Bills" value={String(summary.transactionCount)} />
+              <StatPill label="Avg" value={summary.transactionCount ? formatINR(summary.totalSales / summary.transactionCount) : '—'} />
+            </div>
+          )}
+        </div>
+
+        {/* Held bills */}
+        {cart.held.length > 0 && (
+          <div className="flex flex-wrap gap-1 border-b border-border bg-surface p-2">
+            {cart.held.map((h) => (
+              <button key={h.id} onClick={() => cart.resume(h.id)} className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-caption font-medium">
+                <Play className="h-3 w-3 text-primary" /> {h.items.length} items · {formatINR(cartTotals(h.items, h.billDiscount).grandTotal)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Cart lines */}
         <div className="flex-1 overflow-y-auto p-3 scrollbar-thin">
           {cart.items.length === 0 ? (
-            <p className="py-12 text-center text-body text-muted-foreground">Tap products to add them</p>
+            <div className="flex flex-col items-center gap-2 py-14 text-center text-muted-foreground">
+              <Receipt className="h-8 w-8" />
+              <p className="text-body">Tap products to add them</p>
+              <p className="text-caption">Tip: type a quantity first, then tap</p>
+            </div>
           ) : (
             <div className="space-y-2">
               {cart.items.map((i) => (
-                <div key={i.productId} className="rounded-md border border-border p-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{i.name}</span>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => cart.removeItem(i.productId)}><Trash2 className="h-4 w-4 text-danger" /></Button>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                <div key={i.productId} className="rounded-lg border border-border">
+                  <button className="flex w-full items-center justify-between p-2.5 text-left" onClick={() => setExpandedLine(expandedLine === i.productId ? null : i.productId)}>
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold">{i.name}</p>
+                      <p className="text-caption text-muted-foreground">
+                        {i.quantity} × {formatINR(i.mrp)}
+                        {i.discount > 0 && <span className="text-success"> · −{formatINR(i.discount)}</span>}
+                      </p>
+                    </div>
+                    <span className="ml-2 font-bold">{formatINR(Math.max(0, i.mrp * i.quantity - i.discount))}</span>
+                  </button>
+                  <div className="flex items-center justify-between border-t border-border px-2.5 py-1.5">
+                    <div className="flex items-center gap-1.5">
                       <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => cart.setQty(i.productId, i.quantity - 1)}><Minus className="h-4 w-4" /></Button>
-                      <span className="w-8 text-center font-semibold">{i.quantity}</span>
+                      <span className="w-10 text-center font-bold">{i.quantity}</span>
                       <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => cart.setQty(i.productId, i.quantity + 1)}><Plus className="h-4 w-4" /></Button>
                     </div>
-                    <span className="font-medium">{formatINR(i.mrp * i.quantity)}</span>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => cart.removeItem(i.productId)}><Trash2 className="h-4 w-4 text-danger" /></Button>
                   </div>
+                  {expandedLine === i.productId && (
+                    <div className="grid grid-cols-2 gap-2 border-t border-border bg-surface/60 p-2.5">
+                      <div>
+                        <label className="text-caption font-medium text-muted-foreground">Exact qty ({i.unit})</label>
+                        <Input type="number" step="0.01" className="mt-0.5 h-9" value={i.quantity} onChange={(e) => cart.setQty(i.productId, Number(e.target.value))} />
+                      </div>
+                      <div>
+                        <label className="text-caption font-medium text-muted-foreground">Line discount ₹</label>
+                        <Input type="number" step="0.01" className="mt-0.5 h-9" value={i.discount} onChange={(e) => cart.setItemDiscount(i.productId, Number(e.target.value))} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </div>
 
+        {/* Totals + charge */}
         <div className="border-t border-border p-3">
           <div className="mb-2 space-y-1 text-body">
             <Row label="Sub-total" value={formatINR(totals.subTotal)} />
+            {totals.itemDiscount > 0 && <Row label="Item discounts" value={`−${formatINR(totals.itemDiscount)}`} className="text-success" />}
             <Row label="Tax" value={formatINR(totals.tax)} />
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Bill discount</span>
               <Input type="number" className="h-8 w-24 text-right" value={cart.billDiscount} onChange={(e) => cart.setBillDiscount(Number(e.target.value))} />
             </div>
           </div>
-          <div className="mb-3 flex items-center justify-between text-card-title font-bold">
-            <span>Total</span><span>{formatINR(totals.grandTotal)}</span>
-          </div>
-          <Button className="h-14 w-full text-lg" disabled={cart.items.length === 0} onClick={() => setPayOpen(true)}>Charge {formatINR(totals.grandTotal)}</Button>
+          <Button className="h-14 w-full text-lg font-bold" disabled={cart.items.length === 0} onClick={() => setPayOpen(true)}>
+            Charge {formatINR(totals.grandTotal)}
+            <span className="ml-2 rounded bg-primary-foreground/20 px-1.5 text-caption font-semibold">F9</span>
+          </Button>
         </div>
       </div>
 
       <PaymentDialog open={payOpen} onOpenChange={setPayOpen} total={totals.grandTotal} onComplete={completeSale} busy={sale.isPending} />
       <EodDialog open={eodOpen} onOpenChange={setEodOpen} sessionId={sessionId} />
+      <TxnsDrawer open={txnsOpen} onOpenChange={setTxnsOpen} sessionId={sessionId} cashierName={cashierName ?? undefined} />
+      <SuccessOverlay txn={successTxn} cashierName={cashierName ?? undefined} onDone={() => { setSuccessTxn(null); searchRef.current?.focus(); }} />
     </div>
   );
 }
 
-function ProductCard({ product, onAdd }: { product: PosProduct; onAdd: () => void }) {
+function StatPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="flex-1 rounded-md bg-surface px-2 py-1 text-center text-caption">
+      <span className="text-muted-foreground">{label} </span>
+      <b>{value}</b>
+    </span>
+  );
+}
+
+function ProductCard({ product, flashing, onAdd }: { product: PosProduct; flashing: boolean; onAdd: () => void }) {
   const out = product.stock <= 0;
+  const low = !out && product.stock <= 5;
   return (
     <button
       onClick={onAdd}
       disabled={out}
-      className={cn('flex min-h-[120px] flex-col justify-between rounded-lg border border-border bg-card p-3 text-left transition-shadow hover:shadow-md disabled:opacity-50', out && 'cursor-not-allowed')}
+      className={cn(
+        'relative flex min-h-[120px] flex-col justify-between rounded-xl border border-border bg-card p-3 text-left shadow-sm transition-all hover:shadow-md active:scale-[0.97] disabled:opacity-45',
+        flashing && 'ring-2 ring-primary',
+        out && 'cursor-not-allowed',
+      )}
     >
-      <div>
-        <p className="line-clamp-2 font-semibold leading-tight">{product.name}</p>
-        <p className="text-caption text-muted-foreground">{product.sku}</p>
+      {product.popular && <Star className="absolute right-2 top-2 h-4 w-4 fill-amber-400 text-amber-400" />}
+      <div className="flex items-start gap-2">
+        <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-black', catColor(product.category.name))}>
+          {product.name.charAt(0).toUpperCase()}
+        </span>
+        <div className="min-w-0">
+          <p className="line-clamp-2 font-semibold leading-tight">{product.name}</p>
+          <p className="text-caption text-muted-foreground">{product.sku}</p>
+        </div>
       </div>
-      <div className="flex items-center justify-between">
-        <span className="text-label font-bold text-primary">{formatINR(product.mrp)}</span>
-        <span className={cn('text-caption', out ? 'text-danger' : 'text-muted-foreground')}>{out ? 'Out' : `${product.stock} ${product.unit}`}</span>
+      <div className="mt-2 flex items-end justify-between">
+        <span className="text-label font-extrabold text-primary">{formatINR(product.mrp)}</span>
+        <span className={cn('rounded-full px-2 py-0.5 text-caption font-semibold', out ? 'bg-danger/10 text-danger' : low ? 'bg-warning/10 text-warning' : 'bg-surface text-muted-foreground')}>
+          {out ? 'Out' : `${product.stock} ${product.unit}`}
+        </span>
       </div>
     </button>
   );
 }
 
-function PaymentDialog({ open, onOpenChange, total, onComplete, busy }: {
-  open: boolean; onOpenChange: (v: boolean) => void; total: number;
-  onComplete: (p: { billDiscount: number; paymentMode: 'CASH' | 'CARD' | 'UPI' | 'SPLIT'; cashReceived?: number; split?: { cash: number; card: number; upi: number } }) => void;
-  busy: boolean;
-}) {
-  const [mode, setMode] = useState<'CASH' | 'CARD' | 'UPI' | 'SPLIT'>('CASH');
-  const [received, setReceived] = useState(0);
-  const [split, setSplit] = useState({ cash: 0, card: 0, upi: 0 });
-  useEffect(() => { if (open) { setReceived(Math.ceil(total / 10) * 10); setMode('CASH'); setSplit({ cash: 0, card: 0, upi: total }); } }, [open, total]);
-
-  const change = Math.max(0, received - total);
-  const splitTotal = split.cash + split.card + split.upi;
-
-  const submit = () => {
-    if (mode === 'CASH' && received < total) { toast.error('Cash received is less than total'); return; }
-    if (mode === 'SPLIT' && Math.abs(splitTotal - total) > 0.01) { toast.error('Split must equal the total'); return; }
-    onComplete({ billDiscount: 0, paymentMode: mode, cashReceived: mode === 'CASH' ? received : undefined, split: mode === 'SPLIT' ? split : undefined });
-  };
-
+function Row({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Payment · {formatINR(total)}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-4 gap-2">
-          {(['CASH', 'CARD', 'UPI', 'SPLIT'] as const).map((m) => (
-            <button key={m} onClick={() => setMode(m)} className={cn('rounded-md border py-2 text-body font-medium', mode === m ? 'border-primary bg-accent text-primary' : 'border-border')}>{m}</button>
-          ))}
-        </div>
-        {mode === 'CASH' && (
-          <div className="space-y-2">
-            <label className="text-body font-medium">Cash received</label>
-            <Input type="number" className="h-14 text-2xl" value={received} onChange={(e) => setReceived(Number(e.target.value))} />
-            <div className="flex justify-between text-card-title font-bold"><span>Change</span><span className="text-success">{formatINR(change)}</span></div>
-          </div>
-        )}
-        {mode === 'SPLIT' && (
-          <div className="grid grid-cols-3 gap-2">
-            {(['cash', 'card', 'upi'] as const).map((k) => (
-              <div key={k} className="space-y-1"><label className="text-caption uppercase">{k}</label><Input type="number" value={split[k]} onChange={(e) => setSplit({ ...split, [k]: Number(e.target.value) })} /></div>
-            ))}
-            <p className={cn('col-span-3 text-caption', Math.abs(splitTotal - total) < 0.01 ? 'text-success' : 'text-danger')}>Split total: {formatINR(splitTotal)}</p>
-          </div>
-        )}
-        <DialogFooter>
-          <Button variant="secondary" onClick={() => onOpenChange(false)}><X className="h-4 w-4" /> Cancel</Button>
-          <Button className="px-8" loading={busy} onClick={submit}>Complete Sale</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <div className="flex justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={cn('font-medium', className)}>{value}</span>
+    </div>
   );
-}
-
-function EodDialog({ open, onOpenChange, sessionId }: { open: boolean; onOpenChange: (v: boolean) => void; sessionId: string }) {
-  const { data: summary } = useSessionSummary(open ? sessionId : null);
-  const close = useCloseSession();
-  const [closingCash, setClosingCash] = useState(0);
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>End of Day Summary</DialogTitle></DialogHeader>
-        {!summary ? <Skeleton className="h-40" /> : (
-          <div className="space-y-1 text-body">
-            <Row label="Transactions" value={String(summary.transactionCount)} />
-            <Row label="Total sales" value={formatINR(summary.totalSales)} />
-            <Row label="Cash collected" value={formatINR(summary.cashCollected)} />
-            <Row label="Card collected" value={formatINR(summary.cardCollected)} />
-            <Row label="UPI collected" value={formatINR(summary.upiCollected)} />
-            <Row label="Voids" value={String(summary.voidCount)} />
-            <div className="pt-2"><label className="text-caption font-medium">Closing cash in drawer</label><Input type="number" value={closingCash} onChange={(e) => setClosingCash(Number(e.target.value))} /></div>
-          </div>
-        )}
-        <DialogFooter>
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>Keep Open</Button>
-          <Button variant="danger" loading={close.isPending} onClick={() => close.mutate({ id: sessionId, closingCash }, { onSuccess: () => { toast.success('Session closed'); onOpenChange(false); }, onError: (e) => toast.error(apiErrorMessage(e)) })}>Close Session</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return <div className="flex justify-between"><span className="text-muted-foreground">{label}</span><span className="font-medium">{value}</span></div>;
 }

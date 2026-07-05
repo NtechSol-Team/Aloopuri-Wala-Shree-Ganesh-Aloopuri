@@ -23,6 +23,7 @@ const schema = z.object({
   taxPercent: z.coerce.number().min(0).max(100),
   reorderLevel: z.coerce.number().nonnegative(),
   batchTrackingEnabled: z.boolean(),
+  isPosEnabled: z.boolean(),
 });
 type FormValues = z.infer<typeof schema>;
 
@@ -40,7 +41,7 @@ export function ProductFormDialog({
   const save = useSaveProduct();
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { unit: 'PACKET', taxPercent: 5, basePrice: 0, mrp: 0, reorderLevel: 0, batchTrackingEnabled: true },
+    defaultValues: { unit: 'PACKET', taxPercent: 5, basePrice: 0, mrp: 0, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: true },
   });
 
   useEffect(() => {
@@ -51,8 +52,9 @@ export function ProductFormDialog({
               name: product.name, sku: product.sku, categoryId: product.category.id, unit: product.unit,
               basePrice: Number(product.basePrice), mrp: Number(product.mrp), taxPercent: Number(product.taxPercent),
               reorderLevel: Number(product.reorderLevel), batchTrackingEnabled: product.batchTrackingEnabled,
+              isPosEnabled: product.isPosEnabled,
             }
-          : { name: '', sku: '', categoryId: categories[0]?.id ?? '', unit: 'PACKET', basePrice: 0, mrp: 0, taxPercent: 5, reorderLevel: 0, batchTrackingEnabled: true },
+          : { name: '', sku: '', categoryId: categories[0]?.id ?? '', unit: 'PACKET', basePrice: 0, mrp: 0, taxPercent: 5, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: true },
       );
     }
   }, [open, product, categories, reset]);
@@ -111,6 +113,10 @@ export function ProductFormDialog({
             <label className="col-span-2 flex items-center gap-2 text-body">
               <input type="checkbox" {...register('batchTrackingEnabled')} className="h-4 w-4" />
               Enable batch tracking
+            </label>
+            <label className="col-span-2 flex items-center gap-2 text-body">
+              <input type="checkbox" {...register('isPosEnabled')} className="h-4 w-4" />
+              Sellable at POS counter
             </label>
           </div>
           <DialogFooter>

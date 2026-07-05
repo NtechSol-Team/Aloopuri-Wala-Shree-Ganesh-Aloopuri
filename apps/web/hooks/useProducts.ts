@@ -27,6 +27,7 @@ export interface Product {
   photoUrl: string | null;
   batchTrackingEnabled: boolean;
   isActive: boolean;
+  isPosEnabled: boolean;
   category: { id: string; name: string };
 }
 
@@ -79,6 +80,7 @@ export function useProducts(params: { search?: string; categoryId?: string; page
 type ProductPayload = {
   name: string; sku: string; categoryId: string; unit: MeasurementUnit;
   basePrice: number; mrp: number; taxPercent: number; reorderLevel: number; batchTrackingEnabled: boolean;
+  isPosEnabled: boolean;
 };
 
 export function useSaveProduct() {

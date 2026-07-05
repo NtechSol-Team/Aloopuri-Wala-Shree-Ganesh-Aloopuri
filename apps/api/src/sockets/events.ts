@@ -7,6 +7,8 @@ export const RealtimeEvent = {
   BILL_GENERATED: 'bill_generated',
   TRANSFER_STATUS_CHANGED: 'transfer_status_changed',
   POS_SALE: 'pos_sale',
+  POS_KOT: 'pos_kot',
+  PAYMENT_DUE_REMINDER: 'payment_due_reminder',
   REPORT_READY: 'report_ready',
 } as const;
 
