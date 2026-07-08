@@ -12,8 +12,10 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn, formatINR } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
-import { useBills, useBill, billPdfHref, type BillStatus } from '@/hooks/useBilling';
+import { useBills, useBill, useOpenBillPdf, type BillStatus } from '@/hooks/useBilling';
 import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
+import { apiErrorMessage } from '@/lib/api';
+import toast from 'react-hot-toast';
 
 export default function BillingPage() {
   const isAdmin = useAuthStore((s) => s.user?.role) === 'SUPER_ADMIN';
@@ -23,6 +25,7 @@ export default function BillingPage() {
   const { data, isLoading } = useBills({ status: status || undefined, overdueOnly: overdueOnly || undefined, sort });
   const [detailId, setDetailId] = useState<string | null>(null);
   const [payTarget, setPayTarget] = useState<PayTarget | null>(null);
+  const openPdf = useOpenBillPdf();
 
   return (
     <div className="space-y-5">
@@ -62,7 +65,6 @@ export default function BillingPage() {
             </THead>
             <TBody>
               {data.map((b) => {
-                const pdf = billPdfHref(b.pdfUrl);
                 return (
                   <TR key={b.id}>
                     <TD className="font-medium">{b.billNumber}</TD>
@@ -86,7 +88,12 @@ export default function BillingPage() {
                           </Button>
                         )}
                         <Button variant="ghost" size="icon" title="View" onClick={() => setDetailId(b.id)}><Eye className="h-4 w-4" /></Button>
-                        {pdf && <Button asChild variant="ghost" size="icon" title="Download PDF"><a href={pdf} target="_blank" rel="noreferrer"><Download className="h-4 w-4" /></a></Button>}
+                        <Button
+                          variant="ghost" size="icon" title="Download PDF" loading={openPdf.isPending}
+                          onClick={() => openPdf.mutate(b.id, { onError: (e) => toast.error(apiErrorMessage(e)) })}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
                       </div>
                     </TD>
                   </TR>

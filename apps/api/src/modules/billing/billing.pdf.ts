@@ -27,14 +27,17 @@ const PAGE = { left: 50, right: 545, width: 495 };
 const INR = (v: Prisma.Decimal | number): string =>
   `Rs ${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-/** Render a bill to a PDF file at `filePath`. Resolves when the file is flushed. */
-export function renderBillPdf(bill: BillWithRelations, filePath: string): Promise<void> {
+/**
+ * Render a bill to PDF, piped into `dest` (a file write stream or an HTTP response —
+ * anything writable). Resolves once `dest` has finished flushing.
+ */
+export function renderBillPdf(bill: BillWithRelations, dest: NodeJS.WritableStream): Promise<void> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
-    const stream = fs.createWriteStream(filePath);
-    doc.pipe(stream);
-    stream.on('finish', () => resolve());
-    stream.on('error', reject);
+    doc.pipe(dest);
+    dest.on('finish', () => resolve());
+    dest.on('error', reject);
+    doc.on('error', reject);
 
     const hasLogo = fs.existsSync(LOGO_PATH);
 

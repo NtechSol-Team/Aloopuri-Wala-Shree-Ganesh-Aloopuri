@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, API_BASE } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
 
 export type BillStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
@@ -52,8 +52,20 @@ export function useRegenerateBillPdf() {
   });
 }
 
-/** Absolute URL to a bill PDF served by the API. */
-export function billPdfHref(pdfUrl: string | null): string | null {
-  if (!pdfUrl) return null;
-  return `${API_BASE.replace('/api/v1', '')}${pdfUrl}`;
+/**
+ * Fetches a bill PDF through the authenticated API (streamed fresh from the DB on
+ * every call — see GET /billing/:id/pdf) and opens it in a new tab. Deliberately not
+ * a plain <a href> to a static file: that requires the Authorization header, which a
+ * bare anchor tag can't send, and a static file may not even exist on disk anymore
+ * (Render's free-tier filesystem is ephemeral and gets wiped on every restart).
+ */
+export function useOpenBillPdf() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await api.get(`/billing/${id}/pdf`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data as Blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    },
+  });
 }

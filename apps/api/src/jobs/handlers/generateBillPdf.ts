@@ -29,7 +29,10 @@ export async function generateBillPdfHandler(jobs: Job<GenerateBillPdfPayload>[]
     fs.mkdirSync(dir, { recursive: true });
     const filePath = path.join(dir, `${bill.billNumber}.pdf`);
 
-    await renderBillPdf(bill, filePath);
+    // Best-effort disk cache — on ephemeral filesystems (e.g. Render's free tier) this
+    // won't survive a restart, so the actual download endpoint (GET /billing/:id/pdf)
+    // never relies on it and regenerates fresh from the DB instead.
+    await renderBillPdf(bill, fs.createWriteStream(filePath));
 
     const pdfUrl = `/uploads/bills/${bill.billNumber}.pdf`;
     await prisma.bill.update({ where: { id: bill.id }, data: { pdfUrl } });
