@@ -336,6 +336,116 @@ export async function getOutletDetail(outletId: string) {
   };
 }
 
+/** POS-only counter analytics: daily trend, KPIs, payment mix, peak hours, top items, cashier leaderboard. */
+export async function getPosAnalytics() {
+  const [daily, summaryRows, byPaymentMode, byHourRaw, topItems, byCashier] = await Promise.all([
+    // Last 30 days, one row per calendar day (zero-filled).
+    prisma.$queryRawUnsafe<Array<{ date: string; revenue: number; transactions: number; items_sold: number; voided: number; voided_amount: number }>>(
+      `WITH days AS (
+         SELECT generate_series(current_date - interval '29 days', current_date, interval '1 day')::date AS day
+       ),
+       txn AS (
+         SELECT date_trunc('day', sold_at)::date AS day, SUM(grand_total) AS revenue, count(*) AS txns
+         FROM pos_transactions
+         WHERE status = 'COMPLETED' AND is_deleted = false AND sold_at >= current_date - interval '29 days'
+         GROUP BY 1
+       ),
+       items AS (
+         SELECT date_trunc('day', t.sold_at)::date AS day, SUM(i.quantity) AS qty
+         FROM pos_transaction_items i JOIN pos_transactions t ON t.id = i.transaction_id
+         WHERE t.status = 'COMPLETED' AND t.is_deleted = false AND i.is_deleted = false AND t.sold_at >= current_date - interval '29 days'
+         GROUP BY 1
+       ),
+       voids AS (
+         SELECT date_trunc('day', sold_at)::date AS day, count(*) AS voided, SUM(grand_total) AS voided_amount
+         FROM pos_transactions
+         WHERE status = 'VOID' AND is_deleted = false AND sold_at >= current_date - interval '29 days'
+         GROUP BY 1
+       )
+       SELECT to_char(days.day, 'YYYY-MM-DD') AS date,
+              COALESCE(txn.revenue, 0)::float AS revenue,
+              COALESCE(txn.txns, 0)::int AS transactions,
+              COALESCE(items.qty, 0)::float AS items_sold,
+              COALESCE(voids.voided, 0)::int AS voided,
+              COALESCE(voids.voided_amount, 0)::float AS voided_amount
+       FROM days
+       LEFT JOIN txn ON txn.day = days.day
+       LEFT JOIN items ON items.day = days.day
+       LEFT JOIN voids ON voids.day = days.day
+       ORDER BY days.day`,
+    ),
+    // Headline KPIs: today + this month.
+    prisma.$queryRawUnsafe<Array<{
+      today_revenue: number; today_txns: number; month_revenue: number; month_txns: number;
+      month_voids: number; month_voided_amount: number;
+    }>>(
+      `SELECT
+         (SELECT COALESCE(SUM(grand_total),0) FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= current_date)::float AS today_revenue,
+         (SELECT count(*) FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= current_date)::int AS today_txns,
+         (SELECT COALESCE(SUM(grand_total),0) FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= date_trunc('month', now()))::float AS month_revenue,
+         (SELECT count(*) FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= date_trunc('month', now()))::int AS month_txns,
+         (SELECT count(*) FROM pos_transactions WHERE status='VOID' AND is_deleted=false AND sold_at >= date_trunc('month', now()))::int AS month_voids,
+         (SELECT COALESCE(SUM(grand_total),0) FROM pos_transactions WHERE status='VOID' AND is_deleted=false AND sold_at >= date_trunc('month', now()))::float AS month_voided_amount`,
+    ),
+    // This month's payment-mode mix.
+    prisma.$queryRawUnsafe<Array<{ payment_mode: string; revenue: number; txns: number }>>(
+      `SELECT payment_mode, SUM(grand_total)::float AS revenue, count(*)::int AS txns
+       FROM pos_transactions
+       WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= date_trunc('month', now())
+       GROUP BY 1 ORDER BY revenue DESC`,
+    ),
+    // Last 30 days, by hour of day (0-23) — peak hours.
+    prisma.$queryRawUnsafe<Array<{ hour: number; revenue: number; txns: number }>>(
+      `SELECT EXTRACT(HOUR FROM sold_at)::int AS hour, SUM(grand_total)::float AS revenue, count(*)::int AS txns
+       FROM pos_transactions
+       WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= now() - interval '30 days'
+       GROUP BY 1 ORDER BY 1`,
+    ),
+    // Top POS items, last 30 days (POS-only, not mixed with billing).
+    prisma.$queryRawUnsafe<Array<{ name: string; revenue: number; qty: number }>>(
+      `SELECT product_name_snapshot AS name, SUM(line_total)::float AS revenue, SUM(quantity)::float AS qty
+       FROM pos_transaction_items i JOIN pos_transactions t ON t.id=i.transaction_id
+       WHERE t.status='COMPLETED' AND t.is_deleted=false AND i.is_deleted=false AND t.sold_at >= now() - interval '30 days'
+       GROUP BY 1 ORDER BY revenue DESC LIMIT 15`,
+    ),
+    // This month's cashier leaderboard.
+    prisma.$queryRawUnsafe<Array<{ cashier: string; revenue: number; txns: number }>>(
+      `SELECT u.name AS cashier, SUM(t.grand_total)::float AS revenue, count(*)::int AS txns
+       FROM pos_transactions t JOIN users u ON u.id = t.sold_by
+       WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at >= date_trunc('month', now())
+       GROUP BY 1 ORDER BY revenue DESC`,
+    ),
+  ]);
+
+  const s = summaryRows[0];
+  const hourMap = new Map(byHourRaw.map((h) => [h.hour, h]));
+  const byHour = Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    revenue: hourMap.get(hour)?.revenue ?? 0,
+    transactions: hourMap.get(hour)?.txns ?? 0,
+  }));
+  const topByQty = [...topItems].sort((a, b) => b.qty - a.qty).slice(0, 10);
+  const topByRevenue = [...topItems].sort((a, b) => b.revenue - a.revenue).slice(0, 10);
+
+  return {
+    summary: {
+      todayRevenue: s?.today_revenue ?? 0,
+      todayTransactions: s?.today_txns ?? 0,
+      monthRevenue: s?.month_revenue ?? 0,
+      monthTransactions: s?.month_txns ?? 0,
+      avgBillValue: (s?.month_txns ?? 0) > 0 ? Math.round(((s?.month_revenue ?? 0) / s!.month_txns) * 100) / 100 : 0,
+      monthVoids: s?.month_voids ?? 0,
+      monthVoidedAmount: s?.month_voided_amount ?? 0,
+    },
+    daily: daily.map((d) => ({ date: d.date, revenue: d.revenue, transactions: d.transactions, itemsSold: d.items_sold, voided: d.voided, voidedAmount: d.voided_amount })),
+    byPaymentMode: byPaymentMode.map((p) => ({ mode: p.payment_mode, revenue: p.revenue, transactions: p.txns })),
+    byHour,
+    topByQty,
+    topByRevenue,
+    byCashier: byCashier.map((c) => ({ cashier: c.cashier, revenue: c.revenue, transactions: c.txns })),
+  };
+}
+
 export const analyticsService = {
   getDashboard,
   getRevenueTrend,
@@ -344,4 +454,5 @@ export const analyticsService = {
   getOutletPerformance,
   getInventoryAnalytics,
   getOutletDetail,
+  getPosAnalytics,
 };

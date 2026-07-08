@@ -7,6 +7,17 @@ export const logBatchSchema = z.object({
   quantityProduced: z.coerce.number().positive('Quantity must be greater than 0'),
   productionDate: z.coerce.date().default(() => new Date()),
   batchNumber: z.string().max(40).optional(),
+  // Non-material costs allocated to this run (electricity, gas, labour…). Costing-only.
+  overheads: z
+    .array(z.object({ label: z.string().min(1).max(60), amount: z.coerce.number().nonnegative() }))
+    .max(20)
+    .optional(),
+  // Per-ingredient overrides — actual quantity consumed + actual price paid can differ
+  // from the recipe's theoretical amount (wastage, price fluctuation on the day).
+  ingredients: z
+    .array(z.object({ bomItemId: z.string().uuid(), quantity: z.coerce.number().nonnegative(), unitCost: z.coerce.number().nonnegative() }))
+    .max(100)
+    .optional(),
   notes: z.string().max(500).optional(),
 });
 
@@ -63,6 +74,8 @@ export const recordPurchaseSchema = z.object({
   supplierGstin: z.string().max(15).optional(),
   invoiceNumber: z.string().max(80).optional(),
   intakeDate: z.coerce.date().default(() => new Date()),
+  // Some suppliers (unregistered / composition scheme) don't charge GST at all.
+  isGstBill: z.boolean().default(true),
   paymentMethod: z.nativeEnum(PaymentMethod).default(PaymentMethod.CASH),
   // How much is paid to the supplier at entry: 0 = full credit, < total = partial.
   amountPaidNow: z.coerce.number().min(0).default(0),

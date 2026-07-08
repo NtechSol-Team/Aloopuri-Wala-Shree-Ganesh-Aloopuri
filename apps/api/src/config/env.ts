@@ -36,6 +36,14 @@ const envSchema = z.object({
   KPI_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
   MATERIALIZED_VIEW_REFRESH_CRON: z.string().default('*/15 * * * *'),
   SUPPLIER_BILL_REMINDER_CRON: z.string().default('0 8 * * *'), // daily 8am: flags bills due in 10 or 5 days
+
+  // Company letterhead details for invoice PDFs. GSTIN blank by default — only
+  // printed on GST invoices once the business's actual registered GSTIN is set.
+  COMPANY_NAME: z.string().default('Shree Ganesh Aloopuri'),
+  COMPANY_TAGLINE: z.string().default('Surat Food Chain'),
+  COMPANY_ADDRESS: z.string().default(''),
+  COMPANY_PHONE: z.string().default(''),
+  COMPANY_GSTIN: z.string().default(''),
 });
 
 const parsed = envSchema.safeParse(process.env);

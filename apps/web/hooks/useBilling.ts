@@ -17,6 +17,7 @@ export interface BillListItem {
   status: BillStatus;
   pdfUrl: string | null;
   isOverdue: boolean;
+  isGstBill: boolean;
   outlet: { id: string; name: string };
 }
 

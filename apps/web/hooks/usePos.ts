@@ -12,7 +12,8 @@ export interface PosProduct {
   mrp: string;
   taxPercent: string;
   photoUrl: string | null;
-  stock: number;
+  stock: number | null;
+  trackInventory: boolean;
   popular: boolean;
   category: { id: string; name: string };
 }

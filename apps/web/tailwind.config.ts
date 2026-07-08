@@ -59,6 +59,12 @@ const config: Config = {
       },
       boxShadow: {
         card: '0 1px 3px rgba(0,0,0,0.08)',
+        'card-hover': '0 4px 16px rgba(17,24,39,0.08), 0 1px 3px rgba(17,24,39,0.06)',
+        popover: '0 12px 32px rgba(17,24,39,0.14), 0 2px 8px rgba(17,24,39,0.08)',
+        nav: '4px 0 24px rgba(17,24,39,0.10)',
+      },
+      transitionTimingFunction: {
+        smooth: 'cubic-bezier(0.32, 0.72, 0, 1)',
       },
       fontSize: {
         caption: '12px',

@@ -12,8 +12,8 @@ import type { ConfirmOrderInput, CreateOrderInput, ListOrdersQuery } from './ord
 
 const orderInclude = {
   items: { include: { product: { select: { id: true, name: true, unit: true, basePrice: true } } } },
-  outlet: { select: { id: true, name: true } },
-  bill: { select: { id: true, billNumber: true, grandTotal: true, status: true } },
+  outlet: { select: { id: true, name: true, pricingMode: true } },
+  bill: { select: { id: true, billNumber: true, grandTotal: true, status: true, isGstBill: true } },
 } satisfies Prisma.OutletOrderInclude;
 
 /** Where confirmed stock is decremented from at delivery — set on the order at confirm time. */
@@ -108,11 +108,21 @@ export async function confirmOrder(_user: AuthUser, id: string, input: ConfirmOr
 
   const overrides = new Map((input.items ?? []).map((i) => [i.itemId, i]));
 
+  // This outlet's negotiated prices (only consulted when it's on SPECIAL pricing) — used
+  // as the default whenever the confirming admin doesn't type an explicit override.
+  const specials = order.outlet.pricingMode === 'SPECIAL'
+    ? await prisma.outletProductPrice.findMany({
+        where: { outletId: order.outletId, productId: { in: order.items.map((i) => i.productId) } },
+        select: { productId: true, price: true },
+      })
+    : [];
+  const specialMap = new Map(specials.map((s) => [s.productId, s.price]));
+
   const updated = await prisma.$transaction(async (tx) => {
     for (const item of order.items) {
       const override = overrides.get(item.id);
       const confirmedQuantity = override ? override.confirmedQuantity : Number(item.requestedQuantity);
-      const unitPriceSnapshot = override?.unitPrice ?? item.product.basePrice;
+      const unitPriceSnapshot = override?.unitPrice ?? specialMap.get(item.productId) ?? item.product.basePrice;
       await tx.outletOrderItem.update({
         where: { id: item.id },
         data: { confirmedQuantity, unitPriceSnapshot },
@@ -120,7 +130,7 @@ export async function confirmOrder(_user: AuthUser, id: string, input: ConfirmOr
     }
     return tx.outletOrder.update({
       where: { id },
-      data: { status: OutletOrderStatus.CONFIRMED, confirmedAt: new Date(), fulfillmentSource: input.fulfillmentSource },
+      data: { status: OutletOrderStatus.CONFIRMED, confirmedAt: new Date(), fulfillmentSource: input.fulfillmentSource, isGstBill: input.isGstBill },
       include: orderInclude,
     });
   });

@@ -7,15 +7,15 @@ import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-body font-medium transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100',
   {
     variants: {
       variant: {
-        primary: 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm',
+        primary: 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 hover:shadow-md',
         secondary: 'border border-input bg-background text-foreground hover:bg-surface',
-        danger: 'bg-danger text-white hover:bg-danger/90 shadow-sm',
+        danger: 'bg-danger text-white shadow-sm hover:bg-danger/90 hover:shadow-md',
         ghost: 'text-foreground hover:bg-surface',
-        success: 'bg-success text-white hover:bg-success/90 shadow-sm',
+        success: 'bg-success text-white shadow-sm hover:bg-success/90 hover:shadow-md',
       },
       size: {
         sm: 'h-8 px-3 text-caption',

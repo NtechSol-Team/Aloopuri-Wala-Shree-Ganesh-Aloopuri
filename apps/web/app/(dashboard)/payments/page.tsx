@@ -40,7 +40,7 @@ export default function PaymentsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex gap-1 border-b border-border">
+      <div className="flex gap-1 overflow-x-auto border-b border-border scrollbar-thin">
         {([['in', 'Receivables (money in)'], ['out', 'Payables (money out)']] as const).map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} className={cn('flex items-center gap-1.5 border-b-2 px-4 py-2 text-body font-medium transition-colors', tab === k ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>
             {k === 'in' ? <ArrowDownCircle className="h-4 w-4" /> : <ArrowUpCircle className="h-4 w-4" />}{l}
@@ -157,7 +157,7 @@ function PayablesView() {
       </div>
 
       <Card className="overflow-hidden">
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader className="flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle>Supplier Bills</CardTitle>
           <label className="flex items-center gap-2 text-caption text-muted-foreground"><input type="checkbox" className="h-4 w-4" checked={outstandingOnly} onChange={(e) => setOutstandingOnly(e.target.checked)} /> Outstanding only</label>
         </CardHeader>

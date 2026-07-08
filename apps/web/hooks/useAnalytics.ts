@@ -24,6 +24,19 @@ export interface InventoryAnalytics {
   slowMoving: string[];
 }
 
+export interface PosAnalytics {
+  summary: {
+    todayRevenue: number; todayTransactions: number; monthRevenue: number; monthTransactions: number;
+    avgBillValue: number; monthVoids: number; monthVoidedAmount: number;
+  };
+  daily: Array<{ date: string; revenue: number; transactions: number; itemsSold: number; voided: number; voidedAmount: number }>;
+  byPaymentMode: Array<{ mode: string; revenue: number; transactions: number }>;
+  byHour: Array<{ hour: number; revenue: number; transactions: number }>;
+  topByQty: Array<{ name: string; revenue: number; qty: number }>;
+  topByRevenue: Array<{ name: string; revenue: number; qty: number }>;
+  byCashier: Array<{ cashier: string; revenue: number; transactions: number }>;
+}
+
 export function useRevenueTrend(period: TrendPeriod) {
   return useQuery({ queryKey: ['analytics', 'trend', period], queryFn: async () => (await api.get<ApiSuccess<TrendPoint[]>>('/analytics/sales/trend', { params: { period } })).data.data });
 }
@@ -38,6 +51,9 @@ export function useOutletPerformance() {
 }
 export function useInventoryAnalytics() {
   return useQuery({ queryKey: ['analytics', 'inventory'], queryFn: async () => (await api.get<ApiSuccess<InventoryAnalytics>>('/analytics/inventory')).data.data });
+}
+export function usePosAnalytics() {
+  return useQuery({ queryKey: ['analytics', 'pos'], queryFn: async () => (await api.get<ApiSuccess<PosAnalytics>>('/analytics/pos')).data.data });
 }
 
 export interface OutletDetail {

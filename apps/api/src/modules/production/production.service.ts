@@ -12,81 +12,120 @@ import { gstinStateCode, splitGst } from '../../shared/utils/gst';
 import type { ListBatchesQuery, ListIntakeQuery, LogBatchInput, LogIntakeInput } from './production.schema';
 
 /**
- * Log a production batch: deduct raw materials per the product's BOM, increment
- * finished-goods stock at the godown, and snapshot material costs. Fully atomic.
+ * Log a production batch: consume the product's BOM (raw materials AND any
+ * finished-product components, e.g. Khawsa used to make frozen Khawsa),
+ * increment finished-goods stock at the godown, and compute the true per-unit
+ * cost (material + component + overhead), rolling it into the product's
+ * weighted-average cost so multi-level costs cascade. Fully atomic.
  */
 export async function logBatch(input: LogBatchInput, userId: string) {
   const product = await prisma.product.findFirst({
     where: { id: input.productId, isDeleted: false },
-    include: { bom: { where: { isDeleted: false }, include: { rawMaterial: true } } },
+    include: {
+      godownStock: true,
+      bom: {
+        where: { isDeleted: false },
+        include: { rawMaterial: true, componentProduct: { include: { godownStock: true } } },
+      },
+    },
   });
   if (!product) throw AppError.notFound('Product not found');
 
-  // Compute consumption + verify sufficient raw material stock up front.
+  const producedQty = new Prisma.Decimal(input.quantityProduced);
+  const overrideMap = new Map((input.ingredients ?? []).map((i) => [i.bomItemId, i]));
+
+  // Build the consumption plan for both component kinds, verifying stock up front.
+  // Quantity/price default to the recipe × live cost, but the caller can override
+  // either per line (actual usage can differ from theory; prices fluctuate daily).
   const consumption = product.bom.map((b) => {
-    const perUnit = new Prisma.Decimal(b.quantity);
-    const required = perUnit.mul(input.quantityProduced);
-    return { rawMaterial: b.rawMaterial, required };
-  });
-  for (const c of consumption) {
-    if (new Prisma.Decimal(c.rawMaterial.currentStock).lessThan(c.required)) {
-      throw AppError.insufficientStock(
-        `Not enough ${c.rawMaterial.name}: need ${c.required.toString()} ${c.rawMaterial.unit}, have ${c.rawMaterial.currentStock}`,
-      );
+    const override = overrideMap.get(b.id);
+    const required = override ? new Prisma.Decimal(override.quantity) : new Prisma.Decimal(b.quantity).mul(producedQty);
+    if (b.componentType === 'PRODUCT') {
+      const cp = b.componentProduct;
+      if (!cp) throw AppError.badRequest('A component product in the recipe is missing');
+      const unitCost = override ? new Prisma.Decimal(override.unitCost) : new Prisma.Decimal(cp.avgCost);
+      const available = new Prisma.Decimal(cp.godownStock?.quantity ?? 0);
+      if (available.lessThan(required)) {
+        throw AppError.insufficientStock(`Not enough ${cp.name} in godown: need ${required.toString()} ${cp.unit}, have ${available.toString()}`);
+      }
+      return { kind: 'PRODUCT' as const, id: cp.id, name: cp.name, required, unitCost, belowReorder: false };
     }
-  }
+    const rm = b.rawMaterial;
+    if (!rm) throw AppError.badRequest('A raw material in the recipe is missing');
+    const unitCost = override ? new Prisma.Decimal(override.unitCost) : new Prisma.Decimal(rm.costPerUnit);
+    if (new Prisma.Decimal(rm.currentStock).lessThan(required)) {
+      throw AppError.insufficientStock(`Not enough ${rm.name}: need ${required.toString()} ${rm.unit}, have ${rm.currentStock}`);
+    }
+    return { kind: 'RAW_MATERIAL' as const, id: rm.id, name: rm.name, required, unitCost, belowReorder: false };
+  });
+
+  const materialCost = consumption.reduce((s, c) => s.add(c.unitCost.mul(c.required)), new Prisma.Decimal(0));
+  const overheadCost = (input.overheads ?? []).reduce((s, o) => s.add(new Prisma.Decimal(o.amount)), new Prisma.Decimal(0));
+  const totalCost = materialCost.add(overheadCost);
+  const costPerUnit = producedQty.greaterThan(0) ? totalCost.div(producedQty) : new Prisma.Decimal(0);
+
+  // Roll the batch cost into the product's weighted-average unit cost.
+  const oldQty = new Prisma.Decimal(product.godownStock?.quantity ?? 0);
+  const oldAvg = new Prisma.Decimal(product.avgCost);
+  const newQty = oldQty.add(producedQty);
+  const newAvg = newQty.greaterThan(0) ? oldQty.mul(oldAvg).add(totalCost).div(newQty) : costPerUnit;
 
   const batch = await prisma.$transaction(async (tx) => {
     const batchNumber = input.batchNumber ?? (await nextDocNumber(tx, 'BATCH'));
-    let totalMaterialCost = new Prisma.Decimal(0);
-    const items = consumption.map((c) => {
-      const unitCost = new Prisma.Decimal(c.rawMaterial.costPerUnit);
-      const lineCost = unitCost.mul(c.required);
-      totalMaterialCost = totalMaterialCost.add(lineCost);
-      return {
-        rawMaterialId: c.rawMaterial.id,
-        quantityConsumed: c.required,
-        unitCostSnapshot: unitCost,
-        lineCost,
-      };
-    });
+    const items = consumption.map((c) => ({
+      componentType: c.kind,
+      rawMaterialId: c.kind === 'RAW_MATERIAL' ? c.id : null,
+      componentProductId: c.kind === 'PRODUCT' ? c.id : null,
+      nameSnapshot: c.name,
+      quantityConsumed: c.required,
+      unitCostSnapshot: c.unitCost.toDecimalPlaces(2),
+      lineCost: c.unitCost.mul(c.required).toDecimalPlaces(2),
+    }));
 
     const created = await tx.productionBatch.create({
       data: {
         batchNumber,
         productId: product.id,
         quantityProduced: input.quantityProduced,
-        totalMaterialCost,
+        totalMaterialCost: materialCost.toDecimalPlaces(2),
+        overheadCost: overheadCost.toDecimalPlaces(2),
+        costPerUnit: costPerUnit.toDecimalPlaces(2),
         productionDate: input.productionDate,
         notes: input.notes,
         createdById: userId,
         items: { create: items },
+        overheads: input.overheads?.length
+          ? { create: input.overheads.map((o) => ({ label: o.label, amount: o.amount })) }
+          : undefined,
       },
-      include: { items: true, product: { select: { name: true, unit: true } } },
+      include: { items: true, overheads: true, product: { select: { name: true, unit: true } } },
     });
 
-    // Deduct raw materials.
+    // Deduct consumed components from their respective stock ledgers.
     for (const c of consumption) {
-      await tx.rawMaterial.update({
-        where: { id: c.rawMaterial.id },
-        data: { currentStock: { decrement: c.required } },
-      });
+      if (c.kind === 'RAW_MATERIAL') {
+        await tx.rawMaterial.update({ where: { id: c.id }, data: { currentStock: { decrement: c.required } } });
+      } else {
+        await tx.godownStock.update({ where: { productId: c.id }, data: { quantity: { decrement: c.required } } });
+      }
     }
-    // Increase finished-goods stock at the godown.
+    // Add finished goods to the godown + update the product's rolling avg cost.
     await tx.godownStock.upsert({
       where: { productId: product.id },
       create: { productId: product.id, quantity: input.quantityProduced },
       update: { quantity: { increment: input.quantityProduced } },
     });
+    await tx.product.update({ where: { id: product.id }, data: { avgCost: newAvg.toDecimalPlaces(2) } });
 
     return created;
   });
 
   cache.invalidateTags(CacheTag.INVENTORY, CacheTag.PRODUCTION, CacheTag.DASHBOARD);
 
-  // Emit low-stock alerts for any material that dropped below reorder.
+  // Low-stock alerts for any consumed raw material below its reorder level.
   for (const c of consumption) {
-    const fresh = await prisma.rawMaterial.findUnique({ where: { id: c.rawMaterial.id }, select: { name: true, currentStock: true, reorderLevel: true } });
+    if (c.kind !== 'RAW_MATERIAL') continue;
+    const fresh = await prisma.rawMaterial.findUnique({ where: { id: c.id }, select: { name: true, currentStock: true, reorderLevel: true } });
     if (fresh && new Prisma.Decimal(fresh.currentStock).lessThan(fresh.reorderLevel)) {
       await emitRealtime(RealtimeEvent.STOCK_LOW, { productName: fresh.name, currentStock: Number(fresh.currentStock), type: 'raw_material' });
     }
@@ -111,7 +150,7 @@ export async function listBatches(query: ListBatchesQuery) {
       skip,
       take,
       select: {
-        id: true, batchNumber: true, quantityProduced: true, totalMaterialCost: true, productionDate: true, notes: true,
+        id: true, batchNumber: true, quantityProduced: true, totalMaterialCost: true, overheadCost: true, costPerUnit: true, productionDate: true, notes: true,
         product: { select: { id: true, name: true, unit: true } },
       },
     }),
@@ -123,7 +162,11 @@ export async function listBatches(query: ListBatchesQuery) {
 export async function getBatch(id: string) {
   const batch = await prisma.productionBatch.findFirst({
     where: { id, isDeleted: false },
-    include: { items: { include: { rawMaterial: { select: { name: true, unit: true } } } }, product: { select: { name: true, unit: true } } },
+    include: {
+      items: { include: { rawMaterial: { select: { name: true, unit: true } }, componentProduct: { select: { name: true, unit: true } } } },
+      overheads: true,
+      product: { select: { name: true, unit: true } },
+    },
   });
   if (!batch) throw AppError.notFound('Batch not found');
   return batch;
@@ -178,9 +221,12 @@ export async function logIntake(input: LogIntakeInput, userId: string) {
  * full bill is reconstructable and shows in the Day Book / Expenses.
  */
 export async function logPurchase(input: import('./production.schema').RecordPurchaseInput, userId: string) {
-  const rmIds = input.items.flatMap((i) => (i.kind === 'RAW_MATERIAL' ? [i.rawMaterialId] : []));
-  const fgIds = input.items.flatMap((i) => (i.kind === 'FINISHED_GOOD' ? [i.productId] : []));
-  const catIds = input.items.flatMap((i) => (i.kind === 'OTHER' ? [i.categoryId] : []));
+  // Without-GST bills carry no tax at all, regardless of what the client sent per line.
+  const items = input.isGstBill ? input.items : input.items.map((it) => ({ ...it, taxRate: 0 }));
+
+  const rmIds = items.flatMap((i) => (i.kind === 'RAW_MATERIAL' ? [i.rawMaterialId] : []));
+  const fgIds = items.flatMap((i) => (i.kind === 'FINISHED_GOOD' ? [i.productId] : []));
+  const catIds = items.flatMap((i) => (i.kind === 'OTHER' ? [i.categoryId] : []));
 
   if (rmIds.length && (await prisma.rawMaterial.count({ where: { id: { in: rmIds }, isDeleted: false } })) !== new Set(rmIds).size)
     throw AppError.badRequest('One or more raw materials are invalid');
@@ -194,7 +240,7 @@ export async function logPurchase(input: import('./production.schema').RecordPur
   const categoryName = new Map(categories.map((c) => [c.id, c.name]));
 
   // Per-line taxable base + GST; raw-material/FG cost stays EX-GST (GST = recoverable ITC).
-  const lineCalc = input.items.map((it) => {
+  const lineCalc = items.map((it) => {
     const base = it.kind === 'OTHER' ? new Prisma.Decimal(it.amount) : new Prisma.Decimal(it.quantity).mul(it.costPerUnit);
     const tax = base.mul(it.taxRate).div(100).toDecimalPlaces(2);
     return { base, tax };
@@ -234,14 +280,15 @@ export async function logPurchase(input: import('./production.schema').RecordPur
         paymentMethod: input.paymentMethod,
         creditDays,
         dueDate,
+        isGstBill: input.isGstBill,
         notes: input.notes,
         createdById: userId,
       },
     });
 
     // 2) Each line: store an itemized bill line + apply its side effect.
-    for (let i = 0; i < input.items.length; i++) {
-      const item = input.items[i];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       const { base, tax } = lineCalc[i];
       const lineTotal = base.add(tax);
 
@@ -331,7 +378,7 @@ export async function listPurchases(query: ListPurchasesQuery = {}) {
     select: {
       id: true, billNumber: true, supplierName: true, supplierGstin: true, invoiceNumber: true, billDate: true,
       taxableAmount: true, taxAmount: true, totalAmount: true, amountPaid: true, balanceDue: true, status: true,
-      creditDays: true, dueDate: true,
+      creditDays: true, dueDate: true, isGstBill: true,
       _count: { select: { items: true } },
     },
   });

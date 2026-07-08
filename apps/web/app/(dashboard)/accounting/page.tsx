@@ -110,7 +110,7 @@ function DayBookTab() {
   const { data, isLoading } = useDayBook();
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <MiniStat label="Total In" value={formatINR(data?.totalIn ?? 0, { decimals: false })} accent="success" loading={isLoading} />
         <MiniStat label="Total Out" value={formatINR(data?.totalOut ?? 0, { decimals: false })} accent="danger" loading={isLoading} />
         <MiniStat label="Net" value={formatINR(data?.net ?? 0, { decimals: false })} accent={(data?.net ?? 0) >= 0 ? 'success' : 'danger'} loading={isLoading} />

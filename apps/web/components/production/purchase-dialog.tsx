@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { addDays, format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { Plus, Trash2, Boxes, Tag, Sparkles, Package, Search } from 'lucide-react';
+import { Plus, Trash2, Boxes, Tag, Sparkles, Package, Search, ReceiptText, FileX } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +43,7 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const record = useRecordPurchase();
   const lookup = useGstLookup();
 
+  const [isGstBill, setIsGstBill] = useState(true);
   const [supplierName, setSupplier] = useState('');
   const [supplierGstin, setGstin] = useState('');
   const [supplierState, setSupplierState] = useState('');
@@ -66,6 +67,7 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 
   useEffect(() => {
     if (open) {
+      setIsGstBill(true);
       setSupplier(''); setGstin(''); setSupplierState(''); setShowSuggestions(false);
       setInvoice(''); setBillDate(today()); setMethod('CASH'); setPayMode('full'); setCustomPaid(0); setCreditDays(30);
       setLines(rmList.length ? [newRawLine()] : catList.length ? [newOtherLine()] : []);
@@ -87,7 +89,7 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const remove = (i: number) => setLines((l) => l.filter((_, idx) => idx !== i));
 
   const lineBase = (l: Line) => (l.kind === 'OTHER' ? l.amount : l.quantity * l.costPerUnit);
-  const lineTax = (l: Line) => Math.round(lineBase(l) * l.taxRate) / 100;
+  const lineTax = (l: Line) => (isGstBill ? Math.round(lineBase(l) * l.taxRate) / 100 : 0);
   const taxable = lines.reduce((s, l) => s + lineBase(l), 0);
   const taxTotal = lines.reduce((s, l) => s + lineTax(l), 0);
   const grand = taxable + taxTotal;
@@ -143,7 +145,7 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     record.mutate(
       {
         supplierName: supplierName || undefined, supplierGstin: supplierGstin || undefined, invoiceNumber: invoiceNumber || undefined,
-        intakeDate: billDate, paymentMethod, amountPaidNow: paidNow,
+        intakeDate: billDate, paymentMethod, amountPaidNow: paidNow, isGstBill,
         creditDays: balance > 0 ? creditDays : undefined,
         items,
       },
@@ -158,12 +160,25 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl">
         <DialogHeader>
-          <DialogTitle>Record GST Purchase Bill</DialogTitle>
+          <DialogTitle>Record Purchase Bill</DialogTitle>
           <DialogDescription>Raw materials go to inventory (cost ex-GST); GST is captured as input tax credit. Other items book as expenses.</DialogDescription>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div ref={supplierBoxRef} className="relative col-span-2 space-y-1.5 sm:col-span-1">
+        <div className="flex items-center gap-2">
+          <span className="text-caption font-medium text-muted-foreground">Bill type</span>
+          <div className="flex overflow-hidden rounded-md border border-border">
+            <button type="button" onClick={() => setIsGstBill(true)} className={cn('flex items-center gap-1.5 px-3 py-1.5 text-caption font-medium', isGstBill ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground')}>
+              <ReceiptText className="h-3.5 w-3.5" /> With GST
+            </button>
+            <button type="button" onClick={() => setIsGstBill(false)} className={cn('flex items-center gap-1.5 px-3 py-1.5 text-caption font-medium', !isGstBill ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground')}>
+              <FileX className="h-3.5 w-3.5" /> Without GST
+            </button>
+          </div>
+          {!isGstBill && <span className="text-caption text-muted-foreground">Unregistered / composition supplier — no tax, no input tax credit.</span>}
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+          <div ref={supplierBoxRef} className="relative space-y-1.5 sm:col-span-1">
             <Label>Supplier name</Label>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -192,13 +207,13 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
               </div>
             )}
           </div>
-          <div className="col-span-2 space-y-1.5 sm:col-span-1">
+          <div className="space-y-1.5 sm:col-span-1">
             <Label>Supplier GSTIN</Label>
             <div className="flex gap-2">
               <Input value={supplierGstin} onChange={(e) => setGstin(e.target.value.toUpperCase())} placeholder="24ABCDE1234F1Z5" maxLength={15} />
               <Button type="button" variant="secondary" loading={lookup.isPending} onClick={fetchGstin}><Sparkles className="h-4 w-4" /></Button>
             </div>
-            {supplierState && <p className="text-caption text-muted-foreground">{supplierState} · {intraState ? 'CGST+SGST' : 'IGST'}</p>}
+            {supplierState && <p className="text-caption text-muted-foreground">{supplierState}{isGstBill ? ` · ${intraState ? 'CGST+SGST' : 'IGST'}` : ''}</p>}
           </div>
           <div className="space-y-1.5"><Label>Bill date</Label><Input type="date" value={billDate} onChange={(e) => setBillDate(e.target.value)} max={today()} /></div>
           <div className="space-y-1.5"><Label>Invoice No.</Label><Input value={invoiceNumber} onChange={(e) => setInvoice(e.target.value)} placeholder="e.g. INV-1042" /></div>
@@ -282,12 +297,16 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                     <TD className="px-1.5 py-1.5 text-right font-medium">{formatINR(lineBase(line))}</TD>
 
                     <TD className="px-1.5 py-1.5">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Select className="h-8 w-16" value={line.taxRate} onChange={(e) => update(i, { taxRate: Number(e.target.value) } as Partial<Line>)}>
-                          {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
-                        </Select>
-                        <span className="w-14 shrink-0 text-right text-caption text-muted-foreground">{formatINR(lineTax(line))}</span>
-                      </div>
+                      {isGstBill ? (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Select className="h-8 w-16" value={line.taxRate} onChange={(e) => update(i, { taxRate: Number(e.target.value) } as Partial<Line>)}>
+                            {GST_RATES.map((r) => <option key={r} value={r}>{r}%</option>)}
+                          </Select>
+                          <span className="w-14 shrink-0 text-right text-caption text-muted-foreground">{formatINR(lineTax(line))}</span>
+                        </div>
+                      ) : (
+                        <p className="text-right text-muted-foreground">—</p>
+                      )}
                     </TD>
 
                     <TD className="px-1.5 py-1.5 text-right font-semibold">{formatINR(lineBase(line) + lineTax(line))}</TD>
@@ -311,16 +330,22 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 
         {/* GST summary */}
         <div className="space-y-1 rounded-md border border-border bg-surface p-3 text-body">
-          <Row label="Taxable value" value={formatINR(taxable)} />
-          {intraState ? (
+          {isGstBill ? (
             <>
-              <Row label="CGST" value={formatINR(cgst)} muted />
-              <Row label="SGST" value={formatINR(taxTotal - cgst)} muted />
+              <Row label="Taxable value" value={formatINR(taxable)} />
+              {intraState ? (
+                <>
+                  <Row label="CGST" value={formatINR(cgst)} muted />
+                  <Row label="SGST" value={formatINR(taxTotal - cgst)} muted />
+                </>
+              ) : (
+                <Row label="IGST" value={formatINR(igst)} muted />
+              )}
+              <Row label="Grand total" value={formatINR(grand)} bold />
             </>
           ) : (
-            <Row label="IGST" value={formatINR(igst)} muted />
+            <Row label="Grand total (no GST)" value={formatINR(grand)} bold />
           )}
-          <Row label="Grand total" value={formatINR(grand)} bold />
         </div>
 
         {/* Payment */}

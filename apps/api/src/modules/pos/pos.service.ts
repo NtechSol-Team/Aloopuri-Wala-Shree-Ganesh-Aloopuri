@@ -151,15 +151,19 @@ export async function createTransaction(user: AuthUser, input: CreateTransaction
 
   const model = stockModel(session.outletId);
 
+  // Untracked products (e.g. made-to-order / resold-as-is counter items) skip the
+  // stock check entirely — POS can sell them regardless of any ledger quantity.
+  const trackedLines = lineData.filter((line) => productMap.get(line.productId)!.trackInventory);
+
   const txn = await prisma.$transaction(async (tx) => {
-    // Validate + decrement stock.
-    for (const line of lineData) {
+    // Validate + decrement stock — tracked products only.
+    for (const line of trackedLines) {
       const stock = await model.find(tx, line.productId);
       if (!stock || new Prisma.Decimal(stock.quantity).lessThan(line.quantity)) {
         throw AppError.insufficientStock(`Not enough stock for ${line.productNameSnapshot}`);
       }
     }
-    for (const line of lineData) await model.dec(tx, line.productId, line.quantity);
+    for (const line of trackedLines) await model.dec(tx, line.productId, line.quantity);
 
     const receiptNumber = await nextDocNumber(tx, 'POS_RECEIPT');
     const tokenNumber = await nextTokenNumber(tx, session.outletId);
@@ -221,8 +225,14 @@ export async function voidTransaction(user: AuthUser, id: string, input: VoidTra
   if (user.role !== UserRole.SUPER_ADMIN && txn.outletId !== user.outletId) throw AppError.forbidden();
 
   const model = stockModel(txn.outletId);
+  const trackedProductIds = new Set(
+    (await prisma.product.findMany({ where: { id: { in: txn.items.map((i) => i.productId) }, trackInventory: true }, select: { id: true } })).map((p) => p.id),
+  );
   const updated = await prisma.$transaction(async (tx) => {
-    for (const item of txn.items) await model.inc(tx, item.productId, new Prisma.Decimal(item.quantity)); // restock
+    // Restock only items that are actually tracked (nothing was decremented for untracked ones).
+    for (const item of txn.items) {
+      if (trackedProductIds.has(item.productId)) await model.inc(tx, item.productId, new Prisma.Decimal(item.quantity));
+    }
     await tx.posSession.update({
       where: { id: txn.sessionId },
       data: {
@@ -294,7 +304,7 @@ export async function posProducts(user: AuthUser) {
   const products = await prisma.product.findMany({
     where: { isDeleted: false, isActive: true, isPosEnabled: true },
     orderBy: { name: 'asc' },
-    select: { id: true, name: true, sku: true, unit: true, mrp: true, taxPercent: true, photoUrl: true, category: { select: { id: true, name: true } } },
+    select: { id: true, name: true, sku: true, unit: true, mrp: true, taxPercent: true, photoUrl: true, trackInventory: true, category: { select: { id: true, name: true } } },
   });
   const stocks = outletId
     ? await prisma.outletStock.findMany({ where: { outletId }, select: { productId: true, quantity: true } })
@@ -315,7 +325,7 @@ export async function posProducts(user: AuthUser) {
   });
   const popular = new Set(top.map((t) => t.productId));
 
-  return products.map((p) => ({ ...p, stock: stockMap.get(p.id) ?? 0, popular: popular.has(p.id) }));
+  return products.map((p) => ({ ...p, stock: p.trackInventory ? stockMap.get(p.id) ?? 0 : null, popular: popular.has(p.id) }));
 }
 
 export const posService = {

@@ -35,7 +35,7 @@ export default function OrdersPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-body text-muted-foreground">{isAdmin ? 'Incoming stock orders from all outlets.' : 'Order stock from the main branch.'}</p>
         {!isAdmin && <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Order Stock</Button>}
       </div>

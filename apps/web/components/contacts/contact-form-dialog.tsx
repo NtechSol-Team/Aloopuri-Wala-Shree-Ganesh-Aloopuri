@@ -96,8 +96,8 @@ export function ContactFormDialog({ open, onOpenChange, contact, defaultType }: 
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
         <DialogHeader><DialogTitle>{isEdit ? 'Edit Contact' : 'Add Contact'}</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2 space-y-1.5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2 space-y-1.5">
             <Label required>Type</Label>
             <div className="grid grid-cols-3 gap-2">
               {TYPE_OPTIONS.map((t) => (
@@ -116,7 +116,7 @@ export function ContactFormDialog({ open, onOpenChange, contact, defaultType }: 
             </div>
           </div>
 
-          <div className="col-span-2 space-y-1.5">
+          <div className="sm:col-span-2 space-y-1.5">
             <Label>GSTIN</Label>
             <div className="flex gap-2">
               <Input value={form.gstin} onChange={(e) => set('gstin', e.target.value.toUpperCase())} placeholder="24ABCDE1234F1Z5" maxLength={15} />
@@ -124,7 +124,7 @@ export function ContactFormDialog({ open, onOpenChange, contact, defaultType }: 
             </div>
             {form.stateName && <p className="text-caption text-muted-foreground">State: {form.stateName} ({form.stateCode})</p>}
           </div>
-          <div className="col-span-2 space-y-1.5"><Label required>Name</Label><Input value={form.name} onChange={(e) => set('name', e.target.value)} /></div>
+          <div className="sm:col-span-2 space-y-1.5"><Label required>Name</Label><Input value={form.name} onChange={(e) => set('name', e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Legal name</Label><Input value={form.legalName} onChange={(e) => set('legalName', e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Trade name</Label><Input value={form.tradeName} onChange={(e) => set('tradeName', e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Phone</Label><Input value={form.phone} onChange={(e) => setPhone(e.target.value)} /></div>
@@ -132,10 +132,10 @@ export function ContactFormDialog({ open, onOpenChange, contact, defaultType }: 
             <Label>WhatsApp</Label>
             <Input value={form.whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="Same as phone by default" />
           </div>
-          <div className="col-span-2 space-y-1.5"><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} /></div>
-          <div className="col-span-2 space-y-1.5"><Label>Address</Label><Input value={form.address} onChange={(e) => set('address', e.target.value)} /></div>
+          <div className="sm:col-span-2 space-y-1.5"><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} /></div>
+          <div className="sm:col-span-2 space-y-1.5"><Label>Address</Label><Input value={form.address} onChange={(e) => set('address', e.target.value)} /></div>
 
-          <div className="col-span-2 mt-1 flex items-center gap-1.5 border-t border-border pt-3 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="sm:col-span-2 mt-1 flex items-center gap-1.5 border-t border-border pt-3 text-caption font-semibold uppercase tracking-wide text-muted-foreground">
             <Landmark className="h-3.5 w-3.5" /> Bank details <span className="font-normal normal-case">(optional)</span>
           </div>
           <div className="space-y-1.5"><Label>Account holder</Label><Input value={form.bankAccountHolder} onChange={(e) => set('bankAccountHolder', e.target.value)} /></div>

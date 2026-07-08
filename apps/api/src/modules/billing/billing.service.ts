@@ -26,7 +26,8 @@ export async function createBillForOrderTx(tx: Prisma.TransactionClient, order: 
   const items = order.items.map((it) => {
     const qty = new Prisma.Decimal(it.confirmedQuantity ?? it.requestedQuantity);
     const rate = new Prisma.Decimal(it.unitPriceSnapshot ?? it.product.basePrice);
-    const taxPercent = new Prisma.Decimal(it.product.taxPercent);
+    // Without-GST bills carry no tax at all, regardless of the product's catalog tax rate.
+    const taxPercent = order.isGstBill ? new Prisma.Decimal(it.product.taxPercent) : new Prisma.Decimal(0);
     const lineBase = rate.mul(qty);
     const taxAmount = lineBase.mul(taxPercent).div(100);
     return {
@@ -58,6 +59,7 @@ export async function createBillForOrderTx(tx: Prisma.TransactionClient, order: 
       amountPaid: 0,
       balanceDue: grandTotal,
       status: BillStatus.UNPAID,
+      isGstBill: order.isGstBill,
       lockedAt: now,
       createdById: userId,
       items: { create: items },
@@ -104,7 +106,7 @@ export async function listBills(user: AuthUser, query: ListBillsQuery) {
       where, orderBy, skip, take,
       select: {
         id: true, billNumber: true, billDate: true, dueDate: true, grandTotal: true, amountPaid: true, balanceDue: true,
-        status: true, pdfUrl: true, outlet: { select: { id: true, name: true } },
+        status: true, pdfUrl: true, isGstBill: true, outlet: { select: { id: true, name: true } },
       },
     }),
     prisma.bill.count({ where }),

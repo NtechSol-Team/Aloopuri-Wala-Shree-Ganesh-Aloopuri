@@ -28,6 +28,8 @@ export interface Product {
   batchTrackingEnabled: boolean;
   isActive: boolean;
   isPosEnabled: boolean;
+  trackInventory: boolean;
+  avgCost: string;
   category: { id: string; name: string };
 }
 
@@ -42,12 +44,21 @@ export interface RawMaterial {
   isActive: boolean;
 }
 
+export type BomComponentType = 'RAW_MATERIAL' | 'PRODUCT';
+
 export interface BomItem {
   id: string;
-  rawMaterialId: string;
+  componentType: BomComponentType;
+  rawMaterialId: string | null;
+  componentProductId: string | null;
   quantity: string;
-  rawMaterial: { id: string; name: string; unit: MeasurementUnit; costPerUnit: string };
+  rawMaterial: { id: string; name: string; unit: MeasurementUnit; costPerUnit: string } | null;
+  componentProduct: { id: string; name: string; unit: MeasurementUnit; avgCost: string } | null;
 }
+
+export type BomLineInput =
+  | { componentType: 'RAW_MATERIAL'; rawMaterialId: string; quantity: number }
+  | { componentType: 'PRODUCT'; componentProductId: string; quantity: number };
 
 // ── Categories ──
 export function useCategories() {
@@ -67,7 +78,7 @@ export function useCreateCategory() {
 }
 
 // ── Products ──
-export function useProducts(params: { search?: string; categoryId?: string; page?: number } = {}) {
+export function useProducts(params: { search?: string; categoryId?: string; page?: number; isPosEnabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['products', params],
     queryFn: async () => {
@@ -80,7 +91,7 @@ export function useProducts(params: { search?: string; categoryId?: string; page
 type ProductPayload = {
   name: string; sku: string; categoryId: string; unit: MeasurementUnit;
   basePrice: number; mrp: number; taxPercent: number; reorderLevel: number; batchTrackingEnabled: boolean;
-  isPosEnabled: boolean;
+  isPosEnabled: boolean; trackInventory: boolean;
 };
 
 export function useSaveProduct() {
@@ -117,7 +128,7 @@ export function useBom(productId: string | null) {
 export function useSaveBom(productId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (items: Array<{ rawMaterialId: string; quantity: number }>) =>
+    mutationFn: async (items: BomLineInput[]) =>
       (await api.put<ApiSuccess<BomItem[]>>(`/products/${productId}/bom`, { items })).data.data,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['bom', productId] }),
   });

@@ -121,7 +121,7 @@ function MaterialsTab() {
 
   return (
     <Card className="overflow-hidden">
-      <div className="flex items-center justify-between p-4">
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-body text-muted-foreground">Material master & current godown stock.</p>
         <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> Add Raw Material</Button>
       </div>
@@ -163,7 +163,7 @@ function ProductionTab() {
   const [open, setOpen] = useState(false);
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-body text-muted-foreground">Production orders consume raw materials via BOM and add finished goods.</p>
         <Button onClick={() => setOpen(true)}><Factory className="h-4 w-4" /> New Production Order</Button>
       </div>
@@ -174,7 +174,7 @@ function ProductionTab() {
       ) : (
         <Card className="overflow-hidden">
           <Table>
-            <THead><TR><TH>Batch #</TH><TH>Product</TH><TH className="text-right">Qty</TH><TH className="text-right">Material Cost</TH><TH>Date</TH><TH>Notes</TH></TR></THead>
+            <THead><TR><TH>Batch #</TH><TH>Product</TH><TH className="text-right">Qty</TH><TH className="text-right">Material</TH><TH className="text-right">Overhead</TH><TH className="text-right">Cost / unit</TH><TH>Date</TH></TR></THead>
             <TBody>
               {data.map((b) => (
                 <TR key={b.id}>
@@ -182,8 +182,9 @@ function ProductionTab() {
                   <TD>{b.product.name}</TD>
                   <TD className="text-right">{Number(b.quantityProduced)} {b.product.unit}</TD>
                   <TD className="text-right">{formatINR(b.totalMaterialCost)}</TD>
+                  <TD className="text-right text-muted-foreground">{Number(b.overheadCost) > 0 ? formatINR(b.overheadCost) : '—'}</TD>
+                  <TD className="text-right font-semibold text-primary">{formatINR(b.costPerUnit)}/{b.product.unit.toLowerCase()}</TD>
                   <TD>{format(new Date(b.productionDate), 'dd MMM yyyy')}</TD>
-                  <TD className="text-muted-foreground">{b.notes ?? '—'}</TD>
                 </TR>
               ))}
             </TBody>

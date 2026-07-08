@@ -22,8 +22,8 @@ export interface Order {
   notes: string | null;
   fulfillmentSource: FulfillmentSource | null;
   items: OrderItem[];
-  outlet: { id: string; name: string };
-  bill: { id: string; billNumber: string; grandTotal: string; status: string } | null;
+  outlet: { id: string; name: string; pricingMode: 'GENERIC' | 'SPECIAL' };
+  bill: { id: string; billNumber: string; grandTotal: string; status: string; isGstBill: boolean } | null;
 }
 
 export function useOrders(params: { status?: OrderStatus } = {}) {
@@ -48,11 +48,12 @@ export function useCreateOrder() {
 export function useConfirmOrder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, fulfillmentSource, items }: {
+    mutationFn: async ({ id, fulfillmentSource, isGstBill, items }: {
       id: string;
       fulfillmentSource: FulfillmentSource;
+      isGstBill: boolean;
       items: Array<{ itemId: string; confirmedQuantity: number; unitPrice?: number }>;
-    }) => (await api.post<ApiSuccess<Order>>(`/orders/${id}/confirm`, { fulfillmentSource, items })).data.data,
+    }) => (await api.post<ApiSuccess<Order>>(`/orders/${id}/confirm`, { fulfillmentSource, isGstBill, items })).data.data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['orders'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });

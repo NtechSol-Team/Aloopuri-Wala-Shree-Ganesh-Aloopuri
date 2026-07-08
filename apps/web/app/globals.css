@@ -42,15 +42,28 @@
   * {
     @apply border-border;
   }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
   body {
     @apply bg-surface text-foreground;
     font-feature-settings: 'rlig' 1, 'calt' 1;
     -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  /* Touch targets stay comfortable at 44px even where a component sets a shorter height. */
+  @media (pointer: coarse) {
+    button, a, [role='button'], input, select, textarea {
+      min-height: 2.25rem;
+    }
   }
 }
 
-/* Thin, unobtrusive scrollbars for data-dense screens. */
+/* Thin, unobtrusive scrollbars for data-dense screens; momentum scroll on iOS. */
 @layer utilities {
+  .scrollbar-thin {
+    -webkit-overflow-scrolling: touch;
+  }
   .scrollbar-thin::-webkit-scrollbar {
     height: 8px;
     width: 8px;

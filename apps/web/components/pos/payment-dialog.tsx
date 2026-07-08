@@ -120,7 +120,7 @@ export function PaymentDialog({ open, onOpenChange, total, onComplete, busy }: {
 
         {mode === 'SPLIT' && (
           <div className="space-y-2">
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {(['cash', 'card', 'upi'] as const).map((k) => (
                 <div key={k} className="space-y-1">
                   <label className="text-caption font-semibold uppercase text-muted-foreground">{k}</label>

@@ -30,7 +30,7 @@ export default function TransfersPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-body text-muted-foreground">Move finished goods from the godown to the main branch.</p>
         <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> New Transfer</Button>
       </div>
@@ -123,7 +123,7 @@ function CreateTransferDialog({ open, onOpenChange }: { open: boolean; onOpenCha
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>New Stock Transfer</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Destination</Label>
               <Select value={destination} onChange={(e) => setDestination(e.target.value)}>

@@ -32,5 +32,6 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => ok(res, await analyticsService.getOutletDetail(req.params.outletId))),
 );
 router.get('/inventory', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getInventoryAnalytics())));
+router.get('/pos', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getPosAnalytics())));
 
 export const analyticsRouter = router;

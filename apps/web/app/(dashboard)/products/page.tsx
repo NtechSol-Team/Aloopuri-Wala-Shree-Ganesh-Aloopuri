@@ -12,7 +12,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import {
-  useCategories, useCreateCategory, useProducts, useDeleteProduct, useSaveProduct,
+  useCategories, useCreateCategory, useProducts, useDeleteProduct,
   type Product,
 } from '@/hooks/useProducts';
 import { ProductFormDialog } from '@/components/products/product-form-dialog';
@@ -54,22 +54,11 @@ function ProductsTab() {
   const [creating, setCreating] = useState(false);
   const [bomProduct, setBomProduct] = useState<Product | null>(null);
   const del = useDeleteProduct();
-  const save = useSaveProduct();
-
-  const togglePos = (p: Product) => {
-    save.mutate(
-      { id: p.id, isPosEnabled: !p.isPosEnabled },
-      {
-        onSuccess: () => toast.success(p.isPosEnabled ? `${p.name} hidden from POS` : `${p.name} now sellable at POS`),
-        onError: (e) => toast.error(apiErrorMessage(e)),
-      },
-    );
-  };
 
   return (
     <Card className="overflow-hidden">
-      <div className="flex items-center justify-between gap-3 p-4">
-        <div className="relative w-72 max-w-full">
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:w-72">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Search products or SKU..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
@@ -85,8 +74,8 @@ function ProductsTab() {
           <THead>
             <TR>
               <TH>Product</TH><TH>SKU</TH><TH>Category</TH><TH>Unit</TH>
-              <TH className="text-right">Base</TH><TH className="text-right">MRP</TH><TH className="text-right">Tax</TH>
-              <TH>Status</TH><TH>POS</TH><TH className="text-right">Actions</TH>
+              <TH className="text-right">Avg Cost</TH><TH className="text-right">Base</TH><TH className="text-right">MRP</TH><TH className="text-right">Tax</TH>
+              <TH>Status</TH><TH className="text-right">Actions</TH>
             </TR>
           </THead>
           <TBody>
@@ -96,15 +85,11 @@ function ProductsTab() {
                 <TD className="text-muted-foreground">{p.sku}</TD>
                 <TD>{p.category.name}</TD>
                 <TD>{p.unit}</TD>
+                <TD className="text-right">{Number(p.avgCost) > 0 ? formatINR(p.avgCost) : <span className="text-muted-foreground">—</span>}</TD>
                 <TD className="text-right">{formatINR(p.basePrice)}</TD>
                 <TD className="text-right">{formatINR(p.mrp)}</TD>
                 <TD className="text-right">{Number(p.taxPercent)}%</TD>
                 <TD><Badge variant={p.isActive ? 'success' : 'neutral'}>{p.isActive ? 'Active' : 'Inactive'}</Badge></TD>
-                <TD>
-                  <button onClick={() => togglePos(p)} title="Click to toggle POS availability">
-                    <Badge variant={p.isPosEnabled ? 'success' : 'neutral'}>{p.isPosEnabled ? 'POS' : 'Hidden'}</Badge>
-                  </button>
-                </TD>
                 <TD>
                   <div className="flex justify-end gap-1">
                     <Button variant="ghost" size="icon" title="Bill of materials" onClick={() => setBomProduct(p)}><ListTree className="h-4 w-4" /></Button>

@@ -9,6 +9,8 @@ export interface ProductionBatch {
   batchNumber: string;
   quantityProduced: string;
   totalMaterialCost: string;
+  overheadCost: string;
+  costPerUnit: string;
   productionDate: string;
   notes: string | null;
   product: { id: string; name: string; unit: string };
@@ -40,8 +42,11 @@ export function useBatches() {
 export function useLogBatch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { productId: string; quantityProduced: number; productionDate?: string; notes?: string }) =>
-      (await api.post<ApiSuccess<ProductionBatch>>('/production/batches', input)).data.data,
+    mutationFn: async (input: {
+      productId: string; quantityProduced: number; productionDate?: string; notes?: string;
+      overheads?: Array<{ label: string; amount: number }>;
+      ingredients?: Array<{ bomItemId: string; quantity: number; unitCost: number }>;
+    }) => (await api.post<ApiSuccess<ProductionBatch>>('/production/batches', input)).data.data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['production'] });
       qc.invalidateQueries({ queryKey: ['raw-materials'] });
@@ -94,6 +99,7 @@ export interface PurchaseBill {
   status: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
   creditDays: number | null;
   dueDate: string | null;
+  isGstBill: boolean;
   _count: { items: number };
 }
 
@@ -140,7 +146,7 @@ export function useRecordPurchase() {
   return useMutation({
     mutationFn: async (input: {
       supplierName?: string; supplierGstin?: string; invoiceNumber?: string; notes?: string; paymentMethod?: string; amountPaidNow?: number;
-      intakeDate?: string; creditDays?: number;
+      intakeDate?: string; creditDays?: number; isGstBill?: boolean;
       items: PurchaseItemInput[];
     }) => (await api.post<ApiSuccess<{ billNumber: string; totalCost: string; amountPaid: string; balanceDue: string; status: string; lineCount: number }>>('/production/purchases', input)).data.data,
     onSuccess: () => {

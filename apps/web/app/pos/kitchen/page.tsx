@@ -48,11 +48,11 @@ export default function KitchenPage() {
 
   return (
     <div className="flex h-full flex-col bg-slate-950 text-slate-100">
-      <header className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 sm:px-5">
         <div className="flex items-center gap-3">
           <Link href="/pos" className="rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-100"><ArrowLeft className="h-5 w-5" /></Link>
-          <ChefHat className="h-6 w-6 text-amber-400" />
-          <h1 className="text-xl font-bold tracking-tight">Kitchen Orders</h1>
+          <ChefHat className="h-6 w-6 shrink-0 text-amber-400" />
+          <h1 className="text-lg font-bold tracking-tight sm:text-xl">Kitchen Orders</h1>
         </div>
         <div className="flex items-center gap-4 text-sm">
           <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-amber-400" /> Preparing <b className="text-lg">{preparing.length}</b></span>

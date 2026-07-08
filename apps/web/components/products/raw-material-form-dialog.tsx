@@ -67,8 +67,8 @@ export function RawMaterialFormDialog({
           <DialogTitle>{material ? 'Edit Raw Material' : 'Add Raw Material'}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2 space-y-1.5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2 space-y-1.5">
               <Label>Name</Label>
               <Input {...register('name')} aria-invalid={!!errors.name} />
               {errors.name && <p className="text-caption text-danger">{errors.name.message}</p>}

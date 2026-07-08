@@ -59,6 +59,13 @@ enum TransferDestination {
   OUTLET
 }
 
+// A BOM/production line consumes either a raw material or another finished
+// product (a semi-finished component, e.g. Khawsa used to make frozen Khawsa).
+enum BomComponentType {
+  RAW_MATERIAL
+  PRODUCT
+}
+
 enum OutletOrderStatus {
   PENDING
   CONFIRMED
@@ -200,6 +207,14 @@ model UserSession {
 
 // ─────────────────────────────── OUTLETS ────────────────────────────────────
 
+// GENERIC = standard catalog price for everyone. SPECIAL = this outlet has its own
+// negotiated price list (OutletProductPrice); falls back to catalog price per product
+// if that product has no special price set.
+enum PricingMode {
+  GENERIC
+  SPECIAL
+}
+
 model Outlet {
   id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name             String
@@ -208,23 +223,43 @@ model Outlet {
   phone            String?
   ownerUserId      String?  @map("owner_user_id") @db.Uuid // app-enforced ref to users.id
   creditPeriodDays Int      @default(15) @map("credit_period_days")
+  pricingMode      PricingMode @default(GENERIC) @map("pricing_mode")
   isActive         Boolean  @default(true) @map("is_active")
   isDeleted        Boolean  @default(false) @map("is_deleted")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById      String?  @map("created_by") @db.Uuid
 
-  members         User[]          @relation("OutletMembers")
+  members         User[]                @relation("OutletMembers")
   orders          OutletOrder[]
   bills           Bill[]
   payments        Payment[]
   outletStock     OutletStock[]
   posSessions     PosSession[]
-  directTransfers StockTransfer[] @relation("OutletDirectTransfers")
+  directTransfers StockTransfer[]       @relation("OutletDirectTransfers")
+  specialPrices   OutletProductPrice[]
 
   @@index([isActive])
   @@index([isDeleted])
   @@map("outlets")
+}
+
+// Per-outlet negotiated price for a specific product (only consulted when the
+// outlet's pricingMode = SPECIAL). Absence of a row = fall back to catalog price.
+model OutletProductPrice {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId  String   @map("outlet_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  price     Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  outlet  Outlet  @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([outletId, productId])
+  @@index([outletId])
+  @@map("outlet_product_prices")
 }
 
 // ─────────────────────────────── CATALOG ────────────────────────────────────
@@ -261,21 +296,30 @@ model Product {
   // being an active catalog item — e.g. wholesale-only products can stay active
   // for franchise ordering but be hidden from the cashier's tap-to-sell grid).
   isPosEnabled         Boolean         @default(true) @map("is_pos_enabled")
+  // Whether this product has real finished-goods stock (godown/main-branch/outlet
+  // ledgers). Off for counter items sold without formal inventory (e.g. made-to-order
+  // or resold-as-is) — POS sales of these skip the stock check and don't decrement anything.
+  trackInventory       Boolean         @default(true) @map("track_inventory")
+  // Rolling weighted-average production cost per unit (material + component + overhead).
+  avgCost              Decimal         @default(0) @map("avg_cost") @db.Decimal(12, 2)
   isDeleted            Boolean         @default(false) @map("is_deleted")
   createdAt            DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt            DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById          String?         @map("created_by") @db.Uuid
 
-  category          ProductCategory      @relation(fields: [categoryId], references: [id])
-  bom               BillOfMaterials[]
-  godownStock       GodownStock?
-  mainBranchStock   MainBranchStock?
-  outletStock       OutletStock[]
-  transferItems     StockTransferItem[]
-  orderItems        OutletOrderItem[]
-  billItems         BillItem[]
-  productionBatches ProductionBatch[]
-  posItems          PosTransactionItem[]
+  category            ProductCategory       @relation(fields: [categoryId], references: [id])
+  bom                 BillOfMaterials[]     @relation("BomOutput")
+  usedInBom           BillOfMaterials[]     @relation("BomComponent")
+  godownStock         GodownStock?
+  mainBranchStock     MainBranchStock?
+  outletStock         OutletStock[]
+  transferItems       StockTransferItem[]
+  orderItems          OutletOrderItem[]
+  billItems           BillItem[]
+  productionBatches   ProductionBatch[]
+  batchComponentItems ProductionBatchItem[] @relation("BatchComponent")
+  posItems            PosTransactionItem[]
+  outletSpecialPrices OutletProductPrice[]
 
   @@index([categoryId])
   @@index([isActive])
@@ -310,21 +354,24 @@ model RawMaterial {
 }
 
 model BillOfMaterials {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  productId     String   @map("product_id") @db.Uuid
-  rawMaterialId String   @map("raw_material_id") @db.Uuid
-  quantity      Decimal  @db.Decimal(12, 4) // raw material qty per 1 unit of product
-  isDeleted     Boolean  @default(false) @map("is_deleted")
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdById   String?  @map("created_by") @db.Uuid
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId          String           @map("product_id") @db.Uuid // the output product this recipe builds
+  componentType      BomComponentType @default(RAW_MATERIAL) @map("component_type")
+  rawMaterialId      String?          @map("raw_material_id") @db.Uuid // set when componentType = RAW_MATERIAL
+  componentProductId String?          @map("component_product_id") @db.Uuid // set when componentType = PRODUCT
+  quantity           Decimal          @db.Decimal(12, 4) // component qty per 1 unit of output product
+  isDeleted          Boolean          @default(false) @map("is_deleted")
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById        String?          @map("created_by") @db.Uuid
 
-  product     Product     @relation(fields: [productId], references: [id])
-  rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  product          Product      @relation("BomOutput", fields: [productId], references: [id])
+  rawMaterial      RawMaterial? @relation(fields: [rawMaterialId], references: [id])
+  componentProduct Product?     @relation("BomComponent", fields: [componentProductId], references: [id])
 
-  @@unique([productId, rawMaterialId])
   @@index([productId])
   @@index([rawMaterialId])
+  @@index([componentProductId])
   @@map("bill_of_materials")
 }
 
@@ -335,7 +382,9 @@ model ProductionBatch {
   batchNumber       String   @unique @map("batch_number")
   productId         String   @map("product_id") @db.Uuid
   quantityProduced  Decimal  @map("quantity_produced") @db.Decimal(12, 2)
-  totalMaterialCost Decimal  @default(0) @map("total_material_cost") @db.Decimal(12, 2)
+  totalMaterialCost Decimal  @default(0) @map("total_material_cost") @db.Decimal(12, 2) // raw + component cost
+  overheadCost      Decimal  @default(0) @map("overhead_cost") @db.Decimal(12, 2) // electricity/gas/labour/etc.
+  costPerUnit       Decimal  @default(0) @map("cost_per_unit") @db.Decimal(12, 2) // (material + overhead) / quantity
   productionDate    DateTime @map("production_date") @db.Timestamptz(6)
   notes             String?
   isDeleted         Boolean  @default(false) @map("is_deleted")
@@ -343,8 +392,9 @@ model ProductionBatch {
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById       String?  @map("created_by") @db.Uuid
 
-  product Product               @relation(fields: [productId], references: [id])
-  items   ProductionBatchItem[]
+  product   Product               @relation(fields: [productId], references: [id])
+  items     ProductionBatchItem[]
+  overheads ProductionOverhead[]
 
   @@index([productId, productionDate])
   @@index([productionDate])
@@ -352,22 +402,43 @@ model ProductionBatch {
 }
 
 model ProductionBatchItem {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  batchId          String   @map("batch_id") @db.Uuid
-  rawMaterialId    String   @map("raw_material_id") @db.Uuid
-  quantityConsumed Decimal  @map("quantity_consumed") @db.Decimal(12, 4)
-  unitCostSnapshot Decimal  @map("unit_cost_snapshot") @db.Decimal(12, 2)
-  lineCost         Decimal  @map("line_cost") @db.Decimal(12, 2)
-  isDeleted        Boolean  @default(false) @map("is_deleted")
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId            String           @map("batch_id") @db.Uuid
+  componentType      BomComponentType @default(RAW_MATERIAL) @map("component_type")
+  rawMaterialId      String?          @map("raw_material_id") @db.Uuid
+  componentProductId String?          @map("component_product_id") @db.Uuid
+  nameSnapshot       String?          @map("name_snapshot") // component name at production time
+  quantityConsumed   Decimal          @map("quantity_consumed") @db.Decimal(12, 4)
+  unitCostSnapshot   Decimal          @map("unit_cost_snapshot") @db.Decimal(12, 2)
+  lineCost           Decimal          @map("line_cost") @db.Decimal(12, 2)
+  isDeleted          Boolean          @default(false) @map("is_deleted")
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  batch       ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  rawMaterial RawMaterial     @relation(fields: [rawMaterialId], references: [id])
+  batch            ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  rawMaterial      RawMaterial?    @relation(fields: [rawMaterialId], references: [id])
+  componentProduct Product?        @relation("BatchComponent", fields: [componentProductId], references: [id])
 
   @@index([batchId])
   @@index([rawMaterialId])
+  @@index([componentProductId])
   @@map("production_batch_items")
+}
+
+// Non-material production costs allocated to a batch (electricity, gas, labour,
+// packaging…). Costing-only — does NOT post to expenses/P&L (that is booked
+// separately when the actual bill is paid), so there is no double counting.
+model ProductionOverhead {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batchId   String   @map("batch_id") @db.Uuid
+  label     String
+  amount    Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  batch ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@map("production_overheads")
 }
 
 model RawMaterialIntake {
@@ -499,6 +570,8 @@ model OutletOrder {
   deliveredAt  DateTime?         @map("delivered_at") @db.Timestamptz(6)
   // Set at confirmation: which location stock is pulled from on delivery.
   fulfillmentSource FulfillmentSource? @map("fulfillment_source")
+  // Set at confirmation: whether the resulting bill carries GST.
+  isGstBill    Boolean           @default(true) @map("is_gst_bill")
   notes        String?
   isDeleted    Boolean           @default(false) @map("is_deleted")
   createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -548,6 +621,8 @@ model Bill {
   amountPaid  Decimal    @default(0) @map("amount_paid") @db.Decimal(12, 2)
   balanceDue  Decimal    @map("balance_due") @db.Decimal(12, 2)
   status      BillStatus @default(UNPAID)
+  // Whether this invoice carries GST — set from the order at confirmation.
+  isGstBill   Boolean    @default(true) @map("is_gst_bill")
   pdfUrl      String?    @map("pdf_url")
   lockedAt    DateTime?  @map("locked_at") @db.Timestamptz(6)
   isDeleted   Boolean    @default(false) @map("is_deleted")
@@ -870,6 +945,8 @@ model SupplierBill {
   // Credit terms: set only when the bill isn't paid in full at entry.
   creditDays    Int?               @map("credit_days")
   dueDate       DateTime?          @map("due_date") @db.Timestamptz(6)
+  // Whether this purchase carries GST (unregistered/composition suppliers often don't).
+  isGstBill     Boolean            @default(true) @map("is_gst_bill")
   notes         String?
   isDeleted     Boolean            @default(false) @map("is_deleted")
   createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)

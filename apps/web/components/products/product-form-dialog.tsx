@@ -24,6 +24,7 @@ const schema = z.object({
   reorderLevel: z.coerce.number().nonnegative(),
   batchTrackingEnabled: z.boolean(),
   isPosEnabled: z.boolean(),
+  trackInventory: z.boolean(),
 });
 type FormValues = z.infer<typeof schema>;
 
@@ -41,7 +42,7 @@ export function ProductFormDialog({
   const save = useSaveProduct();
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { unit: 'PACKET', taxPercent: 5, basePrice: 0, mrp: 0, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: true },
+    defaultValues: { unit: 'PACKET', taxPercent: 5, basePrice: 0, mrp: 0, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: true, trackInventory: true },
   });
 
   useEffect(() => {
@@ -52,9 +53,9 @@ export function ProductFormDialog({
               name: product.name, sku: product.sku, categoryId: product.category.id, unit: product.unit,
               basePrice: Number(product.basePrice), mrp: Number(product.mrp), taxPercent: Number(product.taxPercent),
               reorderLevel: Number(product.reorderLevel), batchTrackingEnabled: product.batchTrackingEnabled,
-              isPosEnabled: product.isPosEnabled,
+              isPosEnabled: product.isPosEnabled, trackInventory: product.trackInventory,
             }
-          : { name: '', sku: '', categoryId: categories[0]?.id ?? '', unit: 'PACKET', basePrice: 0, mrp: 0, taxPercent: 5, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: true },
+          : { name: '', sku: '', categoryId: categories[0]?.id ?? '', unit: 'PACKET', basePrice: 0, mrp: 0, taxPercent: 5, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: true, trackInventory: true },
       );
     }
   }, [open, product, categories, reset]);
@@ -79,8 +80,8 @@ export function ProductFormDialog({
           <DialogTitle>{product ? 'Edit Product' : 'Add Product'}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Name" error={errors.name?.message} className="col-span-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Name" error={errors.name?.message} className="sm:col-span-2">
               <Input {...register('name')} aria-invalid={!!errors.name} />
             </Field>
             <Field label="SKU" error={errors.sku?.message}>
@@ -110,13 +111,17 @@ export function ProductFormDialog({
             <Field label="Reorder Level">
               <Input type="number" step="0.01" {...register('reorderLevel')} />
             </Field>
-            <label className="col-span-2 flex items-center gap-2 text-body">
+            <label className="sm:col-span-2 flex items-center gap-2 text-body">
               <input type="checkbox" {...register('batchTrackingEnabled')} className="h-4 w-4" />
               Enable batch tracking
             </label>
-            <label className="col-span-2 flex items-center gap-2 text-body">
+            <label className="sm:col-span-2 flex items-center gap-2 text-body">
               <input type="checkbox" {...register('isPosEnabled')} className="h-4 w-4" />
               Sellable at POS counter
+            </label>
+            <label className="sm:col-span-2 flex items-center gap-2 text-body">
+              <input type="checkbox" {...register('trackInventory')} className="h-4 w-4" />
+              Track finished-goods stock <span className="text-caption text-muted-foreground">(off = POS sells it without checking or reducing stock)</span>
             </label>
           </div>
           <DialogFooter>

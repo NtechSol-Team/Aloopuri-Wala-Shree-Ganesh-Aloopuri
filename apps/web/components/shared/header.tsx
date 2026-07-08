@@ -1,10 +1,11 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { Bell, LogOut } from 'lucide-react';
+import { Bell, LogOut, Menu } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/store/auth.store';
+import { useUiStore } from '@/store/ui.store';
 import { useLogout } from '@/hooks/useAuth';
 import { ROLE_LABEL } from './nav-config';
 import { useRealtimeNotifications } from '@/hooks/useRealtime';
@@ -18,6 +19,7 @@ function titleFromPath(pathname: string): string {
 export function Header() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
+  const openMobileNav = useUiStore((s) => s.openMobileNav);
   const logout = useLogout();
   const { unread, clear } = useRealtimeNotifications();
   if (!user) return null;
@@ -30,13 +32,26 @@ export function Header() {
     .toUpperCase();
 
   return (
-    <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-border bg-card/80 px-6 backdrop-blur">
-      <div>
-        <h1 className="text-page-heading font-bold leading-none">{titleFromPath(pathname)}</h1>
-        <p className="mt-1 text-caption text-muted-foreground">Surat Food Chain</p>
+    <header
+      className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border bg-card/80 px-4 backdrop-blur sm:px-6"
+      style={{ paddingTop: 'env(safe-area-inset-top)' }}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={openMobileNav}
+          className="-ml-1 shrink-0 rounded-md p-2 text-muted-foreground hover:bg-surface lg:hidden"
+          aria-label="Open menu"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+        <div className="min-w-0">
+          <h1 className="truncate text-label font-bold leading-none sm:text-page-heading">{titleFromPath(pathname)}</h1>
+          <p className="mt-1 hidden text-caption text-muted-foreground sm:block">Surat Food Chain</p>
+        </div>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-4">
         <button
           type="button"
           onClick={clear}
@@ -52,13 +67,13 @@ export function Header() {
         </button>
 
         <div className="flex items-center gap-3">
-          <div className="hidden text-right sm:block">
+          <div className="hidden text-right md:block">
             <p className="text-body font-medium leading-none">{user.name}</p>
             <Badge variant="info" className="mt-1">
               {ROLE_LABEL[user.role]}
             </Badge>
           </div>
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-caption font-bold text-primary-foreground">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-caption font-bold text-primary-foreground">
             {initials}
           </div>
         </div>

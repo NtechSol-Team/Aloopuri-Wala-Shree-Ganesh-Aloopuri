@@ -48,7 +48,7 @@ export default function PurchasesPage() {
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 p-4">
           <div className="flex flex-wrap gap-2">
-            <div className="relative w-64 max-w-full">
+            <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input placeholder="Search bill #, supplier, invoice…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
@@ -73,7 +73,7 @@ export default function PurchasesPage() {
         ) : (
           <Table>
             <THead>
-              <TR><TH>Bill #</TH><TH>Supplier</TH><TH>GSTIN</TH><TH>Date</TH><TH className="text-right">Taxable</TH><TH className="text-right">GST</TH><TH className="text-right">Total</TH><TH className="text-right">Balance</TH><TH>Due</TH><TH>Status</TH><TH /></TR>
+              <TR><TH>Bill #</TH><TH>Supplier</TH><TH>GSTIN</TH><TH>Date</TH><TH>Type</TH><TH className="text-right">Taxable</TH><TH className="text-right">GST</TH><TH className="text-right">Total</TH><TH className="text-right">Balance</TH><TH>Due</TH><TH>Status</TH><TH /></TR>
             </THead>
             <TBody>
               {data.map((b) => (
@@ -82,6 +82,7 @@ export default function PurchasesPage() {
                   <TD>{b.supplierName ?? '—'}</TD>
                   <TD className="text-muted-foreground">{b.supplierGstin ?? '—'}</TD>
                   <TD>{format(new Date(b.billDate), 'dd MMM yyyy')}</TD>
+                  <TD><Badge variant={b.isGstBill ? 'info' : 'neutral'}>{b.isGstBill ? 'GST' : 'No GST'}</Badge></TD>
                   <TD className="text-right">{formatINR(b.taxableAmount)}</TD>
                   <TD className="text-right text-muted-foreground">{formatINR(b.taxAmount)}</TD>
                   <TD className="text-right font-medium">{formatINR(b.totalAmount)}</TD>
@@ -122,7 +123,10 @@ function PurchaseDetailDialog({ id, onClose, onPay }: { id: string | null; onClo
     <Dialog open={!!id} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{bill ? `Purchase ${bill.billNumber}` : 'Purchase'}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {bill ? `Purchase ${bill.billNumber}` : 'Purchase'}
+            {bill && <Badge variant={bill.isGstBill ? 'info' : 'neutral'}>{bill.isGstBill ? 'GST' : 'No GST'}</Badge>}
+          </DialogTitle>
           <DialogDescription>{bill ? `${bill.supplierName ?? 'Supplier'}${bill.supplierGstin ? ` · ${bill.supplierGstin}` : ''}${bill.invoiceNumber ? ` · Inv ${bill.invoiceNumber}` : ''}` : 'Loading…'}</DialogDescription>
         </DialogHeader>
 

@@ -75,6 +75,7 @@ export default function BillingPage() {
                       <div className="flex items-center gap-1.5">
                         <Badge variant={statusBadgeVariant(b.status)}>{b.status.replace('_', ' ')}</Badge>
                         {b.isOverdue && <Badge variant="danger">Overdue</Badge>}
+                        {!b.isGstBill && <Badge variant="neutral">No GST</Badge>}
                       </div>
                     </TD>
                     <TD className="text-right">
@@ -107,7 +108,12 @@ function BillDetailDialog({ id, onClose }: { id: string | null; onClose: () => v
   return (
     <Dialog open={!!id} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>{bill ? `Invoice ${bill.billNumber}` : 'Invoice'}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {bill ? `Invoice ${bill.billNumber}` : 'Invoice'}
+            {bill && !bill.isGstBill && <Badge variant="neutral">No GST</Badge>}
+          </DialogTitle>
+        </DialogHeader>
         {isLoading || !bill ? (
           <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8" />)}</div>
         ) : (

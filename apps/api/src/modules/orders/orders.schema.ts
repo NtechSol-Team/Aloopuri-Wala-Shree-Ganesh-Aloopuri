@@ -18,6 +18,8 @@ export const createOrderSchema = z.object({
 export const confirmOrderSchema = z.object({
   // Which location the order will be pulled from at delivery time.
   fulfillmentSource: z.nativeEnum(FulfillmentSource).default(FulfillmentSource.MAIN_BRANCH),
+  // Whether the resulting bill carries GST (unregistered/composition outlets, or a no-tax arrangement).
+  isGstBill: z.boolean().default(true),
   // Optional per-line quantity/price adjustments (partial fulfilment, price override at confirmation).
   items: z
     .array(z.object({

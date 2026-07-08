@@ -24,6 +24,7 @@ export const createProductSchema = z.object({
   taxPercent: z.coerce.number().min(0).max(100).default(0),
   reorderLevel: decimalString.default(0),
   batchTrackingEnabled: z.boolean().default(false),
+  trackInventory: z.boolean().default(true),
 });
 export const updateProductSchema = createProductSchema.partial().extend({
   isActive: z.boolean().optional(),
@@ -33,19 +34,23 @@ export const updateProductSchema = createProductSchema.partial().extend({
 export const listProductsQuerySchema = paginationQuerySchema.extend({
   categoryId: z.string().uuid().optional(),
   isActive: z.coerce.boolean().optional(),
+  isPosEnabled: z.coerce.boolean().optional(),
   search: z.string().max(120).optional(),
 });
 
 // ── Bill of materials ────────────────────────────────────────────────────────
+const bomRawLine = z.object({
+  componentType: z.literal('RAW_MATERIAL'),
+  rawMaterialId: z.string().uuid(),
+  quantity: z.coerce.number().positive('Quantity must be greater than 0'),
+});
+const bomProductLine = z.object({
+  componentType: z.literal('PRODUCT'),
+  componentProductId: z.string().uuid(),
+  quantity: z.coerce.number().positive('Quantity must be greater than 0'),
+});
 export const setBomSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        rawMaterialId: z.string().uuid(),
-        quantity: z.coerce.number().positive('Quantity must be greater than 0'),
-      }),
-    )
-    .max(50),
+  items: z.array(z.discriminatedUnion('componentType', [bomRawLine, bomProductLine])).max(50),
 });
 
 // ── Raw materials ────────────────────────────────────────────────────────────

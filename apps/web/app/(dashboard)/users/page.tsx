@@ -36,7 +36,7 @@ export default function UsersPage() {
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 p-4">
           <div className="flex flex-wrap gap-2">
-            <div className="relative w-64 max-w-full">
+            <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input placeholder="Search name, email, ID…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>

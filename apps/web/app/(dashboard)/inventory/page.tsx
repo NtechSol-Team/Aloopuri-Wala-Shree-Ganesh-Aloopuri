@@ -20,7 +20,7 @@ export default function InventoryPage() {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {sLoading || !summary ? (
           Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28" />)
         ) : (
@@ -33,7 +33,7 @@ export default function InventoryPage() {
         )}
       </div>
 
-      <div className="flex gap-1 border-b border-border">
+      <div className="flex gap-1 overflow-x-auto border-b border-border scrollbar-thin">
         {([['godown', 'Godown'], ['main', 'Main Branch'], ['outlets', 'Outlets']] as const).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} className={cn('border-b-2 px-4 py-2 text-body font-medium transition-colors', tab === key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{label}</button>
         ))}
@@ -95,9 +95,9 @@ function OutletsTab() {
 
   return (
     <Card className="overflow-hidden">
-      <div className="flex items-center justify-between p-4">
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="text-card-title font-semibold">Outlet Stock</h3>
-        <Select className="w-56" value={outletId ?? ''} onChange={(e) => setOutletId(e.target.value)}>
+        <Select className="w-full sm:w-56" value={outletId ?? ''} onChange={(e) => setOutletId(e.target.value)}>
           {outlets?.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
         </Select>
       </div>

@@ -57,6 +57,8 @@ const productSelect = {
   batchTrackingEnabled: true,
   isActive: true,
   isPosEnabled: true,
+  trackInventory: true,
+  avgCost: true,
   category: { select: { id: true, name: true } },
 } satisfies Prisma.ProductSelect;
 
@@ -65,6 +67,7 @@ export async function listProducts(query: ListProductsQuery) {
     isDeleted: false,
     ...(query.categoryId ? { categoryId: query.categoryId } : {}),
     ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+    ...(query.isPosEnabled !== undefined ? { isPosEnabled: query.isPosEnabled } : {}),
     ...(query.search
       ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { sku: { contains: query.search, mode: 'insensitive' } }] }
       : {}),
@@ -127,21 +130,72 @@ export async function getBom(productId: string) {
   await getProduct(productId);
   return prisma.billOfMaterials.findMany({
     where: { productId, isDeleted: false },
-    include: { rawMaterial: { select: { id: true, name: true, unit: true, costPerUnit: true } } },
+    include: {
+      rawMaterial: { select: { id: true, name: true, unit: true, costPerUnit: true } },
+      componentProduct: { select: { id: true, name: true, unit: true, avgCost: true } },
+    },
   });
 }
 
-/** Replace the entire BOM for a product (transactional). */
+/**
+ * Would adding `componentProductId` as a component of `outputProductId` create a
+ * cycle? Walks the component graph from the candidate downward looking for the
+ * output product (which would mean the output ends up depending on itself).
+ */
+async function wouldCreateCycle(outputProductId: string, componentProductId: string): Promise<boolean> {
+  if (componentProductId === outputProductId) return true;
+  const seen = new Set<string>();
+  const stack = [componentProductId];
+  while (stack.length) {
+    const current = stack.pop()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    const children = await prisma.billOfMaterials.findMany({
+      where: { productId: current, isDeleted: false, componentType: 'PRODUCT' },
+      select: { componentProductId: true },
+    });
+    for (const c of children) {
+      if (!c.componentProductId) continue;
+      if (c.componentProductId === outputProductId) return true;
+      stack.push(c.componentProductId);
+    }
+  }
+  return false;
+}
+
+/** Replace the entire BOM for a product (transactional). Supports raw-material and finished-product components. */
 export async function setBom(productId: string, input: SetBomInput, createdById: string) {
   await getProduct(productId);
-  const ids = input.items.map((i) => i.rawMaterialId);
-  if (new Set(ids).size !== ids.length) throw AppError.badRequest('Duplicate raw material in BOM');
+
+  // Dedupe within each kind.
+  const rawIds = input.items.flatMap((i) => (i.componentType === 'RAW_MATERIAL' ? [i.rawMaterialId] : []));
+  const productIds = input.items.flatMap((i) => (i.componentType === 'PRODUCT' ? [i.componentProductId] : []));
+  if (new Set(rawIds).size !== rawIds.length) throw AppError.badRequest('Duplicate raw material in recipe');
+  if (new Set(productIds).size !== productIds.length) throw AppError.badRequest('Duplicate component product in recipe');
+
+  // Validate referenced entities exist + guard against cycles.
+  if (rawIds.length && (await prisma.rawMaterial.count({ where: { id: { in: rawIds }, isDeleted: false } })) !== rawIds.length)
+    throw AppError.badRequest('One or more raw materials are invalid');
+  if (productIds.length) {
+    if (productIds.includes(productId)) throw AppError.badRequest('A product cannot be an ingredient of itself');
+    const valid = await prisma.product.count({ where: { id: { in: productIds }, isDeleted: false } });
+    if (valid !== productIds.length) throw AppError.badRequest('One or more component products are invalid');
+    for (const cid of productIds) {
+      if (await wouldCreateCycle(productId, cid)) {
+        throw AppError.badRequest('That component would create a circular recipe (it already depends on this product)');
+      }
+    }
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.billOfMaterials.deleteMany({ where: { productId } });
     if (input.items.length > 0) {
       await tx.billOfMaterials.createMany({
-        data: input.items.map((i) => ({ productId, rawMaterialId: i.rawMaterialId, quantity: i.quantity, createdById })),
+        data: input.items.map((i) =>
+          i.componentType === 'RAW_MATERIAL'
+            ? { productId, componentType: 'RAW_MATERIAL' as const, rawMaterialId: i.rawMaterialId, quantity: i.quantity, createdById }
+            : { productId, componentType: 'PRODUCT' as const, componentProductId: i.componentProductId, quantity: i.quantity, createdById },
+        ),
       });
     }
   });
