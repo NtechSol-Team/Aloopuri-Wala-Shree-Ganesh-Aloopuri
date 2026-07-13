@@ -13,7 +13,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { useConfirmOrder, type Order, type FulfillmentSource } from '@/hooks/useOrders';
 import { useMainBranchInventory, useGodownInventory } from '@/hooks/useInventory';
 import { useOutletPrices } from '@/hooks/useOutlets';
-import { printOrderPickList } from '@/lib/receipt-print';
+import { printOrderPickList } from '@/lib/print';
 
 interface Line {
   itemId: string;

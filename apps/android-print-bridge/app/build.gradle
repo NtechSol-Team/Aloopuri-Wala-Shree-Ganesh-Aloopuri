@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.scfc.printbridge'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.scfc.printbridge"
+        // minSdk 26 (Android 8.0): lets us ship XML-only adaptive icons and
+        // covers every POS tablet in the field. The vendor SDK targets much older.
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            // The vendor JAR is not R8-safe (reflection over port operators),
+            // and the APK is tiny anyway — keep minification off.
+            minifyEnabled false
+            // Debug signing so `assembleRelease` produces an installable APK for
+            // sideloading onto tills. Replace with a real keystore for Play.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    // Vendor ESC/POS SDK (Bluetooth SPP/BLE, WiFi, USB port operators).
+    implementation files('libs/ESC_SDK_V1.23.01.jar')
+    // FileProvider (PDF hand-off) + ktx conveniences.
+    implementation 'androidx.core:core-ktx:1.13.1'
+}

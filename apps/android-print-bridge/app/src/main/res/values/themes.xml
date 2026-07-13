@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Framework Material theme — no AppCompat dependency needed for a bare WebView shell. -->
+    <style name="Theme.PrintBridge" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#B45309</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

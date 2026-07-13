@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
-import { printReceipt, printSessionItemReport } from '@/lib/receipt-print';
+import { printReceipt, printSessionItemReport } from '@/lib/print';
 import { useCurrentSession, useSessionTransactions, useVoidTransaction, type PosTxn } from '@/hooks/usePos';
 
 type Tab = 'receipts' | 'items';

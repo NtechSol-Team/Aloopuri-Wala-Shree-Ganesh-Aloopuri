@@ -5,7 +5,7 @@ import Link from 'next/link';
 import toast from 'react-hot-toast';
 import {
   Search, Plus, Minus, Trash2, Pause, Play, ArrowLeft, Wifi, WifiOff, Receipt,
-  ChefHat, ReceiptText, Power, Star, Keyboard, X, ShoppingCart,
+  ChefHat, ReceiptText, Power, Star, Keyboard, X, ShoppingCart, Printer,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,6 +24,7 @@ import { PaymentDialog, type PayMode } from '@/components/pos/payment-dialog';
 import { SuccessOverlay } from '@/components/pos/success-overlay';
 import { EodDialog } from '@/components/pos/eod-dialog';
 import { TxnsDrawer } from '@/components/pos/txns-drawer';
+import { PrinterSettingsDialog } from '@/components/printer-settings-dialog';
 
 /** Stable accent color per category for tiles/avatars. */
 const CAT_COLORS = [
@@ -93,6 +94,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const [payOpen, setPayOpen] = useState(false);
   const [eodOpen, setEodOpen] = useState(false);
   const [txnsOpen, setTxnsOpen] = useState(false);
+  const [printerOpen, setPrinterOpen] = useState(false);
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [successTxn, setSuccessTxn] = useState<PosTxn | null>(null);
   const [qtyBuffer, setQtyBuffer] = useState('');
@@ -227,6 +229,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
           <div className="flex gap-1">
             <Button asChild variant="ghost" size="icon" title="Kitchen board"><Link href="/pos/kitchen"><ChefHat className="h-5 w-5" /></Link></Button>
             <Button variant="ghost" size="icon" title="Today's sales (F4)" onClick={() => setTxnsOpen(true)}><ReceiptText className="h-5 w-5" /></Button>
+            <Button variant="ghost" size="icon" title="Printer settings" onClick={() => setPrinterOpen(true)}><Printer className="h-5 w-5" /></Button>
             <Button variant="ghost" size="icon" title="Hold bill (F8)" onClick={cart.hold}><Pause className="h-5 w-5" /></Button>
             <Button variant="ghost" size="icon" title="End of day" onClick={() => setEodOpen(true)}><Power className="h-5 w-5 text-danger" /></Button>
           </div>
@@ -463,6 +466,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
       <PaymentDialog open={payOpen} onOpenChange={setPayOpen} total={totals.grandTotal} onComplete={completeSale} busy={sale.isPending} />
       <EodDialog open={eodOpen} onOpenChange={setEodOpen} sessionId={sessionId} />
       <TxnsDrawer open={txnsOpen} onOpenChange={setTxnsOpen} sessionId={sessionId} cashierName={cashierName ?? undefined} />
+      <PrinterSettingsDialog open={printerOpen} onOpenChange={setPrinterOpen} />
       <SuccessOverlay txn={successTxn} cashierName={cashierName ?? undefined} onDone={() => { setSuccessTxn(null); searchRef.current?.focus(); }} />
     </div>
   );

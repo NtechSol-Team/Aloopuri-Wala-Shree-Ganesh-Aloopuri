@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, Printer, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatINR } from '@/lib/utils';
-import { printReceipt, getAutoPrint, setAutoPrint } from '@/lib/receipt-print';
+import { printReceipt, getAutoPrint, setAutoPrint } from '@/lib/print';
 import type { PosTxn } from '@/hooks/usePos';
 
 /**

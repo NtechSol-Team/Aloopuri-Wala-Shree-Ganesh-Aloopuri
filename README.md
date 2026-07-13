@@ -13,12 +13,19 @@ expenses, POS (with offline), and analytics.
 ## Monorepo layout
 
 ```
-/                      npm workspaces root
-├── apps/api           Express + Prisma backend  (@scfc/api)
-├── apps/web           Next.js 14 frontend       (@scfc/web)   ← built next
-├── docker-compose.yml Postgres 15 only
-└── .env               single source of truth (gitignored)
+/                            npm workspaces root
+├── apps/api                 Express + Prisma backend  (@scfc/api)
+├── apps/web                 Next.js 14 frontend       (@scfc/web)   ← built next
+├── apps/android-print-bridge  Android WebView wrapper — Bluetooth ESC/POS
+│                            receipt printing on tablets (see its README)
+├── docker-compose.yml       Postgres 15 only
+└── .env                     single source of truth (gitignored)
 ```
+
+> **Printing:** Windows tills keep using the browser print dialog. Android tablets
+> print receipts over Bluetooth — either through the Print Bridge app
+> (`apps/android-print-bridge`, works with every ESC/POS printer) or Web Bluetooth
+> for BLE-capable printers. Configure per till in **POS → printer icon**.
 
 ---
 

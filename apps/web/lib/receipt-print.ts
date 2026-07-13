@@ -2,6 +2,7 @@
 
 import { format } from 'date-fns';
 import type { PosTxn } from '@/hooks/usePos';
+import { androidPrinter, hasAndroidBridge } from '@/lib/print/android-bridge';
 
 const STORE_NAME = 'Shree Ganesh Aloopuri';
 const STORE_TAGLINE = 'Surat Food Chain';
@@ -51,8 +52,16 @@ function printHtml(html: string): void {
  * the browser print dialog for it — one click, no separate "open then print" step.
  * Chrome's built-in PDF viewer needs a beat to finish rendering after the iframe's own
  * load event before print() reliably grabs the right content, hence the short delay.
+ *
+ * Inside the SCFC Print Bridge Android app there is no PDF viewer or print dialog in
+ * the WebView, so the blob is handed to the app instead, which opens it in the system
+ * PDF viewer (from where it can be shared/printed via any installed service).
  */
 export function printPdfBlob(blob: Blob): void {
+  if (hasAndroidBridge()) {
+    void androidPrinter.openPdf(blob, `bill-${Date.now()}.pdf`);
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const iframe = document.createElement('iframe');
   iframe.style.position = 'fixed';
