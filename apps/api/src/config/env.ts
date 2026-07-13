@@ -44,6 +44,11 @@ const envSchema = z.object({
   COMPANY_ADDRESS: z.string().default(''),
   COMPANY_PHONE: z.string().default(''),
   COMPANY_GSTIN: z.string().default(''),
+
+  // Passphrase that unlocks the hidden developer window (outlet management).
+  // Set your own in production; the default only exists so local dev works.
+  // requireDeveloperKey fails closed, so an empty value blocks all outlet writes.
+  DEVELOPER_KEY: z.string().default('Developer'),
 });
 
 const parsed = envSchema.safeParse(process.env);

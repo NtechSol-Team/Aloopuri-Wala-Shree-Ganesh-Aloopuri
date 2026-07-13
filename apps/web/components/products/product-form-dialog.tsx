@@ -42,7 +42,7 @@ export function ProductFormDialog({
   const save = useSaveProduct();
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { unit: 'PACKET', taxPercent: 5, basePrice: 0, mrp: 0, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: true, trackInventory: true },
+    defaultValues: { unit: 'PACKET', taxPercent: 5, basePrice: 0, mrp: 0, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: false, trackInventory: true },
   });
 
   useEffect(() => {
@@ -55,7 +55,7 @@ export function ProductFormDialog({
               reorderLevel: Number(product.reorderLevel), batchTrackingEnabled: product.batchTrackingEnabled,
               isPosEnabled: product.isPosEnabled, trackInventory: product.trackInventory,
             }
-          : { name: '', sku: '', categoryId: categories[0]?.id ?? '', unit: 'PACKET', basePrice: 0, mrp: 0, taxPercent: 5, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: true, trackInventory: true },
+          : { name: '', sku: '', categoryId: categories[0]?.id ?? '', unit: 'PACKET', basePrice: 0, mrp: 0, taxPercent: 5, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: false, trackInventory: true },
       );
     }
   }, [open, product, categories, reset]);

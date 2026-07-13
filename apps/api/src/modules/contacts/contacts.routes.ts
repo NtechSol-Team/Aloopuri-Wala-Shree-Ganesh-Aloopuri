@@ -17,8 +17,10 @@ import {
 import { contactsService } from './contacts.service';
 
 const idParam = z.object({ id: z.string().uuid() });
-// Customers are managed by owners/admin; suppliers/other are mostly the godown manager's turf.
-const writeRoles = requireRole(UserRole.SUPER_ADMIN, UserRole.FRANCHISE_OWNER, UserRole.GODOWN_MANAGER);
+// Contacts (suppliers/customers) are a shared back-office directory — admin + godown
+// manager only. Outlet-scoped roles (franchise owner, cashier) can't see or touch it.
+const backOfficeRoles = requireRole(UserRole.SUPER_ADMIN, UserRole.GODOWN_MANAGER);
+const writeRoles = backOfficeRoles;
 const router = Router();
 router.use(authGuard);
 
@@ -27,12 +29,12 @@ const actor = (req: Request) => {
   return req.user.id;
 };
 
-// GSTIN lookup (validate + GSTzen enrich) — used by contact + purchase forms.
-router.get('/lookup', validate({ query: gstLookupQuerySchema }), asyncHandler(async (req: Request, res: Response) =>
+// GSTIN lookup (validate + GSTzen enrich) — used by contact + purchase forms (admin/godown).
+router.get('/lookup', backOfficeRoles, validate({ query: gstLookupQuerySchema }), asyncHandler(async (req: Request, res: Response) =>
   ok(res, await lookupGstin(req.query.gstin as string), 'GSTIN resolved'),
 ));
 
-router.get('/', validate({ query: listContactsQuerySchema }), asyncHandler(async (req: Request, res: Response) => {
+router.get('/', backOfficeRoles, validate({ query: listContactsQuerySchema }), asyncHandler(async (req: Request, res: Response) => {
   const { rows, meta } = await contactsService.listContacts(req.query as unknown as ListContactsQuery);
   return paginated(res, rows, meta);
 }));

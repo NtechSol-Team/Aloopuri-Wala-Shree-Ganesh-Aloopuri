@@ -15,7 +15,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { apiErrorMessage } from '@/lib/api';
 import { formatINR } from '@/lib/utils';
-import { useExpenseCategories, useExpenseSummary, useExpenses, useSaveExpense, useDeleteExpense, type ExpenseLocation } from '@/hooks/useExpenses';
+import { useExpenseCategories, useCreateExpenseCategory, useExpenseSummary, useExpenses, useSaveExpense, useDeleteExpense, type ExpenseLocation } from '@/hooks/useExpenses';
 
 const LOCATIONS: ExpenseLocation[] = ['GODOWN', 'MAIN_BRANCH', 'GENERAL'];
 const METHODS = ['CASH', 'UPI', 'BANK_TRANSFER', 'CARD'];
@@ -94,9 +94,12 @@ const inputCls = 'h-9 rounded-sm';
 
 function InlineEntryRow() {
   const { data: categories } = useExpenseCategories();
+  const createCategory = useCreateExpenseCategory();
   const save = useSaveExpense();
   const amountRef = useRef<HTMLInputElement>(null);
   const [row, setRow] = useState({ date: today(), categoryId: '', location: 'GENERAL', paidTo: '', paymentMethod: 'CASH', amount: '' });
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [newCategory, setNewCategory] = useState('');
 
   useEffect(() => { if (categories?.length && !row.categoryId) setRow((r) => ({ ...r, categoryId: categories[0].id })); }, [categories, row.categoryId]);
 
@@ -117,15 +120,38 @@ function InlineEntryRow() {
     );
   };
 
+  const addCategory = () => {
+    const name = newCategory.trim();
+    if (name.length < 2) { toast.error('Enter a category name'); return; }
+    createCategory.mutate(name, {
+      onSuccess: (c) => { setRow((r) => ({ ...r, categoryId: c.id })); setNewCategory(''); setAddingCategory(false); toast.success(`Category "${c.name}" added`); },
+      onError: (e) => toast.error(apiErrorMessage(e)),
+    });
+  };
+
   const onKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
 
   return (
     <TR className="bg-accent/40 align-top">
       <TD><Input type="date" className={inputCls} value={row.date} onChange={(e) => setRow({ ...row, date: e.target.value })} onKeyDown={onKey} /></TD>
       <TD>
-        <Select className={inputCls} value={row.categoryId} onChange={(e) => setRow({ ...row, categoryId: e.target.value })} onKeyDown={onKey}>
-          {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Select>
+        {addingCategory ? (
+          <div className="flex gap-1">
+            <Input
+              autoFocus className={inputCls} value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="New category"
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCategory(); } if (e.key === 'Escape') setAddingCategory(false); }}
+            />
+            <Button size="sm" className="h-9 shrink-0" loading={createCategory.isPending} onClick={addCategory}><Check className="h-4 w-4" /></Button>
+            <Button size="sm" variant="ghost" className="h-9 shrink-0" onClick={() => { setAddingCategory(false); setNewCategory(''); }}><X className="h-4 w-4" /></Button>
+          </div>
+        ) : (
+          <div className="flex gap-1">
+            <Select className={inputCls} value={row.categoryId} onChange={(e) => setRow({ ...row, categoryId: e.target.value })} onKeyDown={onKey}>
+              {categories?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+            <Button size="icon" variant="secondary" className="h-9 w-9 shrink-0" title="New category" onClick={() => setAddingCategory(true)}><Plus className="h-4 w-4" /></Button>
+          </div>
+        )}
       </TD>
       <TD>
         <Select className={inputCls} value={row.location} onChange={(e) => setRow({ ...row, location: e.target.value })} onKeyDown={onKey}>

@@ -119,8 +119,11 @@ export async function setProductPhoto(id: string, photoUrl: string) {
 }
 
 export async function deleteProduct(id: string) {
-  await getProduct(id);
-  await prisma.product.update({ where: { id }, data: { isDeleted: true, isActive: false } });
+  const product = await getProduct(id);
+  // sku has a DB-level unique constraint that a soft-delete alone doesn't relax — free it
+  // up so the same SKU can be reused for a new product later.
+  const sku = `${product.sku}__deleted__${Date.now()}`;
+  await prisma.product.update({ where: { id }, data: { isDeleted: true, isActive: false, sku } });
   invalidate();
   return { deleted: true };
 }

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Pencil, Trash2, Search, EyeOff, Utensils } from 'lucide-react';
+import { Plus, Pencil, Search, EyeOff, Utensils } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
-import { useProducts, useSaveProduct, useDeleteProduct, type Product } from '@/hooks/useProducts';
+import { useProducts, useSaveProduct, type Product } from '@/hooks/useProducts';
 import { useMainBranchInventory } from '@/hooks/useInventory';
 import { PosItemFormDialog } from '@/components/products/pos-item-form-dialog';
 
@@ -22,7 +22,6 @@ export default function PosItemsPage() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const save = useSaveProduct();
-  const del = useDeleteProduct();
 
   const stockOf = (productId: string) => mainStock?.find((r) => r.product.id === productId)?.quantity;
 
@@ -76,12 +75,6 @@ export default function PosItemsPage() {
                       <div className="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Edit" onClick={() => setEditing(p)}><Pencil className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Remove from POS" onClick={() => removeFromPos(p)}><EyeOff className="h-4 w-4 text-warning" /></Button>
-                        <Button
-                          variant="ghost" size="icon" className="h-8 w-8" title="Delete item"
-                          onClick={() => del.mutate(p.id, { onSuccess: () => toast.success('Item removed'), onError: (e) => toast.error(apiErrorMessage(e)) })}
-                        >
-                          <Trash2 className="h-4 w-4 text-danger" />
-                        </Button>
                       </div>
                     </TD>
                   </TR>

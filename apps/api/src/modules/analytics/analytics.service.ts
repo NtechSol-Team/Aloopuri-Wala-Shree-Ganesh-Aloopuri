@@ -401,12 +401,17 @@ export async function getPosAnalytics() {
        WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= now() - interval '30 days'
        GROUP BY 1 ORDER BY 1`,
     ),
-    // Top POS items, last 30 days (POS-only, not mixed with billing).
-    prisma.$queryRawUnsafe<Array<{ name: string; revenue: number; qty: number }>>(
-      `SELECT product_name_snapshot AS name, SUM(line_total)::float AS revenue, SUM(quantity)::float AS qty
-       FROM pos_transaction_items i JOIN pos_transactions t ON t.id=i.transaction_id
+    // All POS items sold, last 30 days (POS-only, not mixed with billing) — the
+    // full item-wise report; topByQty/topByRevenue below just slice the top 10 of it.
+    prisma.$queryRawUnsafe<Array<{ name: string; category: string; qty: number; revenue: number }>>(
+      `SELECT i.product_name_snapshot AS name, COALESCE(pc.name, 'Uncategorised') AS category,
+              SUM(i.quantity)::float AS qty, SUM(i.line_total)::float AS revenue
+       FROM pos_transaction_items i
+       JOIN pos_transactions t ON t.id = i.transaction_id
+       LEFT JOIN products p ON p.id = i.product_id
+       LEFT JOIN product_categories pc ON pc.id = p.category_id
        WHERE t.status='COMPLETED' AND t.is_deleted=false AND i.is_deleted=false AND t.sold_at >= now() - interval '30 days'
-       GROUP BY 1 ORDER BY revenue DESC LIMIT 15`,
+       GROUP BY 1, 2 ORDER BY revenue DESC`,
     ),
     // This month's cashier leaderboard.
     prisma.$queryRawUnsafe<Array<{ cashier: string; revenue: number; txns: number }>>(
@@ -426,6 +431,15 @@ export async function getPosAnalytics() {
   }));
   const topByQty = [...topItems].sort((a, b) => b.qty - a.qty).slice(0, 10);
   const topByRevenue = [...topItems].sort((a, b) => b.revenue - a.revenue).slice(0, 10);
+  const itemsRevenueTotal = topItems.reduce((s2, i) => s2 + i.revenue, 0);
+  const itemsReport = topItems.map((i) => ({
+    name: i.name,
+    category: i.category,
+    qty: i.qty,
+    revenue: i.revenue,
+    avgPrice: i.qty > 0 ? Math.round((i.revenue / i.qty) * 100) / 100 : 0,
+    revenueSharePct: itemsRevenueTotal > 0 ? Math.round((i.revenue / itemsRevenueTotal) * 1000) / 10 : 0,
+  }));
 
   return {
     summary: {
@@ -442,6 +456,8 @@ export async function getPosAnalytics() {
     byHour,
     topByQty,
     topByRevenue,
+    // Full item-wise report (last 30 days), every item sold — not just the top 10.
+    itemsReport,
     byCashier: byCashier.map((c) => ({ cashier: c.cashier, revenue: c.revenue, transactions: c.txns })),
   };
 }

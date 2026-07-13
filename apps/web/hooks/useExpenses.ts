@@ -31,6 +31,14 @@ export function useExpenseCategories() {
   return useQuery({ queryKey: ['expense-categories'], queryFn: async () => (await api.get<ApiSuccess<ExpenseCategory[]>>('/expenses/categories')).data.data });
 }
 
+export function useCreateExpenseCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string) => (await api.post<ApiSuccess<ExpenseCategory>>('/expenses/categories', { name })).data.data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['expense-categories'] }),
+  });
+}
+
 export function useExpenses(params: { location?: ExpenseLocation; categoryId?: string } = {}) {
   return useQuery({
     queryKey: ['expenses', params],

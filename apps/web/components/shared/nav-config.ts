@@ -40,7 +40,7 @@ export const navItems: NavItem[] = [
   { label: 'Expenses', href: '/expenses', icon: TrendingUp, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Products', href: '/products', icon: Store, roles: ['SUPER_ADMIN'] },
   { label: 'POS Items', href: '/pos-items', icon: Utensils, roles: ['SUPER_ADMIN'] },
-  { label: 'Contacts', href: '/contacts', icon: Contact, roles: ['SUPER_ADMIN', 'FRANCHISE_OWNER', 'GODOWN_MANAGER'] },
+  { label: 'Contacts', href: '/contacts', icon: Contact, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Accounting', href: '/accounting', icon: Landmark, roles: ['SUPER_ADMIN'] },
   { label: 'Analytics', href: '/analytics', icon: BarChart3, roles: ['SUPER_ADMIN'] },
   { label: 'Users', href: '/users', icon: Users, roles: ['SUPER_ADMIN'] },

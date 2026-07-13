@@ -4,6 +4,13 @@ import { paginationQuerySchema } from '../../shared/utils/pagination';
 
 const decimalString = z.coerce.number().nonnegative();
 
+// Query params arrive as strings, so z.coerce.boolean() is unsafe here — it turns the
+// string "false" into `true` (any non-empty string is truthy). Parse explicitly instead.
+const queryBoolean = z
+  .union([z.boolean(), z.enum(['true', 'false'])])
+  .transform((v) => v === true || v === 'true')
+  .optional();
+
 // ── Categories ───────────────────────────────────────────────────────────────
 export const createCategorySchema = z.object({
   name: z.string().min(2).max(80),
@@ -24,6 +31,8 @@ export const createProductSchema = z.object({
   taxPercent: z.coerce.number().min(0).max(100).default(0),
   reorderLevel: decimalString.default(0),
   batchTrackingEnabled: z.boolean().default(false),
+  // Catalog products default to NOT sellable at POS; the "Add POS Item" flow sends true.
+  isPosEnabled: z.boolean().default(false),
   trackInventory: z.boolean().default(true),
 });
 export const updateProductSchema = createProductSchema.partial().extend({
@@ -33,8 +42,8 @@ export const updateProductSchema = createProductSchema.partial().extend({
 
 export const listProductsQuerySchema = paginationQuerySchema.extend({
   categoryId: z.string().uuid().optional(),
-  isActive: z.coerce.boolean().optional(),
-  isPosEnabled: z.coerce.boolean().optional(),
+  isActive: queryBoolean,
+  isPosEnabled: queryBoolean,
   search: z.string().max(120).optional(),
 });
 
@@ -67,7 +76,7 @@ export const updateRawMaterialSchema = createRawMaterialSchema.partial().extend(
 });
 export const listRawMaterialsQuerySchema = paginationQuerySchema.extend({
   search: z.string().max(120).optional(),
-  lowStockOnly: z.coerce.boolean().optional(),
+  lowStockOnly: queryBoolean,
 });
 
 export type CreateProductInput = z.infer<typeof createProductSchema>;

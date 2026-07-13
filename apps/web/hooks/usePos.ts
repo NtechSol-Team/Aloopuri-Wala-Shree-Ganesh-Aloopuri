@@ -57,6 +57,9 @@ export interface PosTxn {
   paymentMode: 'CASH' | 'CARD' | 'UPI' | 'SPLIT';
   cashReceived: string | null;
   changeGiven: string | null;
+  cashAmount: string;
+  cardAmount: string;
+  upiAmount: string;
   voidReason: string | null;
   soldAt: string;
   items: PosTxnItemDetail[];

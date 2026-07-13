@@ -1,17 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import toast from 'react-hot-toast';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { AlertTriangle, ChevronRight, Receipt, Ban, ReceiptText, Clock } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Receipt, Ban, ReceiptText, Clock, Search, Printer, ArrowUpDown } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { cn, formatINR } from '@/lib/utils';
 import { useRevenueTrend, useTopProducts, useFinancial, useOutletPerformance, useInventoryAnalytics, usePosAnalytics, type TrendPeriod } from '@/hooks/useAnalytics';
 import { TrendingUp, Wallet, BadgeIndianRupee } from 'lucide-react';
 import { OutletDetailDialog } from '@/components/analytics/outlet-detail-dialog';
+import { useAuthStore } from '@/store/auth.store';
+import { printAnalyticsItemReport } from '@/lib/receipt-print';
 
 type Tab = 'sales' | 'pos' | 'outlets' | 'inventory' | 'financial';
 
@@ -137,6 +142,8 @@ function PosTab() {
         <TopChart title="Top 10 POS Items by Quantity Sold" data={data.topByQty.map((d) => ({ name: d.name, value: d.qty }))} />
       </div>
 
+      <ItemWiseReport rows={data.itemsReport} />
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>Payment Mode Mix (this month)</CardTitle></CardHeader>
@@ -191,6 +198,86 @@ function PosTab() {
         </Card>
       )}
     </div>
+  );
+}
+
+type ItemSortKey = 'revenue' | 'qty' | 'name';
+
+/** Full item-wise sales report (last 30 days) — every item sold, searchable, sortable, printable. */
+function ItemWiseReport({ rows }: { rows: Array<{ name: string; category: string; qty: number; revenue: number; avgPrice: number; revenueSharePct: number }> }) {
+  const userName = useAuthStore((s) => s.user?.name);
+  const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState<ItemSortKey>('revenue');
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const list = q ? rows.filter((r) => r.name.toLowerCase().includes(q) || r.category.toLowerCase().includes(q)) : rows;
+    return [...list].sort((a, b) => (sortKey === 'name' ? a.name.localeCompare(b.name) : b[sortKey] - a[sortKey]));
+  }, [rows, search, sortKey]);
+
+  const printReport = () => {
+    printAnalyticsItemReport(filtered, { periodLabel: 'Last 30 days (POS sales)', generatedBy: userName });
+    toast.success('Printing item-wise report…');
+  };
+
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <CardTitle>Item-wise Sales Report</CardTitle>
+          <p className="mt-1 text-caption text-muted-foreground">Every item sold in the last 30 days — {rows.length} distinct item{rows.length === 1 ? '' : 's'}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-56">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Search item or category…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <Button variant="secondary" size="sm" onClick={printReport} disabled={!filtered.length}>
+            <Printer className="h-3.5 w-3.5" /> Print Report
+          </Button>
+        </div>
+      </CardHeader>
+      {!filtered.length ? (
+        <p className="py-10 text-center text-muted-foreground">{rows.length ? 'No items match your search.' : 'No POS sales in the last 30 days.'}</p>
+      ) : (
+        <div className="max-h-[70vh] overflow-y-auto scrollbar-thin">
+          <Table>
+            <THead>
+              <TR>
+                <SortableTH label="Item" active={sortKey === 'name'} onClick={() => setSortKey('name')} />
+                <TH>Category</TH>
+                <SortableTH label="Qty Sold" active={sortKey === 'qty'} onClick={() => setSortKey('qty')} align="right" />
+                <SortableTH label="Revenue" active={sortKey === 'revenue'} onClick={() => setSortKey('revenue')} align="right" />
+                <TH className="text-right">Avg Price</TH>
+                <TH className="text-right">Share</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {filtered.map((r) => (
+                <TR key={r.name}>
+                  <TD className="font-medium">{r.name}</TD>
+                  <TD className="text-muted-foreground">{r.category}</TD>
+                  <TD className="text-right">{r.qty}</TD>
+                  <TD className="text-right font-semibold">{formatINR(r.revenue)}</TD>
+                  <TD className="text-right text-muted-foreground">{formatINR(r.avgPrice)}</TD>
+                  <TD className="text-right text-muted-foreground">{r.revenueSharePct}%</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function SortableTH({ label, active, onClick, align }: { label: string; active: boolean; onClick: () => void; align?: 'right' }) {
+  return (
+    <TH className={cn(align === 'right' && 'text-right')}>
+      <button type="button" onClick={onClick} className={cn('inline-flex items-center gap-1 hover:text-foreground', align === 'right' && 'flex-row-reverse', active && 'text-foreground')}>
+        {label} <ArrowUpDown className="h-3 w-3" />
+      </button>
+    </TH>
   );
 }
 

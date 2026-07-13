@@ -8,6 +8,7 @@ import { Badge, statusBadgeVariant } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useAuthStore } from '@/store/auth.store';
+import { displayOrderStatus } from '@/hooks/useOrders';
 import { formatINR } from '@/lib/utils';
 
 export default function DashboardPage() {
@@ -68,7 +69,7 @@ export default function DashboardPage() {
                     <p className="text-body font-medium">{o.orderNumber}</p>
                     <p className="text-caption text-muted-foreground">{o.outletName} · {format(new Date(o.orderDate), 'dd MMM')}</p>
                   </div>
-                  <Badge variant={statusBadgeVariant(o.status)}>{o.status}</Badge>
+                  <Badge variant={statusBadgeVariant(displayOrderStatus(o.status, user?.role))}>{displayOrderStatus(o.status, user?.role)}</Badge>
                 </div>
               ))
             ) : (

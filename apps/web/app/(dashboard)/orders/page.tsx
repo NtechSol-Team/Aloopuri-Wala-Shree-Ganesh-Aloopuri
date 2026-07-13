@@ -16,7 +16,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { cn, formatINR } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
 import { useProducts } from '@/hooks/useProducts';
-import { useCreateOrder, useOrderAction, useOrders, type Order, type OrderStatus } from '@/hooks/useOrders';
+import { useCreateOrder, useOrderAction, useOrders, displayOrderStatus, type Order, type OrderStatus } from '@/hooks/useOrders';
 import { ConfirmOrderDialog } from '@/components/orders/confirm-order-dialog';
 
 // PENDING opens the review dialog instead of a blind one-click action.
@@ -85,7 +85,7 @@ export default function OrdersPage() {
                     </TD>
                     <TD>{format(new Date(o.orderDate), 'dd MMM')}</TD>
                     <TD>{o.bill ? <Badge variant={statusBadgeVariant(o.bill.status)}>{o.bill.billNumber}</Badge> : <span className="text-muted-foreground">—</span>}</TD>
-                    <TD><Badge variant={statusBadgeVariant(o.status)}>{o.status}</Badge></TD>
+                    <TD><Badge variant={statusBadgeVariant(displayOrderStatus(o.status, role))}>{displayOrderStatus(o.status, role)}</Badge></TD>
                     <TD className="text-right">
                       <div className="flex justify-end gap-1">
                         {canReview && (

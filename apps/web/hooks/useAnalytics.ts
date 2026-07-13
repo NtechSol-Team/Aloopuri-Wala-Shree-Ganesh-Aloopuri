@@ -34,6 +34,8 @@ export interface PosAnalytics {
   byHour: Array<{ hour: number; revenue: number; transactions: number }>;
   topByQty: Array<{ name: string; revenue: number; qty: number }>;
   topByRevenue: Array<{ name: string; revenue: number; qty: number }>;
+  // Full item-wise report, last 30 days — every item sold, not just the top 10.
+  itemsReport: Array<{ name: string; category: string; qty: number; revenue: number; avgPrice: number; revenueSharePct: number }>;
   byCashier: Array<{ cashier: string; revenue: number; transactions: number }>;
 }
 

@@ -104,6 +104,8 @@ export function useSaveProduct() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['products'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
+      // A product save can flip isPosEnabled — keep the POS terminal's product list in sync.
+      qc.invalidateQueries({ queryKey: ['pos', 'products'] });
     },
   });
 }
@@ -112,7 +114,10 @@ export function useDeleteProduct() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => (await api.delete(`/products/${id}`)).data,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['products'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['products'] });
+      qc.invalidateQueries({ queryKey: ['pos', 'products'] });
+    },
   });
 }
 

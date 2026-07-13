@@ -2,10 +2,21 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { ApiSuccess } from '@/types/api';
+import type { ApiSuccess, UserRole } from '@/types/api';
 
 export type OrderStatus = 'PENDING' | 'CONFIRMED' | 'DISPATCHED' | 'DELIVERED' | 'CANCELLED';
 export type FulfillmentSource = 'MAIN_BRANCH' | 'GODOWN';
+
+/**
+ * What the outlet owner should see instead of the raw workflow status: a PENDING
+ * order (not yet reviewed by admin) is shown to them as already "CONFIRMED" so they
+ * don't perceive their order as stuck, while the real status — and admin's
+ * confirm/dispatch workflow — is completely unchanged underneath. Every other role
+ * (admin, godown manager) still sees the real status.
+ */
+export function displayOrderStatus(status: string, role: UserRole | undefined): string {
+  return role === 'FRANCHISE_OWNER' && status === 'PENDING' ? 'CONFIRMED' : status;
+}
 
 export interface OrderItem {
   id: string;

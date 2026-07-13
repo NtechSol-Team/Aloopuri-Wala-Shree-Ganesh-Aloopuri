@@ -48,7 +48,8 @@ export default function ProductsPage() {
 
 function ProductsTab() {
   const [search, setSearch] = useState('');
-  const { data, isLoading } = useProducts({ search: search || undefined });
+  // Catalog products only — POS counter items live on their own "POS Items" page.
+  const { data, isLoading } = useProducts({ search: search || undefined, isPosEnabled: false });
   const { data: categories } = useCategories();
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
