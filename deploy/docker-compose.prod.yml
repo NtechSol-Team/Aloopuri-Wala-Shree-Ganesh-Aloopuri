@@ -1,0 +1,84 @@
+# Production stack for a single DigitalOcean droplet (or any Docker host):
+#   Postgres + API + Web + Caddy reverse proxy on one box.
+#
+#   cd deploy && docker compose -f docker-compose.prod.yml up -d --build
+#
+# Configuration comes from deploy/.env (copy .env.example → .env and fill in).
+# Caddy is the only thing exposed; it serves the web app at / and routes
+# /api/* + /socket.io/* (websockets) to the API — one public origin, no CORS pain.
+name: scfc
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: surat_food_chain
+      POSTGRES_USER: surat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U surat -d surat_food_chain"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      DATABASE_URL: postgresql://surat:${POSTGRES_PASSWORD}@postgres:5432/surat_food_chain
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set JWT_ACCESS_SECRET in deploy/.env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in deploy/.env}
+      WEB_ORIGIN: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in deploy/.env}
+      HOME_STATE_CODE: ${HOME_STATE_CODE:-24}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-rzp_test_placeholder}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-placeholder_secret}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-placeholder_webhook_secret}
+      GSTZEN_API_KEY: ${GSTZEN_API_KEY:-}
+      COMPANY_ADDRESS: ${COMPANY_ADDRESS:-}
+      COMPANY_PHONE: ${COMPANY_PHONE:-}
+      COMPANY_GSTIN: ${COMPANY_GSTIN:-}
+    volumes:
+      # Bill PDFs must survive container rebuilds.
+      - api_uploads:/repo/apps/api/uploads
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in deploy/.env}
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - api
+
+volumes:
+  pgdata:
+  api_uploads:
+  caddy_data:
+  caddy_config:

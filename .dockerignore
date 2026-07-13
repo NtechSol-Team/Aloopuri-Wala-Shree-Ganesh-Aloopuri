@@ -1,0 +1,11 @@
+# Keep Docker build contexts small and secret-free.
+.git
+node_modules
+**/node_modules
+**/.next
+**/dist
+.env
+**/.env
+apps/android-print-bridge
+apps/api/uploads
+**/*.apk

@@ -1,0 +1,22 @@
+# SITE_ADDRESS comes from deploy/.env via the compose file:
+#   ":80"              → plain HTTP on the droplet IP (before DNS is set up)
+#   "erp.example.com"  → automatic HTTPS via Let's Encrypt (ports 80+443)
+{$SITE_ADDRESS}
+
+encode zstd gzip
+
+# API + health under the same public origin…
+handle /api/* {
+	reverse_proxy api:4000
+}
+handle /health {
+	reverse_proxy api:4000
+}
+# …including Socket.IO (reverse_proxy upgrades websockets automatically).
+handle /socket.io/* {
+	reverse_proxy api:4000
+}
+# Everything else is the Next.js app.
+handle {
+	reverse_proxy web:3000
+}
