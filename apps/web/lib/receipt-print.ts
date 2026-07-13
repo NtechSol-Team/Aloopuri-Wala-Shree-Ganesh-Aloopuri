@@ -99,7 +99,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string } = {}): 
   .meta { font-size: 11px; }
   table { width: 100%; border-collapse: collapse; }
   td { padding: 1px 0; vertical-align: top; }
-  td.name { font-weight: 700; padding-top: 3px; }
+  td.name { font-size: 16px; font-weight: 700; padding-top: 4px; line-height: 1.25; }
   tr.sub td { font-size: 11px; }
   .num { text-align: right; white-space: nowrap; }
   .row { display: flex; justify-content: space-between; padding: 1px 0; }
