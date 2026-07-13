@@ -25,6 +25,10 @@ router.get('/intake', validate({ query: listIntakeQuerySchema }), asyncHandler(c
 router.post('/purchases', writeRateLimiter, validate({ body: recordPurchaseSchema }), asyncHandler(c.recordPurchaseController));
 router.get('/purchases', asyncHandler(c.listPurchasesController));
 router.get('/purchases/:id', validate({ params: idParam }), asyncHandler(c.getPurchaseDetailController));
+// Edit fully replaces the bill's lines (reverses old stock/cost effects, re-applies new ones);
+// both refuse if the bill already has a payment recorded, or if any of its stock has moved on.
+router.patch('/purchases/:id', writeRateLimiter, validate({ params: idParam, body: recordPurchaseSchema }), asyncHandler(c.updatePurchaseController));
+router.delete('/purchases/:id', writeRateLimiter, validate({ params: idParam }), asyncHandler(c.deletePurchaseController));
 
 router.get('/godown-stock', asyncHandler(c.godownStockController));
 

@@ -106,6 +106,7 @@ export interface PurchaseBill {
 export interface PurchaseBillItem {
   id: string;
   kind: PurchaseLineKind;
+  refId: string | null;
   name: string;
   hsnCode: string | null;
   quantity: string | null;
@@ -141,14 +142,37 @@ export function usePurchaseDetail(id: string | null) {
   });
 }
 
+export interface PurchaseInput {
+  supplierName?: string; supplierGstin?: string; invoiceNumber?: string; notes?: string; paymentMethod?: string; amountPaidNow?: number;
+  intakeDate?: string; creditDays?: number; isGstBill?: boolean;
+  items: PurchaseItemInput[];
+}
+type PurchaseResult = { billNumber: string; totalCost: string; amountPaid: string; balanceDue: string; status: string; lineCount: number };
+
 export function useRecordPurchase() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: {
-      supplierName?: string; supplierGstin?: string; invoiceNumber?: string; notes?: string; paymentMethod?: string; amountPaidNow?: number;
-      intakeDate?: string; creditDays?: number; isGstBill?: boolean;
-      items: PurchaseItemInput[];
-    }) => (await api.post<ApiSuccess<{ billNumber: string; totalCost: string; amountPaid: string; balanceDue: string; status: string; lineCount: number }>>('/production/purchases', input)).data.data,
+    mutationFn: async (input: PurchaseInput) => (await api.post<ApiSuccess<PurchaseResult>>('/production/purchases', input)).data.data,
+    onSuccess: () => {
+      ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    },
+  });
+}
+
+export function useUpdatePurchase() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...input }: PurchaseInput & { id: string }) => (await api.patch<ApiSuccess<PurchaseResult>>(`/production/purchases/${id}`, input)).data.data,
+    onSuccess: () => {
+      ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    },
+  });
+}
+
+export function useDeletePurchase() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete<ApiSuccess<{ deleted: boolean }>>(`/production/purchases/${id}`)).data.data,
     onSuccess: () => {
       ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
     },

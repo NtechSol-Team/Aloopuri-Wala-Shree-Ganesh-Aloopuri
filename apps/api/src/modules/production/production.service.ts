@@ -220,9 +220,13 @@ export async function logIntake(input: LogIntakeInput, userId: string) {
  * All lines commit atomically; "other" lines carry the supplier + invoice so the
  * full bill is reconstructable and shows in the Day Book / Expenses.
  */
-export async function logPurchase(input: import('./production.schema').RecordPurchaseInput, userId: string) {
+type PurchaseInput = import('./production.schema').RecordPurchaseInput;
+type PurchaseItem = PurchaseInput['items'][number];
+
+/** Shared by create + update: normalise GST, validate refs exist, and compute per-line + total money. */
+async function preparePurchase(input: PurchaseInput) {
   // Without-GST bills carry no tax at all, regardless of what the client sent per line.
-  const items = input.isGstBill ? input.items : input.items.map((it) => ({ ...it, taxRate: 0 }));
+  const items: PurchaseItem[] = input.isGstBill ? input.items : input.items.map((it) => ({ ...it, taxRate: 0 }));
 
   const rmIds = items.flatMap((i) => (i.kind === 'RAW_MATERIAL' ? [i.rawMaterialId] : []));
   const fgIds = items.flatMap((i) => (i.kind === 'FINISHED_GOOD' ? [i.productId] : []));
@@ -252,11 +256,77 @@ export async function logPurchase(input: import('./production.schema').RecordPur
   const supplierStateCode = input.supplierGstin ? gstinStateCode(input.supplierGstin) : null;
   const { cgst, sgst, igst } = splitGst(Number(taxTotal), supplierStateCode, env.HOME_STATE_CODE);
 
-  const result = await prisma.$transaction(async (tx) => {
-    let rawLineCount = 0;
-    let fgLineCount = 0;
-    let otherLineCount = 0;
+  return { items, productName, categoryName, lineCalc, taxableTotal, taxTotal, billTotal, paidNow, cgst, sgst, igst };
+}
 
+/** Shared by create + update: write each line's itemized row and apply its stock/expense side effect. */
+async function applyPurchaseLines(
+  tx: Prisma.TransactionClient,
+  billId: string,
+  prepared: Awaited<ReturnType<typeof preparePurchase>>,
+  input: PurchaseInput,
+  userId: string,
+) {
+  const { items, lineCalc, productName, categoryName } = prepared;
+  let rawLineCount = 0;
+  let fgLineCount = 0;
+  let otherLineCount = 0;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const { base, tax } = lineCalc[i];
+    const lineTotal = base.add(tax);
+
+    if (item.kind === 'RAW_MATERIAL') {
+      const m = await tx.rawMaterial.findUniqueOrThrow({ where: { id: item.rawMaterialId } });
+      const oldStock = new Prisma.Decimal(m.currentStock);
+      const oldCost = new Prisma.Decimal(m.costPerUnit);
+      const addQty = new Prisma.Decimal(item.quantity);
+      const addCost = new Prisma.Decimal(item.costPerUnit);
+      const newStock = oldStock.add(addQty);
+      const weighted = newStock.greaterThan(0) ? oldStock.mul(oldCost).add(addQty.mul(addCost)).div(newStock) : addCost;
+      await tx.rawMaterialIntake.create({
+        data: {
+          rawMaterialId: item.rawMaterialId, quantity: addQty, costPerUnit: addCost, totalCost: base,
+          taxRate: item.taxRate, taxAmount: tax, hsnCode: item.hsnCode,
+          supplierName: input.supplierName ?? m.supplierName, invoiceNumber: input.invoiceNumber, intakeDate: input.intakeDate,
+          notes: input.notes, supplierBillId: billId, createdById: userId,
+        },
+      });
+      await tx.rawMaterial.update({ where: { id: item.rawMaterialId }, data: { currentStock: newStock, costPerUnit: weighted.toDecimalPlaces(2) } });
+      await tx.supplierBillItem.create({ data: { supplierBillId: billId, kind: 'RAW_MATERIAL', refId: item.rawMaterialId, name: m.name, hsnCode: item.hsnCode, quantity: addQty, unitCost: addCost, taxRate: item.taxRate, taxableAmount: base, taxAmount: tax, lineTotal } });
+      rawLineCount += 1;
+    } else if (item.kind === 'FINISHED_GOOD') {
+      // Bought finished goods land in godown finished-goods stock.
+      await tx.godownStock.upsert({
+        where: { productId: item.productId },
+        create: { productId: item.productId, quantity: item.quantity },
+        update: { quantity: { increment: item.quantity } },
+      });
+      await tx.supplierBillItem.create({ data: { supplierBillId: billId, kind: 'FINISHED_GOOD', refId: item.productId, name: productName.get(item.productId) ?? 'Product', hsnCode: item.hsnCode, quantity: new Prisma.Decimal(item.quantity), unitCost: new Prisma.Decimal(item.costPerUnit), taxRate: item.taxRate, taxableAmount: base, taxAmount: tax, lineTotal } });
+      fgLineCount += 1;
+    } else {
+      await tx.expense.create({
+        data: {
+          categoryId: item.categoryId, amount: base, expenseDate: input.intakeDate, paymentMethod: input.paymentMethod,
+          taxRate: item.taxRate, taxAmount: tax, hsnCode: item.hsnCode,
+          paidTo: input.supplierName, supplierName: input.supplierName, invoiceNumber: input.invoiceNumber,
+          note: item.description ?? input.notes, supplierBillId: billId, createdById: userId,
+        },
+      });
+      await tx.supplierBillItem.create({ data: { supplierBillId: billId, kind: 'OTHER', refId: item.categoryId, name: categoryName.get(item.categoryId) ?? 'Expense', hsnCode: item.hsnCode, taxRate: item.taxRate, taxableAmount: base, taxAmount: tax, lineTotal } });
+      otherLineCount += 1;
+    }
+  }
+
+  return { rawLineCount, fgLineCount, otherLineCount };
+}
+
+export async function logPurchase(input: PurchaseInput, userId: string) {
+  const prepared = await preparePurchase(input);
+  const { billTotal, paidNow, taxableTotal, taxTotal, cgst, sgst, igst } = prepared;
+
+  const result = await prisma.$transaction(async (tx) => {
     // 1) The payable bill (header) with GST breakup.
     const balance = billTotal.sub(paidNow);
     const status = balance.lessThanOrEqualTo(0) ? 'PAID' : paidNow.greaterThan(0) ? 'PARTIALLY_PAID' : 'UNPAID';
@@ -287,52 +357,7 @@ export async function logPurchase(input: import('./production.schema').RecordPur
     });
 
     // 2) Each line: store an itemized bill line + apply its side effect.
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const { base, tax } = lineCalc[i];
-      const lineTotal = base.add(tax);
-
-      if (item.kind === 'RAW_MATERIAL') {
-        const m = await tx.rawMaterial.findUniqueOrThrow({ where: { id: item.rawMaterialId } });
-        const oldStock = new Prisma.Decimal(m.currentStock);
-        const oldCost = new Prisma.Decimal(m.costPerUnit);
-        const addQty = new Prisma.Decimal(item.quantity);
-        const addCost = new Prisma.Decimal(item.costPerUnit);
-        const newStock = oldStock.add(addQty);
-        const weighted = newStock.greaterThan(0) ? oldStock.mul(oldCost).add(addQty.mul(addCost)).div(newStock) : addCost;
-        await tx.rawMaterialIntake.create({
-          data: {
-            rawMaterialId: item.rawMaterialId, quantity: addQty, costPerUnit: addCost, totalCost: base,
-            taxRate: item.taxRate, taxAmount: tax, hsnCode: item.hsnCode,
-            supplierName: input.supplierName ?? m.supplierName, invoiceNumber: input.invoiceNumber, intakeDate: input.intakeDate,
-            notes: input.notes, supplierBillId: bill.id, createdById: userId,
-          },
-        });
-        await tx.rawMaterial.update({ where: { id: item.rawMaterialId }, data: { currentStock: newStock, costPerUnit: weighted.toDecimalPlaces(2) } });
-        await tx.supplierBillItem.create({ data: { supplierBillId: bill.id, kind: 'RAW_MATERIAL', refId: item.rawMaterialId, name: m.name, hsnCode: item.hsnCode, quantity: addQty, unitCost: addCost, taxRate: item.taxRate, taxableAmount: base, taxAmount: tax, lineTotal } });
-        rawLineCount += 1;
-      } else if (item.kind === 'FINISHED_GOOD') {
-        // Bought finished goods land in godown finished-goods stock.
-        await tx.godownStock.upsert({
-          where: { productId: item.productId },
-          create: { productId: item.productId, quantity: item.quantity },
-          update: { quantity: { increment: item.quantity } },
-        });
-        await tx.supplierBillItem.create({ data: { supplierBillId: bill.id, kind: 'FINISHED_GOOD', refId: item.productId, name: productName.get(item.productId) ?? 'Product', hsnCode: item.hsnCode, quantity: new Prisma.Decimal(item.quantity), unitCost: new Prisma.Decimal(item.costPerUnit), taxRate: item.taxRate, taxableAmount: base, taxAmount: tax, lineTotal } });
-        fgLineCount += 1;
-      } else {
-        await tx.expense.create({
-          data: {
-            categoryId: item.categoryId, amount: base, expenseDate: input.intakeDate, paymentMethod: input.paymentMethod,
-            taxRate: item.taxRate, taxAmount: tax, hsnCode: item.hsnCode,
-            paidTo: input.supplierName, supplierName: input.supplierName, invoiceNumber: input.invoiceNumber,
-            note: item.description ?? input.notes, supplierBillId: bill.id, createdById: userId,
-          },
-        });
-        await tx.supplierBillItem.create({ data: { supplierBillId: bill.id, kind: 'OTHER', refId: item.categoryId, name: categoryName.get(item.categoryId) ?? 'Expense', hsnCode: item.hsnCode, taxRate: item.taxRate, taxableAmount: base, taxAmount: tax, lineTotal } });
-        otherLineCount += 1;
-      }
-    }
+    const counts = await applyPurchaseLines(tx, bill.id, prepared, input, userId);
 
     // 3) Initial supplier payment (if anything paid at entry).
     if (paidNow.greaterThan(0)) {
@@ -345,7 +370,7 @@ export async function logPurchase(input: import('./production.schema').RecordPur
       });
     }
 
-    return { bill, rawLineCount, fgLineCount, otherLineCount };
+    return { bill, ...counts };
   });
 
   cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
@@ -360,6 +385,144 @@ export async function logPurchase(input: import('./production.schema').RecordPur
     status: result.bill.status,
     lineCount: result.rawLineCount + result.fgLineCount + result.otherLineCount,
   };
+}
+
+/**
+ * Reverses every side effect of an existing purchase bill's line items (stock, weighted-avg
+ * cost, expenses) and removes its itemized rows — leaving only the bill header behind, ready
+ * for either a fresh set of lines (edit) or a final soft-delete.
+ *
+ * Refuses (throws, touching nothing) if: the bill has any payment recorded against it — once
+ * money has moved, undoing the bill would desync real payment history — or if reversing a
+ * raw-material/finished-good line would drive stock negative, meaning some of it has already
+ * been consumed/moved elsewhere and can no longer be cleanly un-received.
+ *
+ * The weighted-average-cost reversal is mathematically exact as long as that stock guard
+ * holds: consumption only ever decrements currentStock (never costPerUnit), so subtracting
+ * this purchase's own quantity/cost back out of the running total/average is a plain reversal
+ * of the addition `logPurchase` made, regardless of how many other purchases happened between.
+ */
+async function reversePurchaseEffects(tx: Prisma.TransactionClient, billId: string) {
+  const bill = await tx.supplierBill.findFirst({
+    where: { id: billId, isDeleted: false },
+    include: {
+      items: { where: { isDeleted: false } },
+      payments: { where: { isDeleted: false } },
+    },
+  });
+  if (!bill) throw AppError.notFound('Purchase bill not found');
+  if (bill.payments.length > 0) {
+    throw AppError.conflict('This bill has a payment recorded against it — it can no longer be edited or deleted.');
+  }
+
+  // Validate every reversal is safe BEFORE mutating anything.
+  for (const item of bill.items) {
+    if (item.kind === 'RAW_MATERIAL' && item.refId) {
+      const m = await tx.rawMaterial.findUniqueOrThrow({ where: { id: item.refId } });
+      if (new Prisma.Decimal(m.currentStock).lessThan(item.quantity ?? 0)) {
+        throw AppError.conflict(`Cannot modify — some of the "${item.name}" from this bill has already been used elsewhere.`);
+      }
+    } else if (item.kind === 'FINISHED_GOOD' && item.refId) {
+      const g = await tx.godownStock.findUnique({ where: { productId: item.refId } });
+      if (!g || new Prisma.Decimal(g.quantity).lessThan(item.quantity ?? 0)) {
+        throw AppError.conflict(`Cannot modify — some of the "${item.name}" from this bill has already moved elsewhere.`);
+      }
+    }
+  }
+
+  // Now actually reverse.
+  for (const item of bill.items) {
+    if (item.kind === 'RAW_MATERIAL' && item.refId) {
+      const m = await tx.rawMaterial.findUniqueOrThrow({ where: { id: item.refId } });
+      const currentStock = new Prisma.Decimal(m.currentStock);
+      const currentCost = new Prisma.Decimal(m.costPerUnit);
+      const removeQty = new Prisma.Decimal(item.quantity ?? 0);
+      const removeCost = new Prisma.Decimal(item.unitCost ?? 0);
+      const oldStock = currentStock.sub(removeQty);
+      const oldCost = oldStock.greaterThan(0) ? currentStock.mul(currentCost).sub(removeQty.mul(removeCost)).div(oldStock) : new Prisma.Decimal(0);
+      await tx.rawMaterial.update({ where: { id: item.refId }, data: { currentStock: oldStock, costPerUnit: oldCost.toDecimalPlaces(2) } });
+    } else if (item.kind === 'FINISHED_GOOD' && item.refId) {
+      await tx.godownStock.update({ where: { productId: item.refId }, data: { quantity: { decrement: item.quantity ?? 0 } } });
+    }
+  }
+
+  await tx.expense.deleteMany({ where: { supplierBillId: billId } });
+  await tx.rawMaterialIntake.deleteMany({ where: { supplierBillId: billId } });
+  await tx.supplierBillItem.deleteMany({ where: { supplierBillId: billId } });
+
+  return bill;
+}
+
+/** Edit a purchase bill: reverse its old effects, then re-apply fresh ones under the same bill number. */
+export async function updatePurchase(id: string, input: PurchaseInput, userId: string) {
+  const prepared = await preparePurchase(input);
+  const { billTotal, paidNow, taxableTotal, taxTotal, cgst, sgst, igst } = prepared;
+
+  const result = await prisma.$transaction(async (tx) => {
+    await reversePurchaseEffects(tx, id);
+    await tx.supplierPayment.deleteMany({ where: { supplierBillId: id } });
+
+    const balance = billTotal.sub(paidNow);
+    const status = balance.lessThanOrEqualTo(0) ? 'PAID' : paidNow.greaterThan(0) ? 'PARTIALLY_PAID' : 'UNPAID';
+    const creditDays = balance.greaterThan(0) ? input.creditDays : undefined;
+    const dueDate = creditDays ? addDays(input.intakeDate, creditDays) : null;
+    const bill = await tx.supplierBill.update({
+      where: { id },
+      data: {
+        supplierName: input.supplierName,
+        supplierGstin: input.supplierGstin,
+        invoiceNumber: input.invoiceNumber,
+        billDate: input.intakeDate,
+        taxableAmount: taxableTotal,
+        cgst, sgst, igst,
+        taxAmount: taxTotal,
+        totalAmount: billTotal,
+        amountPaid: paidNow,
+        balanceDue: balance,
+        status,
+        paymentMethod: input.paymentMethod,
+        creditDays: creditDays ?? null,
+        dueDate,
+        isGstBill: input.isGstBill,
+        notes: input.notes,
+      },
+    });
+
+    const counts = await applyPurchaseLines(tx, bill.id, prepared, input, userId);
+
+    if (paidNow.greaterThan(0)) {
+      await tx.supplierPayment.create({
+        data: {
+          paymentNumber: await nextDocNumber(tx, 'SUPPLIER_PAYMENT'),
+          supplierBillId: bill.id, amount: paidNow, method: input.paymentMethod,
+          paymentDate: input.intakeDate, paidById: userId, createdById: userId,
+        },
+      });
+    }
+
+    return { bill, ...counts };
+  });
+
+  cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
+  return {
+    billNumber: result.bill.billNumber,
+    totalCost: billTotal,
+    amountPaid: paidNow,
+    balanceDue: result.bill.balanceDue,
+    status: result.bill.status,
+    lineCount: result.rawLineCount + result.fgLineCount + result.otherLineCount,
+  };
+}
+
+/** Delete a purchase bill: reverse its effects, then soft-delete the header. */
+export async function deletePurchase(id: string) {
+  await prisma.$transaction(async (tx) => {
+    await reversePurchaseEffects(tx, id);
+    await tx.supplierPayment.deleteMany({ where: { supplierBillId: id } });
+    await tx.supplierBill.update({ where: { id }, data: { isDeleted: true } });
+  });
+  cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
+  return { deleted: true };
 }
 
 export interface ListPurchasesQuery { status?: string; search?: string }
@@ -425,4 +588,4 @@ export async function getGodownStock() {
   });
 }
 
-export const productionService = { logBatch, listBatches, getBatch, logIntake, listIntake, logPurchase, listPurchases, getPurchaseDetail, getGodownStock };
+export const productionService = { logBatch, listBatches, getBatch, logIntake, listIntake, logPurchase, updatePurchase, deletePurchase, listPurchases, getPurchaseDetail, getGodownStock };

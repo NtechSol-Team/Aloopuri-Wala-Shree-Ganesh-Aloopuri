@@ -149,6 +149,23 @@ export function renderBillPdf(bill: BillWithRelations, dest: NodeJS.WritableStre
       doc.font('Helvetica');
     }
 
+    // ── Terms & Conditions ─────────────────────────────────────────────────
+    const terms = env.COMPANY_TERMS.split('|').map((t) => t.trim()).filter(Boolean);
+    if (terms.length) {
+      const footerReserve = 40; // leave room for the disclaimer footer below
+      y += 18;
+      doc.fontSize(8.5).fillColor(COLOR.muted).text('TERMS & CONDITIONS', PAGE.left, y, { width: PAGE.width });
+      y = doc.y + 4;
+      doc.fontSize(8).fillColor(COLOR.muted);
+      for (let i = 0; i < terms.length; i++) {
+        const lineText = `${i + 1}. ${terms[i]}`;
+        const h = doc.heightOfString(lineText, { width: PAGE.width });
+        if (y + h > 740 - footerReserve) { doc.addPage(); y = 50; }
+        doc.text(lineText, PAGE.left, y, { width: PAGE.width });
+        y = doc.y + 2;
+      }
+    }
+
     // ── Footer ──────────────────────────────────────────────────────────────
     doc.moveTo(PAGE.left, 760).lineTo(PAGE.right, 760).strokeColor(COLOR.line).stroke();
     doc

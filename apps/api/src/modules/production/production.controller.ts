@@ -31,6 +31,12 @@ export const listIntakeController = async (req: Request, res: Response) => {
 export const recordPurchaseController = async (req: Request, res: Response) =>
   created(res, await productionService.logPurchase(req.body as RecordPurchaseInput, actor(req)), 'Purchase recorded');
 
+export const updatePurchaseController = async (req: Request, res: Response) =>
+  ok(res, await productionService.updatePurchase(req.params.id, req.body as RecordPurchaseInput, actor(req)), 'Purchase bill updated');
+
+export const deletePurchaseController = async (req: Request, res: Response) =>
+  ok(res, await productionService.deletePurchase(req.params.id), 'Purchase bill deleted');
+
 export const listPurchasesController = async (req: Request, res: Response) =>
   ok(res, await productionService.listPurchases({ status: req.query.status as string | undefined, search: req.query.search as string | undefined }));
 

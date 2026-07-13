@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { format } from 'date-fns';
-import { Download, Eye, ReceiptText, IndianRupee } from 'lucide-react';
+import { Download, Printer, Eye, ReceiptText, IndianRupee } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
@@ -12,7 +12,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn, formatINR } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
-import { useBills, useBill, useOpenBillPdf, type BillStatus } from '@/hooks/useBilling';
+import { useBills, useBill, useOpenBillPdf, usePrintBillPdf, type BillStatus } from '@/hooks/useBilling';
 import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
 import { apiErrorMessage } from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -26,6 +26,7 @@ export default function BillingPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [payTarget, setPayTarget] = useState<PayTarget | null>(null);
   const openPdf = useOpenBillPdf();
+  const printPdf = usePrintBillPdf();
 
   return (
     <div className="space-y-5">
@@ -89,6 +90,12 @@ export default function BillingPage() {
                         )}
                         <Button variant="ghost" size="icon" title="View" onClick={() => setDetailId(b.id)}><Eye className="h-4 w-4" /></Button>
                         <Button
+                          variant="ghost" size="icon" title="Print" loading={printPdf.isPending}
+                          onClick={() => printPdf.mutate(b.id, { onError: (e) => toast.error(apiErrorMessage(e)) })}
+                        >
+                          <Printer className="h-4 w-4" />
+                        </Button>
+                        <Button
                           variant="ghost" size="icon" title="Download PDF" loading={openPdf.isPending}
                           onClick={() => openPdf.mutate(b.id, { onError: (e) => toast.error(apiErrorMessage(e)) })}
                         >
@@ -112,14 +119,22 @@ export default function BillingPage() {
 
 function BillDetailDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
   const { data: bill, isLoading } = useBill(id);
+  const printPdf = usePrintBillPdf();
   return (
     <Dialog open={!!id} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {bill ? `Invoice ${bill.billNumber}` : 'Invoice'}
-            {bill && !bill.isGstBill && <Badge variant="neutral">No GST</Badge>}
-          </DialogTitle>
+          <div className="flex items-center justify-between gap-2 pr-6">
+            <DialogTitle className="flex items-center gap-2">
+              {bill ? `Invoice ${bill.billNumber}` : 'Invoice'}
+              {bill && !bill.isGstBill && <Badge variant="neutral">No GST</Badge>}
+            </DialogTitle>
+            {bill && (
+              <Button variant="secondary" size="sm" loading={printPdf.isPending} onClick={() => id && printPdf.mutate(id, { onError: (e) => toast.error(apiErrorMessage(e)) })}>
+                <Printer className="h-3.5 w-3.5" /> Print
+              </Button>
+            )}
+          </div>
         </DialogHeader>
         {isLoading || !bill ? (
           <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8" />)}</div>

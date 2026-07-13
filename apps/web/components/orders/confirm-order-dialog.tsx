@@ -13,6 +13,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { useConfirmOrder, type Order, type FulfillmentSource } from '@/hooks/useOrders';
 import { useMainBranchInventory, useGodownInventory } from '@/hooks/useInventory';
 import { useOutletPrices } from '@/hooks/useOutlets';
+import { printOrderPickList } from '@/lib/receipt-print';
 
 interface Line {
   itemId: string;
@@ -77,7 +78,14 @@ export function ConfirmOrderDialog({ order, onClose }: { order: Order | null; on
     confirm.mutate(
       { id: order.id, fulfillmentSource: source, isGstBill, items: lines.map((l) => ({ itemId: l.itemId, confirmedQuantity: l.approved, unitPrice: l.price })) },
       {
-        onSuccess: () => { toast.success(`Order ${order.orderNumber} confirmed`); onClose(); },
+        onSuccess: () => {
+          toast.success(`Order ${order.orderNumber} confirmed`);
+          printOrderPickList(
+            { orderNumber: order.orderNumber, outletName: order.outlet.name, fulfillmentSource: source, isGstBill },
+            lines.map((l) => ({ name: l.name, unit: l.unit, approvedQty: l.approved, price: l.price })),
+          );
+          onClose();
+        },
         onError: (e) => toast.error(apiErrorMessage(e)),
       },
     );

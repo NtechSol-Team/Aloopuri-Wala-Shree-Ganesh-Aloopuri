@@ -44,6 +44,17 @@ const envSchema = z.object({
   COMPANY_ADDRESS: z.string().default(''),
   COMPANY_PHONE: z.string().default(''),
   COMPANY_GSTIN: z.string().default(''),
+  // Terms & Conditions printed at the foot of every sales invoice — pipe-separated,
+  // one term per segment, numbered automatically. Best-effort default transcribed from
+  // the shop's paper order form; VERIFY THE WORDING (money amounts especially) before
+  // relying on it, then override via env instead of editing code.
+  COMPANY_TERMS: z.string().default(
+    'Orders must be placed at least 2 days in advance with advance payment.'
+    + '|If payment is not completed on time, 5% GST will be added to the bill.'
+    + '|Any changes to the order must be informed in advance.'
+    + '|For pickup after 10 PM, please inform in advance — staff may not be available to verify/hand over material after that time.'
+    + '|Cancelling a confirmed order will incur a 10% cancellation charge.',
+  ),
 
   // Passphrase that unlocks the hidden developer window (outlet management).
   // Set your own in production; the default only exists so local dev works.

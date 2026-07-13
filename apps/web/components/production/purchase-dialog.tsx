@@ -14,7 +14,7 @@ import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useRawMaterials, useProducts } from '@/hooks/useProducts';
 import { useExpenseCategories } from '@/hooks/useExpenses';
-import { useRecordPurchase, type PurchaseItemInput } from '@/hooks/useProduction';
+import { useRecordPurchase, useUpdatePurchase, type PurchaseItemInput, type PurchaseBillDetail } from '@/hooks/useProduction';
 import { useContacts } from '@/hooks/useContacts';
 import { useGstLookup } from '@/hooks/useGst';
 
@@ -35,13 +35,15 @@ const KIND_META: Record<Line['kind'], { label: string; icon: typeof Boxes }> = {
   OTHER: { label: 'Other', icon: Tag },
 };
 
-export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean; onOpenChange: (v: boolean) => void; editBill?: PurchaseBillDetail | null }) {
   const { data: materials } = useRawMaterials();
   const { data: productsData } = useProducts();
   const { data: categories } = useExpenseCategories();
   const { data: suppliers } = useContacts({ type: 'SUPPLIER' });
   const record = useRecordPurchase();
+  const updateMutation = useUpdatePurchase();
   const lookup = useGstLookup();
+  const isEdit = !!editBill;
 
   const [isGstBill, setIsGstBill] = useState(true);
   const [supplierName, setSupplier] = useState('');
@@ -66,14 +68,33 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const newOtherLine = (): Line => ({ kind: 'OTHER', categoryId: catList[0]?.id ?? '', description: '', amount: 0, taxRate: 18, hsnCode: '' });
 
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    if (editBill) {
+      setIsGstBill(editBill.isGstBill);
+      setSupplier(editBill.supplierName ?? ''); setGstin(editBill.supplierGstin ?? '');
+      setSupplierState(''); setShowSuggestions(false);
+      setInvoice(editBill.invoiceNumber ?? ''); setBillDate(editBill.billDate.slice(0, 10));
+      setMethod(editBill.paymentMethod ?? 'CASH');
+      const paid = Number(editBill.amountPaid);
+      const total = Number(editBill.totalAmount);
+      setPayMode(paid <= 0 ? 'credit' : paid >= total ? 'full' : 'partial');
+      setCustomPaid(paid);
+      setCreditDays(editBill.creditDays ?? 30);
+      setLines(
+        editBill.items.map((it): Line => {
+          if (it.kind === 'RAW_MATERIAL') return { kind: 'RAW_MATERIAL', rawMaterialId: it.refId ?? '', quantity: Number(it.quantity ?? 0), costPerUnit: Number(it.unitCost ?? 0), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '' };
+          if (it.kind === 'FINISHED_GOOD') return { kind: 'FINISHED_GOOD', productId: it.refId ?? '', quantity: Number(it.quantity ?? 0), costPerUnit: Number(it.unitCost ?? 0), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '' };
+          return { kind: 'OTHER', categoryId: it.refId ?? '', description: '', amount: Number(it.taxableAmount), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '' };
+        }),
+      );
+    } else {
       setIsGstBill(true);
       setSupplier(''); setGstin(''); setSupplierState(''); setShowSuggestions(false);
       setInvoice(''); setBillDate(today()); setMethod('CASH'); setPayMode('full'); setCustomPaid(0); setCreditDays(30);
       setLines(rmList.length ? [newRawLine()] : catList.length ? [newOtherLine()] : []);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, materials, categories]);
+  }, [open, editBill, materials, categories]);
 
   // Close the supplier suggestion list on outside click.
   useEffect(() => {
@@ -142,26 +163,33 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           ? { kind: 'FINISHED_GOOD', productId: l.productId, quantity: l.quantity, costPerUnit: l.costPerUnit, taxRate: l.taxRate, hsnCode: l.hsnCode || undefined }
           : { kind: 'OTHER', categoryId: l.categoryId, description: l.description || undefined, amount: l.amount, taxRate: l.taxRate, hsnCode: l.hsnCode || undefined },
     );
-    record.mutate(
-      {
-        supplierName: supplierName || undefined, supplierGstin: supplierGstin || undefined, invoiceNumber: invoiceNumber || undefined,
-        intakeDate: billDate, paymentMethod, amountPaidNow: paidNow, isGstBill,
-        creditDays: balance > 0 ? creditDays : undefined,
-        items,
+    const payload = {
+      supplierName: supplierName || undefined, supplierGstin: supplierGstin || undefined, invoiceNumber: invoiceNumber || undefined,
+      intakeDate: billDate, paymentMethod, amountPaidNow: paidNow, isGstBill,
+      creditDays: balance > 0 ? creditDays : undefined,
+      items,
+    };
+    const onSettled = {
+      onSuccess: (r: { billNumber: string; totalCost: string; status: string }) => {
+        toast.success(`Purchase ${r.billNumber} · ${formatINR(r.totalCost)} · ${r.status.replace('_', ' ').toLowerCase()}`);
+        onOpenChange(false);
       },
-      {
-        onSuccess: (r) => { toast.success(`Purchase ${r.billNumber} · ${formatINR(r.totalCost)} · ${r.status.replace('_', ' ').toLowerCase()}`); onOpenChange(false); },
-        onError: (e) => toast.error(apiErrorMessage(e)),
-      },
-    );
+      onError: (e: unknown) => toast.error(apiErrorMessage(e)),
+    };
+    if (isEdit && editBill) updateMutation.mutate({ id: editBill.id, ...payload }, onSettled);
+    else record.mutate(payload, onSettled);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl">
         <DialogHeader>
-          <DialogTitle>Record Purchase Bill</DialogTitle>
-          <DialogDescription>Raw materials go to inventory (cost ex-GST); GST is captured as input tax credit. Other items book as expenses.</DialogDescription>
+          <DialogTitle>{isEdit ? `Edit Purchase Bill ${editBill?.billNumber ?? ''}` : 'Record Purchase Bill'}</DialogTitle>
+          <DialogDescription>
+            {isEdit
+              ? 'Saving replaces the old lines — stock/cost are reversed and reapplied under the same bill number.'
+              : 'Raw materials go to inventory (cost ex-GST); GST is captured as input tax credit. Other items book as expenses.'}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center gap-2">
@@ -382,7 +410,7 @@ export function PurchaseDialog({ open, onOpenChange }: { open: boolean; onOpenCh
 
         <DialogFooter>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={submit} loading={record.isPending}>Record Purchase</Button>
+          <Button onClick={submit} loading={record.isPending || updateMutation.isPending}>{isEdit ? 'Save Changes' : 'Record Purchase'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

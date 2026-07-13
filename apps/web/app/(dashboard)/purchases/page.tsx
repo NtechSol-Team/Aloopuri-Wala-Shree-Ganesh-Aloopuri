@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import toast from 'react-hot-toast';
 import { format, differenceInCalendarDays } from 'date-fns';
-import { Plus, Search, Eye, ShoppingBag, Boxes, Package, Tag, IndianRupee } from 'lucide-react';
+import { Plus, Search, Eye, ShoppingBag, Boxes, Package, Tag, IndianRupee, Pencil, Trash2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,9 +11,10 @@ import { Select } from '@/components/ui/select';
 import { Badge, statusBadgeVariant } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { cn, formatINR } from '@/lib/utils';
-import { usePurchases, usePurchaseDetail } from '@/hooks/useProduction';
+import { apiErrorMessage } from '@/lib/api';
+import { usePurchases, usePurchaseDetail, useDeletePurchase, type PurchaseBillDetail } from '@/hooks/useProduction';
 import { PurchaseDialog } from '@/components/production/purchase-dialog';
 import { PaySupplierDialog, type SupplierBillRef } from '@/components/payables/pay-supplier-dialog';
 
@@ -42,6 +44,8 @@ export default function PurchasesPage() {
   const [recordOpen, setRecordOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [payTarget, setPayTarget] = useState<SupplierBillRef | null>(null);
+  const [editBill, setEditBill] = useState<PurchaseBillDetail | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PurchaseBillDetail | null>(null);
 
   return (
     <div className="space-y-5">
@@ -106,28 +110,53 @@ export default function PurchasesPage() {
         )}
       </Card>
 
-      <PurchaseDialog open={recordOpen} onOpenChange={setRecordOpen} />
+      <PurchaseDialog
+        open={recordOpen || !!editBill}
+        onOpenChange={(v) => { if (!v) { setRecordOpen(false); setEditBill(null); } }}
+        editBill={editBill}
+      />
       <PurchaseDetailDialog
         id={detailId}
         onClose={() => setDetailId(null)}
         onPay={(b) => { setDetailId(null); setPayTarget(b); }}
+        onEdit={(b) => { setDetailId(null); setEditBill(b); }}
+        onDelete={(b) => { setDetailId(null); setDeleteTarget(b); }}
       />
       <PaySupplierDialog bill={payTarget} onClose={() => setPayTarget(null)} />
+      <DeletePurchaseDialog bill={deleteTarget} onClose={() => setDeleteTarget(null)} />
     </div>
   );
 }
 
-function PurchaseDetailDialog({ id, onClose, onPay }: { id: string | null; onClose: () => void; onPay: (b: SupplierBillRef) => void }) {
+function PurchaseDetailDialog({ id, onClose, onPay, onEdit, onDelete }: {
+  id: string | null;
+  onClose: () => void;
+  onPay: (b: SupplierBillRef) => void;
+  onEdit: (b: PurchaseBillDetail) => void;
+  onDelete: (b: PurchaseBillDetail) => void;
+}) {
   const { data: bill, isLoading } = usePurchaseDetail(id);
+  const canModify = !!bill && bill.payments.length === 0;
   return (
     <Dialog open={!!id} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {bill ? `Purchase ${bill.billNumber}` : 'Purchase'}
-            {bill && <Badge variant={bill.isGstBill ? 'info' : 'neutral'}>{bill.isGstBill ? 'GST' : 'No GST'}</Badge>}
-          </DialogTitle>
+          <div className="flex items-center justify-between gap-2 pr-6">
+            <DialogTitle className="flex items-center gap-2">
+              {bill ? `Purchase ${bill.billNumber}` : 'Purchase'}
+              {bill && <Badge variant={bill.isGstBill ? 'info' : 'neutral'}>{bill.isGstBill ? 'GST' : 'No GST'}</Badge>}
+            </DialogTitle>
+            {canModify && (
+              <div className="flex gap-1">
+                <Button variant="ghost" size="icon" className="h-8 w-8" title="Edit" onClick={() => onEdit(bill)}><Pencil className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" title="Delete" onClick={() => onDelete(bill)}><Trash2 className="h-4 w-4 text-danger" /></Button>
+              </div>
+            )}
+          </div>
           <DialogDescription>{bill ? `${bill.supplierName ?? 'Supplier'}${bill.supplierGstin ? ` · ${bill.supplierGstin}` : ''}${bill.invoiceNumber ? ` · Inv ${bill.invoiceNumber}` : ''}` : 'Loading…'}</DialogDescription>
+          {bill && !canModify && (
+            <p className="text-caption text-muted-foreground">This bill has a payment recorded against it, so it can no longer be edited or deleted.</p>
+          )}
         </DialogHeader>
 
         {isLoading || !bill ? (
@@ -201,4 +230,35 @@ function PurchaseDetailDialog({ id, onClose, onPay }: { id: string | null; onClo
 
 function Row({ label, value, bold, muted, className }: { label: string; value: React.ReactNode; bold?: boolean; muted?: boolean; className?: string }) {
   return <div className={cn('flex justify-between', bold && 'border-t border-border pt-1 font-semibold', muted && 'text-muted-foreground', className)}><span>{label}</span><span>{value}</span></div>;
+}
+
+function DeletePurchaseDialog({ bill, onClose }: { bill: PurchaseBillDetail | null; onClose: () => void }) {
+  const del = useDeletePurchase();
+  return (
+    <Dialog open={!!bill} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Delete {bill?.billNumber}?</DialogTitle>
+          <DialogDescription>
+            This reverses the stock and cost it added — refused automatically if any of that stock has already been used elsewhere. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button
+            variant="danger" loading={del.isPending}
+            onClick={() => {
+              if (!bill) return;
+              del.mutate(bill.id, {
+                onSuccess: () => { toast.success(`${bill.billNumber} deleted`); onClose(); },
+                onError: (e) => toast.error(apiErrorMessage(e)),
+              });
+            }}
+          >
+            <Trash2 className="h-4 w-4" /> Delete Bill
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }

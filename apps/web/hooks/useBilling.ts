@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { printPdfBlob } from '@/lib/receipt-print';
 import type { ApiSuccess } from '@/types/api';
 
 export type BillStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
@@ -66,6 +67,16 @@ export function useOpenBillPdf() {
       const url = URL.createObjectURL(res.data as Blob);
       window.open(url, '_blank');
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    },
+  });
+}
+
+/** Fetches the bill PDF the same way as useOpenBillPdf, but sends it straight to print. */
+export function usePrintBillPdf() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await api.get(`/billing/${id}/pdf`, { responseType: 'blob' });
+      printPdfBlob(res.data as Blob);
     },
   });
 }

@@ -47,6 +47,37 @@ function printHtml(html: string): void {
 }
 
 /**
+ * Load a PDF blob (e.g. a bill fetched from the API) into a hidden iframe and trigger
+ * the browser print dialog for it — one click, no separate "open then print" step.
+ * Chrome's built-in PDF viewer needs a beat to finish rendering after the iframe's own
+ * load event before print() reliably grabs the right content, hence the short delay.
+ */
+export function printPdfBlob(blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  document.body.appendChild(iframe);
+
+  const cleanup = () => setTimeout(() => { iframe.remove(); URL.revokeObjectURL(url); }, 60_000);
+  iframe.onload = () => {
+    setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } finally {
+        cleanup();
+      }
+    }, 300);
+  };
+  iframe.src = url;
+}
+
+/**
  * 80mm thermal-style receipt (B2C — no GST invoice, taxes shown as included).
  * Renders into a hidden iframe and opens the browser print dialog, which works
  * with any installed thermal/receipt printer as well as normal printers.
@@ -134,6 +165,72 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string } = {}): 
     Thank you! Visit again 🙏<br />
     — ${esc(STORE_TAGLINE)} —
   </div>
+</body>
+</html>`;
+
+  printHtml(html);
+}
+
+export interface OrderPickListLine { name: string; unit: string; approvedQty: number; price: number }
+
+/**
+ * 80mm thermal pick-list — printed automatically for the admin/godown when they
+ * confirm an outlet's stock order, so whoever packs it has a physical copy of
+ * exactly what (and how much) was approved.
+ */
+export function printOrderPickList(
+  order: { orderNumber: string; outletName: string; fulfillmentSource: 'MAIN_BRANCH' | 'GODOWN'; isGstBill: boolean },
+  lines: OrderPickListLine[],
+): void {
+  const total = lines.reduce((s, l) => s + l.approvedQty * l.price, 0);
+  const itemRows = lines
+    .map(
+      (l) => `
+      <tr><td class="name" colspan="3">${esc(l.name)}</td></tr>
+      <tr class="sub"><td>${l.approvedQty} ${esc(l.unit)} × ${inr(l.price)}</td><td></td><td class="num">${inr(l.approvedQty * l.price)}</td></tr>`,
+    )
+    .join('');
+
+  const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  @page { size: 80mm auto; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 72mm; margin: 0 auto; padding: 4mm 2mm 8mm; font-family: 'Courier New', ui-monospace, monospace; font-size: 12px; color: #000; }
+  .center { text-align: center; }
+  .store { font-size: 16px; font-weight: 700; letter-spacing: 0.5px; }
+  .tagline { font-size: 10px; margin-top: 1px; }
+  hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
+  .meta { font-size: 11px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 1px 0; vertical-align: top; }
+  td.name { font-size: 16px; font-weight: 700; padding-top: 4px; line-height: 1.25; }
+  tr.sub td { font-size: 11px; }
+  .num { text-align: right; white-space: nowrap; }
+  .row { display: flex; justify-content: space-between; padding: 1px 0; }
+  .total { font-size: 15px; font-weight: 800; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 3px 0; margin: 4px 0; }
+</style>
+</head>
+<body>
+  <div class="center">
+    <div class="store">${esc(STORE_NAME)}</div>
+    <div class="tagline">Order Pick List</div>
+  </div>
+  <hr />
+  <div class="meta">
+    <div class="row"><span>Order</span><span>${esc(order.orderNumber)}</span></div>
+    <div class="row"><span>Outlet</span><span>${esc(order.outletName)}</span></div>
+    <div class="row"><span>Fulfil from</span><span>${order.fulfillmentSource === 'GODOWN' ? 'Godown' : 'Main Branch'}</span></div>
+    <div class="row"><span>Confirmed</span><span>${format(new Date(), 'dd MMM yyyy, hh:mm a')}</span></div>
+    <div class="row"><span>Bill type</span><span>${order.isGstBill ? 'With GST' : 'No GST'}</span></div>
+  </div>
+  <hr />
+  <table>${itemRows}</table>
+  <hr />
+  <div class="row total"><span>ESTIMATED TOTAL</span><span>${inr(total)}</span></div>
+  <p class="center" style="margin-top:8px;font-size:11px;">Pack &amp; dispatch the quantities above.</p>
 </body>
 </html>`;
 
