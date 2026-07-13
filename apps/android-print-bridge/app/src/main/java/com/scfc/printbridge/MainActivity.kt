@@ -34,7 +34,7 @@ class MainActivity : Activity() {
         private const val TAG = "SCFCPrintBridge"
         private const val PREFS = "scfc_print_bridge"
         private const val KEY_URL = "app_url"
-        private const val DEFAULT_URL = "https://scfc-web.onrender.com"
+        private const val DEFAULT_URL = "https://shreeganeshaloopuri.avoilprime.com"
         const val PERMISSION_REQUEST_BLUETOOTH = 4001
     }
 
