@@ -95,16 +95,18 @@ class PrinterBridge(private val activity: Activity, private val webView: WebView
 
     private fun requireBluetoothPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        if (appContext.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) return
+        // SCAN is needed alongside CONNECT even though we never discover: the
+        // vendor SDK calls cancelDiscovery() while opening the socket, which
+        // Android 12+ gates behind BLUETOOTH_SCAN.
+        val missing = arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+            .filter { appContext.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isEmpty()) return
 
         val latch = CountDownLatch(1)
         permissionLatch = latch
         permissionGranted = false
         activity.runOnUiThread {
-            activity.requestPermissions(
-                arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
-                MainActivity.PERMISSION_REQUEST_BLUETOOTH,
-            )
+            activity.requestPermissions(missing.toTypedArray(), MainActivity.PERMISSION_REQUEST_BLUETOOTH)
         }
         // The dialog needs a human — wait generously, then fail loudly.
         latch.await(60, TimeUnit.SECONDS)

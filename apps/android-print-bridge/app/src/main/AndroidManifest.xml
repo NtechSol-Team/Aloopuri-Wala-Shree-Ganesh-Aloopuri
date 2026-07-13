@@ -5,12 +5,18 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Bluetooth: legacy permissions for Android ≤11, BLUETOOTH_CONNECT (runtime)
-         for Android 12+. We only talk to already-paired printers, so no
-         BLUETOOTH_SCAN / location permissions are needed at all. -->
+    <!-- Bluetooth: legacy permissions for Android ≤11, BLUETOOTH_CONNECT + SCAN
+         (runtime, "Nearby devices" group) for Android 12+. We only talk to
+         already-paired printers, but SCAN is still required: the vendor SDK calls
+         BluetoothAdapter.cancelDiscovery() before opening the SPP socket, and on
+         Android 12+ that call itself demands BLUETOOTH_SCAN. neverForLocation
+         keeps this from implying any location access. -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
 
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
 
