@@ -43,14 +43,16 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="items-center text-center">
           <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Store className="h-6 w-6" />
           </div>
-          <h1 className="text-page-heading font-bold">Surat Food Chain</h1>
-          <p className="text-body text-muted-foreground">Sign in to your account</p>
+          <h1 className="text-page-heading font-bold">Shree Ganesh Aloopuri</h1>
+          <p className="text-body text-muted-foreground">
+            Surat Food Chain — franchise ordering &amp; billing portal. Sign in to your partner account.
+          </p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
@@ -88,13 +90,22 @@ export default function LoginPage() {
             </Button>
           </form>
 
-          <div className="mt-6 rounded-md bg-surface p-3 text-caption text-muted-foreground">
-            <p className="font-medium text-foreground">Demo accounts</p>
-            <p>Admin: ADMIN001 / Admin@123</p>
-            <p>Owner: OWNER001 / Owner@123</p>
-          </div>
+          {process.env.NODE_ENV === 'development' && (
+            <div className="mt-6 rounded-md bg-surface p-3 text-caption text-muted-foreground">
+              <p className="font-medium text-foreground">Demo accounts</p>
+              <p>Admin: ADMIN001 / Admin@123</p>
+              <p>Owner: OWNER001 / Owner@123</p>
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      <p className="mt-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-caption text-muted-foreground">
+        <span>© {new Date().getFullYear()} Shree Ganesh Aloopuri · Surat, Gujarat</span>
+        <a href="/terms" className="hover:text-foreground hover:underline">Terms</a>
+        <a href="/privacy" className="hover:text-foreground hover:underline">Privacy</a>
+        <a href="/refunds" className="hover:text-foreground hover:underline">Refunds</a>
+      </p>
     </div>
   );
 }
