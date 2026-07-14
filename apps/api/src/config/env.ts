@@ -11,6 +11,9 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: false });
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().positive().default(4000),
+  // Interface to bind. Set to 127.0.0.1 behind a reverse proxy so the API is not
+  // exposed on a public interface; containers need the 0.0.0.0 default.
+  API_HOST: z.string().default('0.0.0.0'),
 
   DATABASE_URL: z.string().url(),
 

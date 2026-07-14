@@ -17,8 +17,11 @@ async function bootstrap(): Promise<void> {
   await initRealtime(server);
   await startJobs();
 
-  server.listen(env.API_PORT, () => {
-    logger.info(`🚀 API listening on http://localhost:${env.API_PORT} (${env.NODE_ENV})`);
+  // Bind host is configurable so a reverse-proxied deployment can keep the API
+  // off every public interface (API_HOST=127.0.0.1) while container setups, whose
+  // networking needs an externally reachable bind, keep the 0.0.0.0 default.
+  server.listen(env.API_PORT, env.API_HOST, () => {
+    logger.info(`🚀 API listening on http://${env.API_HOST}:${env.API_PORT} (${env.NODE_ENV})`);
   });
 
   const shutdown = async (signal: string): Promise<void> => {
