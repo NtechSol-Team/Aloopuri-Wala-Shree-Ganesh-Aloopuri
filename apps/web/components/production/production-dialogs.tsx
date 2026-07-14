@@ -39,7 +39,7 @@ function buildRow(b: BomItem, producedQty: number): IngredientRow {
 }
 
 export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  const { data: products } = useProducts();
+  const { data: products } = useProducts({ isPosEnabled: false });
   const [productId, setProductId] = useState('');
   const [quantity, setQuantity] = useState(100);
   const [notes, setNotes] = useState('');

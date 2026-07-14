@@ -89,7 +89,7 @@ export default function TransfersPage() {
 interface ItemRow { productId: string; quantity: number }
 
 function CreateTransferDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  const { data: products } = useProducts();
+  const { data: products } = useProducts({ isPosEnabled: false });
   const { data: outlets } = useOutlets();
   const create = useCreateTransfer();
   const [vehicleNumber, setVehicle] = useState('');

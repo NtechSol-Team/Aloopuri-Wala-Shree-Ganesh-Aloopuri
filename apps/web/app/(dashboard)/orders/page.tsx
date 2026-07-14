@@ -125,7 +125,7 @@ export default function OrdersPage() {
 interface CartRow { productId: string; requestedQuantity: number }
 
 function OrderStockDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  const { data: products } = useProducts();
+  const { data: products } = useProducts({ isPosEnabled: false });
   const create = useCreateOrder();
   const [rows, setRows] = useState<CartRow[]>([]);
 

@@ -37,7 +37,7 @@ const KIND_META: Record<Line['kind'], { label: string; icon: typeof Boxes }> = {
 
 export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean; onOpenChange: (v: boolean) => void; editBill?: PurchaseBillDetail | null }) {
   const { data: materials } = useRawMaterials();
-  const { data: productsData } = useProducts();
+  const { data: productsData } = useProducts({ isPosEnabled: false });
   const { data: categories } = useExpenseCategories();
   const { data: suppliers } = useContacts({ type: 'SUPPLIER' });
   const record = useRecordPurchase();

@@ -20,7 +20,7 @@ export function BomDialog({ product, onClose }: { product: Product | null; onClo
   const open = !!product;
   const { data: bom, isLoading } = useBom(product?.id ?? null);
   const { data: materials } = useRawMaterials();
-  const { data: productsData } = useProducts();
+  const { data: productsData } = useProducts({ isPosEnabled: false });
   const save = useSaveBom(product?.id ?? '');
   const [rows, setRows] = useState<Row[]>([]);
 
