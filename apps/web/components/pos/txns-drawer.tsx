@@ -13,6 +13,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { printReceipt, printSessionItemReport } from '@/lib/print';
+import { useStoreProfile } from '@/hooks/useOutlets';
 import { useCurrentSession, useSessionTransactions, useVoidTransaction, type PosTxn } from '@/hooks/usePos';
 
 type Tab = 'receipts' | 'items';
@@ -25,6 +26,8 @@ export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
 }) {
   const { data: session } = useCurrentSession();
   const { data: txns, isLoading } = useSessionTransactions(open ? sessionId : null);
+  // Reprints and the session report carry this outlet's own identity.
+  const store = useStoreProfile();
   const [voidTarget, setVoidTarget] = useState<PosTxn | null>(null);
   const [tab, setTab] = useState<Tab>('receipts');
 
@@ -46,7 +49,7 @@ export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
 
   const printReport = () => {
     if (!session) return;
-    printSessionItemReport(itemSummary, { sessionNumber: session.sessionNumber, cashierName, openedAt: session.openedAt });
+    printSessionItemReport(itemSummary, { sessionNumber: session.sessionNumber, cashierName, openedAt: session.openedAt, store });
     toast.success('Printing item report…');
   };
 
@@ -105,7 +108,7 @@ export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
                     </div>
                     <span className="font-bold">{formatINR(t.grandTotal)}</span>
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" title="Print receipt" onClick={() => printReceipt(t, { cashierName })}>
+                      <Button variant="ghost" size="icon" title="Print receipt" onClick={() => printReceipt(t, { cashierName, store })}>
                         <Printer className="h-4 w-4" />
                       </Button>
                       {t.status === 'COMPLETED' && (

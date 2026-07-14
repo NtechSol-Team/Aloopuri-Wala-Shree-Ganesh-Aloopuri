@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Printer, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatINR } from '@/lib/utils';
 import { printReceipt, getAutoPrint, setAutoPrint } from '@/lib/print';
+import { useStoreProfile } from '@/hooks/useOutlets';
+import { useAuthStore } from '@/store/auth.store';
 import type { PosTxn } from '@/hooks/usePos';
 
 /**
@@ -13,8 +15,14 @@ import type { PosTxn } from '@/hooks/usePos';
  * the cashier never has to click anything between sales.
  */
 export function SuccessOverlay({ txn, cashierName, onDone }: { txn: PosTxn | null; cashierName?: string; onDone: () => void }) {
+  // Receipts carry this outlet's own name/address/GSTIN, not the parent company's.
+  const store = useStoreProfile();
+  const outletId = useAuthStore((s) => s.user?.outletId);
   const [autoPrint, setAuto] = useState(true);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  // Auto-print must fire exactly once per sale, even though the effect below also
+  // re-runs when the outlet profile arrives.
+  const printedFor = useRef<string | null>(null);
 
   useEffect(() => { setAuto(getAutoPrint()); }, []);
 
@@ -23,7 +31,16 @@ export function SuccessOverlay({ txn, cashierName, onDone }: { txn: PosTxn | nul
   // Enter/Space/Esc or a tap anywhere skips straight to the next sale.
   useEffect(() => {
     if (!txn) { setSecondsLeft(null); return; }
-    if (getAutoPrint()) printReceipt(txn, { cashierName });
+
+    // A till that belongs to an outlet waits for that outlet's details before
+    // printing — otherwise the first receipt after a page load would go out
+    // carrying the company's identity instead of the shop's.
+    const storeReady = !outletId || !!store;
+    if (getAutoPrint() && storeReady && printedFor.current !== txn.id) {
+      printedFor.current = txn.id;
+      printReceipt(txn, { cashierName, store });
+    }
+
     setSecondsLeft(Number(txn.changeGiven ?? 0) > 0 ? 6 : 3);
     const iv = setInterval(() => setSecondsLeft((s) => (s == null ? null : s - 1)), 1000);
     const h = (e: KeyboardEvent) => {
@@ -32,7 +49,7 @@ export function SuccessOverlay({ txn, cashierName, onDone }: { txn: PosTxn | nul
     window.addEventListener('keydown', h);
     return () => { clearInterval(iv); window.removeEventListener('keydown', h); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [txn?.id]);
+  }, [txn?.id, store]);
 
   // Countdown finished → start the next sale on its own.
   useEffect(() => {
@@ -63,7 +80,7 @@ export function SuccessOverlay({ txn, cashierName, onDone }: { txn: PosTxn | nul
       )}
 
       <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-        <Button variant="secondary" size="lg" onClick={() => printReceipt(txn, { cashierName })}>
+        <Button variant="secondary" size="lg" onClick={() => printReceipt(txn, { cashierName, store })}>
           <Printer className="h-5 w-5" /> Reprint
         </Button>
         <Button size="lg" className="px-8" onClick={onDone}>

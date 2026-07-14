@@ -71,11 +71,17 @@ export function renderBillPdf(bill: BillWithRelations, dest: NodeJS.WritableStre
     // ── Billed To ───────────────────────────────────────────────────────────
     doc.fontSize(8.5).fillColor(COLOR.muted).text('BILLED TO', PAGE.left, y);
     y = doc.y + 2;
-    doc.fontSize(11).fillColor(COLOR.text).text(bill.outlet.name, PAGE.left, y);
+    doc.fontSize(11).fillColor(COLOR.text).text(bill.outlet.legalName || bill.outlet.name, PAGE.left, y);
     y = doc.y;
     doc.fontSize(9).fillColor(COLOR.muted);
     if (bill.outlet.address) { doc.text(bill.outlet.address, PAGE.left, y + 2, { width: 300 }); y = doc.y; }
     if (bill.outlet.phone) { doc.text(bill.outlet.phone, PAGE.left, y + 2); y = doc.y; }
+    // The buyer's GSTIN is what lets the outlet claim input credit — a GST invoice
+    // without it is of little use to them.
+    if (bill.isGstBill && bill.outlet.gstin) {
+      doc.fillColor(COLOR.text).text(`GSTIN: ${bill.outlet.gstin}`, PAGE.left, y + 2);
+      y = doc.y;
+    }
     y += 18;
 
     // ── Item table ──────────────────────────────────────────────────────────

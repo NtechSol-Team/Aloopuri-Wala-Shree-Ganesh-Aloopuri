@@ -7,6 +7,25 @@ import { androidPrinter, hasAndroidBridge } from '@/lib/print/android-bridge';
 const STORE_NAME = 'Shree Ganesh Aloopuri';
 const STORE_TAGLINE = 'Surat Food Chain';
 
+/**
+ * Whose shop the receipt is printed by. Each outlet is its own registered
+ * business, so its counter receipts must carry ITS name, address, GSTIN and food
+ * licence — not the parent company's. Falls back to the company details when no
+ * outlet is in context (e.g. an admin using the till).
+ */
+export interface StoreProfile {
+  name: string;
+  tagline?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  gstin?: string | null;
+  fssaiNumber?: string | null;
+  /** Optional closing line, replacing the default thank-you. */
+  footer?: string | null;
+}
+
+export const DEFAULT_STORE: StoreProfile = { name: STORE_NAME, tagline: STORE_TAGLINE };
+
 const AUTOPRINT_KEY = 'scfc-pos-autoprint';
 
 export function getAutoPrint(): boolean {
@@ -91,7 +110,8 @@ export function printPdfBlob(blob: Blob): void {
  * Renders into a hidden iframe and opens the browser print dialog, which works
  * with any installed thermal/receipt printer as well as normal printers.
  */
-export function printReceipt(txn: PosTxn, opts: { cashierName?: string } = {}): void {
+export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: StoreProfile } = {}): void {
+  const store = opts.store ?? DEFAULT_STORE;
   const itemsRows = txn.items
     .map((it) => {
       const qty = Number(it.quantity);
@@ -150,8 +170,12 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string } = {}): 
 </head>
 <body>
   <div class="center">
-    <div class="store">${esc(STORE_NAME)}</div>
-    <div class="tagline">${esc(STORE_TAGLINE)}</div>
+    <div class="store">${esc(store.name)}</div>
+    ${store.tagline ? `<div class="tagline">${esc(store.tagline)}</div>` : ''}
+    ${store.address ? `<div class="tagline">${esc(store.address)}</div>` : ''}
+    ${store.phone ? `<div class="tagline">Ph: ${esc(store.phone)}</div>` : ''}
+    ${store.gstin ? `<div class="tagline">GSTIN: ${esc(store.gstin)}</div>` : ''}
+    ${store.fssaiNumber ? `<div class="tagline">FSSAI: ${esc(store.fssaiNumber)}</div>` : ''}
     ${txn.status === 'VOID' ? '<div class="void">VOID</div>' : ''}
     ${txn.tokenNumber != null ? `<div class="token">TOKEN</div><div class="token-num">#${txn.tokenNumber}</div>` : ''}
   </div>
@@ -171,8 +195,8 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string } = {}): 
   <div class="row total"><span>TOTAL</span><span>${inr(txn.grandTotal)}</span></div>
   ${payLine}
   <div class="center foot">
-    Thank you! Visit again 🙏<br />
-    — ${esc(STORE_TAGLINE)} —
+    ${store.footer ? esc(store.footer) : 'Thank you! Visit again 🙏'}<br />
+    — ${esc(store.tagline || store.name)} —
   </div>
 </body>
 </html>`;
@@ -252,7 +276,11 @@ export interface ItemReportRow { name: string; category?: string; qty: number; r
  * 80mm thermal item-wise sales report — printed straight from the POS terminal
  * (e.g. current session, via the same printer already set up for receipts).
  */
-export function printSessionItemReport(rows: ItemReportRow[], meta: { sessionNumber: string; cashierName?: string; openedAt: string }): void {
+export function printSessionItemReport(
+  rows: ItemReportRow[],
+  meta: { sessionNumber: string; cashierName?: string; openedAt: string; store?: StoreProfile },
+): void {
+  const store = meta.store ?? DEFAULT_STORE;
   const totalQty = rows.reduce((s, r) => s + r.qty, 0);
   const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
   const itemRows = rows
@@ -287,7 +315,7 @@ export function printSessionItemReport(rows: ItemReportRow[], meta: { sessionNum
 </head>
 <body>
   <div class="center">
-    <div class="store">${esc(STORE_NAME)}</div>
+    <div class="store">${esc(store.name)}</div>
     <div class="tagline">Item-wise Sales Report</div>
   </div>
   <hr />

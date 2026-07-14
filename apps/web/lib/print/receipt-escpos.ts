@@ -2,7 +2,7 @@
 
 import { format } from 'date-fns';
 import type { PosTxn } from '@/hooks/usePos';
-import type { OrderPickListLine, ItemReportRow } from '@/lib/receipt-print';
+import { DEFAULT_STORE, type OrderPickListLine, type ItemReportRow, type StoreProfile } from '@/lib/receipt-print';
 import { EscPosEncoder, wrapText, type MonoRaster } from './escpos-encoder';
 import { loadImageAsRaster } from './escpos-image';
 import { colsFor, dotsFor, type PrinterSettings } from './printer-settings';
@@ -13,8 +13,9 @@ import { colsFor, dotsFor, type PrinterSettings } from './printer-settings';
  * versions go straight to Bluetooth thermal printers on Android.
  */
 
-const STORE_NAME = 'Shree Ganesh Aloopuri';
-const STORE_TAGLINE = 'Surat Food Chain';
+// The company's own name — used for head-office documents (pick lists), while a
+// counter receipt prints the selling outlet's identity via its StoreProfile.
+const STORE_NAME = DEFAULT_STORE.name;
 
 const inr = (v: string | number) => `Rs ${Number(v).toFixed(2)}`;
 
@@ -29,24 +30,37 @@ function getLogo(maxWidthDots: number): Promise<MonoRaster | null> {
   return cached;
 }
 
-async function header(e: EscPosEncoder, s: PrinterSettings, tagline: string): Promise<void> {
+/**
+ * Receipt masthead: the selling shop's own identity. For an outlet's counter
+ * receipt that means the outlet's name, address, GSTIN and food licence — the
+ * company name only stands in when no outlet is in context.
+ */
+async function header(e: EscPosEncoder, s: PrinterSettings, store: StoreProfile, subtitle?: string): Promise<void> {
   e.init().align('center');
   if (s.printLogo) {
     const logo = await getLogo(Math.min(dotsFor(s), 320));
     if (logo) { e.imageRaster(logo); e.feed(1); }
   }
-  e.bold(true).size(2, 2).line(STORE_NAME).size(1, 1).bold(false);
-  e.line(tagline);
+  e.bold(true).size(2, 2).line(store.name).size(1, 1).bold(false);
+  if (subtitle) e.line(subtitle);
+  else if (store.tagline) e.line(store.tagline);
+
+  // Wrapped, because a full postal address rarely fits one 32/48-char line.
+  if (store.address) for (const w of wrapText(store.address, e.cols)) e.line(w);
+  if (store.phone) e.line(`Ph: ${store.phone}`);
+  if (store.gstin) e.line(`GSTIN: ${store.gstin}`);
+  if (store.fssaiNumber) e.line(`FSSAI: ${store.fssaiNumber}`);
 }
 
 /** 80/58mm POS receipt — mirrors `printReceipt`'s HTML layout. */
 export async function receiptBytes(
   txn: PosTxn,
-  opts: { cashierName?: string },
+  opts: { cashierName?: string; store?: StoreProfile },
   s: PrinterSettings,
 ): Promise<Uint8Array> {
+  const store = opts.store ?? DEFAULT_STORE;
   const e = new EscPosEncoder({ cols: colsFor(s) });
-  await header(e, s, STORE_TAGLINE);
+  await header(e, s, store);
 
   if (txn.status === 'VOID') {
     e.feed(1).invert(true).size(2, 2).line('  VOID  ').size(1, 1).invert(false);
@@ -95,8 +109,8 @@ export async function receiptBytes(
   }
 
   e.feed(1).align('center');
-  e.line('Thank you! Visit again');
-  e.line(`- ${STORE_TAGLINE} -`);
+  e.line(store.footer || 'Thank you! Visit again');
+  e.line(`- ${store.tagline || store.name} -`);
 
   if (s.printBarcode) {
     e.feed(1).barcode(txn.receiptNumber, { height: 56, hri: true });
@@ -144,12 +158,13 @@ export function pickListBytes(
 /** POS session item-wise sales report — mirrors `printSessionItemReport`. */
 export function sessionReportBytes(
   rows: ItemReportRow[],
-  meta: { sessionNumber: string; cashierName?: string; openedAt: string },
+  meta: { sessionNumber: string; cashierName?: string; openedAt: string; store?: StoreProfile },
   s: PrinterSettings,
 ): Uint8Array {
+  const store = meta.store ?? DEFAULT_STORE;
   const e = new EscPosEncoder({ cols: colsFor(s) });
   e.init().align('center');
-  e.bold(true).size(2, 2).line(STORE_NAME).size(1, 1).bold(false);
+  e.bold(true).size(2, 2).line(store.name).size(1, 1).bold(false);
   e.line('Item-wise Sales Report');
 
   e.align('left').divider();
@@ -184,7 +199,7 @@ export function sessionReportBytes(
  */
 export async function testSlipBytes(s: PrinterSettings): Promise<Uint8Array> {
   const e = new EscPosEncoder({ cols: colsFor(s) });
-  await header(e, { ...s, printLogo: true }, 'Printer test page');
+  await header(e, { ...s, printLogo: true }, DEFAULT_STORE, 'Printer test page');
   e.align('left').divider();
   e.leftRight('Paper width', `${s.paperWidthMm}mm (${colsFor(s)} cols)`);
   e.leftRight('Time', format(new Date(), 'dd MMM yyyy, hh:mm:ss a'));

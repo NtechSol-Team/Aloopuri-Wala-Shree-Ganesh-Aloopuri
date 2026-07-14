@@ -8,6 +8,7 @@ import {
   printSessionItemReport as printSessionItemReportHtml,
   type OrderPickListLine,
   type ItemReportRow,
+  type StoreProfile,
 } from '@/lib/receipt-print';
 import { getPrinterSettings } from './printer-settings';
 import { resolveRawTransport, printRaw, type PrintResult } from './print-manager';
@@ -35,7 +36,7 @@ function notifyFailure(res: PrintResult): void {
   toast.error(hint, { id: 'print-error' }); // stable id: an auto-print retry storm shows one toast, not five
 }
 
-export function printReceipt(txn: PosTxn, opts: { cashierName?: string } = {}): void {
+export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: StoreProfile } = {}): void {
   if (!resolveRawTransport()) return printReceiptHtml(txn, opts);
   void (async () => {
     const bytes = await receiptBytes(txn, opts, getPrinterSettings());
@@ -57,7 +58,7 @@ export function printOrderPickList(
 
 export function printSessionItemReport(
   rows: ItemReportRow[],
-  meta: { sessionNumber: string; cashierName?: string; openedAt: string },
+  meta: { sessionNumber: string; cashierName?: string; openedAt: string; store?: StoreProfile },
 ): void {
   if (!resolveRawTransport()) return printSessionItemReportHtml(rows, meta);
   void (async () => {
@@ -67,4 +68,4 @@ export function printSessionItemReport(
 }
 
 // Unchanged pass-throughs so POS components can import everything from one place.
-export { getAutoPrint, setAutoPrint } from '@/lib/receipt-print';
+export { getAutoPrint, setAutoPrint, DEFAULT_STORE, type StoreProfile } from '@/lib/receipt-print';

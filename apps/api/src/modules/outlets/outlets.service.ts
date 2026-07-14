@@ -1,10 +1,15 @@
 import { prisma } from '../../config/prisma';
 import { AppError } from '../../shared/utils/AppError';
-import type { CreateOutletInput, SetOutletPricesInput, UpdateOutletInput } from './outlets.schema';
+import type {
+  CreateOutletInput, OutletProfileInput, SetOutletPricesInput, UpdateOutletInput,
+} from './outlets.schema';
 
 const outletSelect = {
   id: true, name: true, code: true, address: true, phone: true, creditPeriodDays: true,
   pricingMode: true, gstBilling: true, ownerUserId: true, isActive: true,
+  // The outlet's own business identity — printed on its receipts and shown as the
+  // buyer's details on the invoices the main branch raises against it.
+  legalName: true, gstin: true, fssaiNumber: true, email: true, receiptFooter: true,
 } as const;
 
 export async function listOutlets() {
@@ -29,6 +34,18 @@ export async function updateOutlet(id: string, input: UpdateOutletInput) {
     const clash = await prisma.outlet.findFirst({ where: { code: input.code, id: { not: id } } });
     if (clash) throw AppError.conflict('An outlet with this code already exists', 'code');
   }
+  return prisma.outlet.update({ where: { id }, data: input, select: outletSelect });
+}
+
+/**
+ * Update the outlet's business identity (address, GSTIN, licence numbers…).
+ *
+ * Separate from `updateOutlet` on purpose: the main owner maintains these details,
+ * while the structural fields — code, pricing mode, credit terms, and creating the
+ * outlet at all — stay behind the developer window.
+ */
+export async function updateOutletProfile(id: string, input: OutletProfileInput) {
+  await getOutlet(id);
   return prisma.outlet.update({ where: { id }, data: input, select: outletSelect });
 }
 
@@ -61,4 +78,6 @@ export async function setOutletPrices(outletId: string, input: SetOutletPricesIn
   return getOutletPrices(outletId);
 }
 
-export const outletsService = { listOutlets, getOutlet, createOutlet, updateOutlet, getOutletPrices, setOutletPrices };
+export const outletsService = {
+  listOutlets, getOutlet, createOutlet, updateOutlet, updateOutletProfile, getOutletPrices, setOutletPrices,
+};

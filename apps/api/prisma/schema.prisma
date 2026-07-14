@@ -241,6 +241,17 @@ model Outlet {
   // Whether this outlet is billed with GST. Decided when the outlet is created,
   // because their orders are priced (and paid for) before anyone reviews them.
   gstBilling       Boolean  @default(true) @map("gst_billing")
+
+  // ── Outlet's own business identity ───────────────────────────────────────
+  // Each outlet is its own shop: it sells to walk-in customers under its own
+  // registration, so its POS receipts must carry ITS address and GSTIN, not the
+  // parent company's. These also appear as the buyer's details on the invoices
+  // the main branch raises against the outlet.
+  legalName     String? @map("legal_name")   // registered name, if it differs from the display name
+  gstin         String?                       // 15-char GSTIN, validated on save
+  fssaiNumber   String? @map("fssai_number")  // food licence — legally required on food receipts
+  email         String?
+  receiptFooter String? @map("receipt_footer") // optional closing line on the outlet's receipts
   isActive         Boolean  @default(true) @map("is_active")
   isDeleted        Boolean  @default(false) @map("is_deleted")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -255,6 +266,7 @@ model Outlet {
   posSessions     PosSession[]
   directTransfers StockTransfer[]       @relation("OutletDirectTransfers")
   specialPrices   OutletProductPrice[]
+  documents       OutletDocument[]
 
   @@index([isActive])
   @@index([isDeleted])
@@ -277,6 +289,43 @@ model OutletProductPrice {
   @@unique([outletId, productId])
   @@index([outletId])
   @@map("outlet_product_prices")
+}
+
+/// Paperwork an outlet is required to hold (and the main owner needs on file).
+enum OutletDocumentCategory {
+  GST_CERTIFICATE
+  FSSAI_LICENSE
+  PAN_CARD
+  AGREEMENT
+  RENT_DEED
+  OTHER
+}
+
+/// A scanned document belonging to an outlet — GST certificate, food licence,
+/// franchise agreement, and so on.
+///
+/// `storagePath` is a private path on disk, deliberately NOT under the publicly
+/// served /uploads route: these are licences and signed agreements, so they are
+/// streamed only through an authenticated endpoint that checks the caller.
+model OutletDocument {
+  id           String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId     String                 @map("outlet_id") @db.Uuid
+  title        String
+  category     OutletDocumentCategory @default(OTHER)
+  fileName     String                 @map("file_name") // original name, shown in the UI
+  storagePath  String                 @map("storage_path") // private, server-side path
+  mimeType     String                 @map("mime_type")
+  sizeBytes    Int                    @map("size_bytes")
+  notes        String?
+  uploadedById String?                @map("uploaded_by") @db.Uuid
+  isDeleted    Boolean                @default(false) @map("is_deleted")
+  createdAt    DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  outlet Outlet @relation(fields: [outletId], references: [id])
+
+  @@index([outletId])
+  @@map("outlet_documents")
 }
 
 // ─────────────────────────────── CATALOG ────────────────────────────────────
