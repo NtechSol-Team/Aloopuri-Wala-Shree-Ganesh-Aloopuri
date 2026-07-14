@@ -7,6 +7,21 @@ export const razorpay = new Razorpay({
   key_secret: env.RAZORPAY_KEY_SECRET,
 });
 
+/**
+ * The Razorpay SDK rejects with a plain object ({ statusCode, error: { code,
+ * description } }), not an Error — so `err.message` is undefined. Dig the human
+ * message out of whichever shape we got.
+ */
+export function razorpayErrorMessage(err: unknown): string {
+  const e = err as { error?: { description?: string; reason?: string }; message?: string; statusCode?: number };
+  return (
+    e?.error?.description ??
+    e?.error?.reason ??
+    e?.message ??
+    (e?.statusCode ? `payment gateway returned HTTP ${e.statusCode}` : 'payment gateway unreachable')
+  );
+}
+
 /** Verify the checkout signature: HMAC_SHA256(order_id|payment_id, key_secret). */
 export function verifyCheckoutSignature(params: {
   orderId: string;

@@ -7,7 +7,7 @@ import { nextDocNumber } from '../../shared/utils/docNumber';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
 import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
-import { razorpay, verifyCheckoutSignature, verifyWebhookSignature } from '../../config/razorpay';
+import { razorpay, razorpayErrorMessage, verifyCheckoutSignature, verifyWebhookSignature } from '../../config/razorpay';
 import { env } from '../../config/env';
 import { ordersService } from '../orders/orders.service';
 import type { AuthUser } from '../../shared/types/api';
@@ -112,7 +112,7 @@ export async function createRazorpayOrder(billId: string, user: AuthUser) {
     });
     return { orderId: order.id, amount: amountPaise, currency: 'INR', keyId: env.RAZORPAY_KEY_ID };
   } catch (err) {
-    throw AppError.payment(`Could not initiate payment: ${(err as Error).message}`);
+    throw AppError.payment(`Could not initiate payment: ${razorpayErrorMessage(err)}`);
   }
 }
 
