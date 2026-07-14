@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { openRazorpayCheckout } from '@/lib/razorpay';
+import { useAuthStore } from '@/store/auth.store';
 import { useOrderPaymentIntent, useRequestCredit, useVerifyOrderPayment, type Order } from '@/hooks/useOrders';
 
 /**
@@ -22,6 +23,7 @@ export function OrderPaymentDialog({ order, onClose }: { order: Order | null; on
   const intent = useOrderPaymentIntent();
   const verify = useVerifyOrderPayment();
   const credit = useRequestCredit();
+  const user = useAuthStore((s) => s.user);
   const [busy, setBusy] = useState<'online' | 'credit' | null>(null);
 
   if (!order) return null;
@@ -34,7 +36,9 @@ export function OrderPaymentDialog({ order, onClose }: { order: Order | null; on
       const opened = await openRazorpayCheckout({
         order: rzp,
         description: `Order ${order.orderNumber}`,
-        customerName: order.outlet.name,
+        customerName: user?.name ?? order.outlet.name,
+        customerEmail: user?.email,
+        customerContact: user?.phone,
         onSuccess: (r) => {
           verify.mutate(
             {

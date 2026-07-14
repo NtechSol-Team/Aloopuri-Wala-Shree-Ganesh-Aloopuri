@@ -24,6 +24,8 @@ export function PayDialog({ bill, onClose }: { bill: PayTarget | null; onClose: 
   const open = !!bill;
   const role = useAuthStore((s) => s.user?.role);
   const userName = useAuthStore((s) => s.user?.name);
+  const userEmail = useAuthStore((s) => s.user?.email);
+  const userPhone = useAuthStore((s) => s.user?.phone);
   const isAdmin = role === 'SUPER_ADMIN';
   const balance = Number(bill?.balanceDue ?? 0);
 
@@ -52,6 +54,8 @@ export function PayDialog({ bill, onClose }: { bill: PayTarget | null; onClose: 
       const opened = await openRazorpayCheckout({
         order,
         customerName: userName,
+        customerEmail: userEmail,
+        customerContact: userPhone,
         onSuccess: (r) => {
           verify.mutate(
             { billId: bill.id, razorpayOrderId: r.razorpay_order_id, razorpayPaymentId: r.razorpay_payment_id, razorpaySignature: r.razorpay_signature },
