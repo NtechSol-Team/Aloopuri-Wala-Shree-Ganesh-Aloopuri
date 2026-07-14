@@ -2,6 +2,10 @@
 export const RealtimeEvent = {
   NEW_ORDER: 'new_order',
   ORDER_STATUS_CHANGED: 'order_status_changed',
+  /** An outlet asked to settle an order on credit — the main owner must approve it. */
+  ORDER_CREDIT_REQUESTED: 'order_credit_requested',
+  /** An outlet confirmed a dispatched order physically arrived. */
+  ORDER_RECEIVED: 'order_received',
   PAYMENT_RECEIVED: 'payment_received',
   STOCK_LOW: 'stock_low',
   BILL_GENERATED: 'bill_generated',

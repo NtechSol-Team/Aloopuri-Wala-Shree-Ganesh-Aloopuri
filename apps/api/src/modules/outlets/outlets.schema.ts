@@ -8,6 +8,9 @@ export const createOutletSchema = z.object({
   phone: z.string().max(20).optional(),
   creditPeriodDays: z.coerce.number().int().nonnegative().max(365).default(15),
   pricingMode: z.nativeEnum(PricingMode).default(PricingMode.GENERIC),
+  // Their orders are priced — and paid for — before anyone reviews them, so whether
+  // this outlet is billed with GST has to be settled when the outlet is created.
+  gstBilling: z.boolean().default(true),
 });
 export const updateOutletSchema = createOutletSchema.partial().extend({
   isActive: z.boolean().optional(),

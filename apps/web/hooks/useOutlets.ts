@@ -15,6 +15,8 @@ export interface Outlet {
   phone: string | null;
   creditPeriodDays: number;
   pricingMode: PricingMode;
+  /** Whether this outlet's orders/bills carry GST — fixed when the outlet is created. */
+  gstBilling: boolean;
   ownerUserId: string | null;
   isActive: boolean;
 }

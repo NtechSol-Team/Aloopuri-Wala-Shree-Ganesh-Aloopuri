@@ -9,6 +9,7 @@ import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
 import { razorpay, verifyCheckoutSignature, verifyWebhookSignature } from '../../config/razorpay';
 import { env } from '../../config/env';
+import { ordersService } from '../orders/orders.service';
 import type { AuthUser } from '../../shared/types/api';
 import type { CashPaymentInput, ListPaymentsQuery, VerifyRazorpayInput } from './payments.schema';
 
@@ -238,7 +239,20 @@ export async function handleWebhook(rawBody: Buffer, signature: string, body: Ra
   if (existing) return { alreadyRecorded: true };
 
   const order = await razorpay.orders.fetch(entity.order_id);
-  const billId = (order.notes as Record<string, string> | undefined)?.billId;
+  const notes = order.notes as Record<string, string> | undefined;
+
+  // Checkout against an outlet ORDER (pay-before-confirm): the order's bill doesn't
+  // exist yet, so hand off to the orders module, which raises the bill, records the
+  // payment and confirms the order in one transaction. This is the safety net for a
+  // payment that succeeded after the outlet's browser closed mid-checkout.
+  if (notes?.orderId) {
+    return ordersService.confirmPaidOrderFromWebhook(notes.orderId, {
+      razorpayOrderId: entity.order_id,
+      razorpayPaymentId: entity.id,
+    });
+  }
+
+  const billId = notes?.billId;
   if (!billId) return { ignored: true };
 
   const bill = await prisma.bill.findFirst({ where: { id: billId, isDeleted: false } });

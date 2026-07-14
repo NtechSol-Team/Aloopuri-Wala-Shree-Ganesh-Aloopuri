@@ -15,12 +15,11 @@ export const createOrderSchema = z.object({
     .min(1, 'Add at least one product'),
 });
 
-export const confirmOrderSchema = z.object({
-  // Which location the order will be pulled from at delivery time.
-  fulfillmentSource: z.nativeEnum(FulfillmentSource).default(FulfillmentSource.MAIN_BRANCH),
-  // Whether the resulting bill carries GST (unregistered/composition outlets, or a no-tax arrangement).
-  isGstBill: z.boolean().default(true),
-  // Optional per-line quantity/price adjustments (partial fulfilment, price override at confirmation).
+/** Main owner approving a credit order: the last chance to trim quantities or reprice. */
+export const approveOrderSchema = z.object({
+  // Whether the resulting bill carries GST. Defaults to the outlet's billing
+  // preference, which is what the order was priced with.
+  isGstBill: z.boolean(),
   items: z
     .array(z.object({
       itemId: z.string().uuid(),
@@ -30,11 +29,30 @@ export const confirmOrderSchema = z.object({
     .optional(),
 });
 
+/** Rejecting a credit order, or an outlet cancelling its own unsettled order. */
+export const rejectOrderSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+
+/** Where the stock is pulled from — decided when the goods actually leave. */
+export const dispatchOrderSchema = z.object({
+  fulfillmentSource: z.nativeEnum(FulfillmentSource).default(FulfillmentSource.MAIN_BRANCH),
+});
+
+export const verifyOrderPaymentSchema = z.object({
+  razorpayOrderId: z.string().min(4),
+  razorpayPaymentId: z.string().min(4),
+  razorpaySignature: z.string().min(8),
+});
+
 export const listOrdersQuerySchema = paginationQuerySchema.extend({
   status: z.nativeEnum(OutletOrderStatus).optional(),
   outletId: z.string().uuid().optional(),
 });
 
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
-export type ConfirmOrderInput = z.infer<typeof confirmOrderSchema>;
+export type ApproveOrderInput = z.infer<typeof approveOrderSchema>;
+export type RejectOrderInput = z.infer<typeof rejectOrderSchema>;
+export type DispatchOrderInput = z.infer<typeof dispatchOrderSchema>;
+export type VerifyOrderPaymentInput = z.infer<typeof verifyOrderPaymentSchema>;
 export type ListOrdersQuery = z.infer<typeof listOrdersQuerySchema>;

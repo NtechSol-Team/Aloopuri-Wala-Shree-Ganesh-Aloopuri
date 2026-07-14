@@ -4,11 +4,11 @@ import { format } from 'date-fns';
 import { IndianRupee, TrendingUp, Wallet, AlertTriangle, Trophy } from 'lucide-react';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge, statusBadgeVariant } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useAuthStore } from '@/store/auth.store';
-import { displayOrderStatus } from '@/hooks/useOrders';
+import { ORDER_STATUS_BADGE, ORDER_STATUS_LABEL, type OrderStatus } from '@/hooks/useOrders';
 import { formatINR } from '@/lib/utils';
 
 export default function DashboardPage() {
@@ -69,7 +69,9 @@ export default function DashboardPage() {
                     <p className="text-body font-medium">{o.orderNumber}</p>
                     <p className="text-caption text-muted-foreground">{o.outletName} · {format(new Date(o.orderDate), 'dd MMM')}</p>
                   </div>
-                  <Badge variant={statusBadgeVariant(displayOrderStatus(o.status, user?.role))}>{displayOrderStatus(o.status, user?.role)}</Badge>
+                  <Badge variant={ORDER_STATUS_BADGE[o.status as OrderStatus] ?? 'neutral'}>
+                    {ORDER_STATUS_LABEL[o.status as OrderStatus] ?? o.status}
+                  </Badge>
                 </div>
               ))
             ) : (

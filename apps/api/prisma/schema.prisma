@@ -66,12 +66,26 @@ enum BomComponentType {
   PRODUCT
 }
 
+/// Outlet order lifecycle. An order is only CONFIRMED once it has been paid for
+/// online, or approved as a credit order by the main owner.
+///   PAYMENT_PENDING         → placed; outlet must pay online or request credit
+///   CREDIT_APPROVAL_PENDING → credit requested; waiting on the main owner
+///   CONFIRMED               → paid or credit-approved; bill generated
+///   DISPATCHED              → goods left the source; awaiting outlet receipt
+///   DELIVERED               → outlet confirmed receipt; stock is theirs
 enum OutletOrderStatus {
-  PENDING
+  PAYMENT_PENDING
+  CREDIT_APPROVAL_PENDING
   CONFIRMED
   DISPATCHED
   DELIVERED
   CANCELLED
+}
+
+/// How the outlet chose to settle an order at placement time.
+enum OrderPaymentMode {
+  ONLINE
+  CREDIT
 }
 
 // Where confirmed stock is pulled from when the order is delivered.
@@ -224,6 +238,9 @@ model Outlet {
   ownerUserId      String?  @map("owner_user_id") @db.Uuid // app-enforced ref to users.id
   creditPeriodDays Int      @default(15) @map("credit_period_days")
   pricingMode      PricingMode @default(GENERIC) @map("pricing_mode")
+  // Whether this outlet is billed with GST. Decided when the outlet is created,
+  // because their orders are priced (and paid for) before anyone reviews them.
+  gstBilling       Boolean  @default(true) @map("gst_billing")
   isActive         Boolean  @default(true) @map("is_active")
   isDeleted        Boolean  @default(false) @map("is_deleted")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -563,15 +580,27 @@ model OutletOrder {
   id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orderNumber  String            @unique @map("order_number")
   outletId     String            @map("outlet_id") @db.Uuid
-  status       OutletOrderStatus @default(PENDING)
+  status       OutletOrderStatus @default(PAYMENT_PENDING)
   orderDate    DateTime          @default(now()) @map("order_date") @db.Timestamptz(6)
   confirmedAt  DateTime?         @map("confirmed_at") @db.Timestamptz(6)
   dispatchedAt DateTime?         @map("dispatched_at") @db.Timestamptz(6)
   deliveredAt  DateTime?         @map("delivered_at") @db.Timestamptz(6)
-  // Set at confirmation: which location stock is pulled from on delivery.
+  // How the outlet chose to settle this order — picked right after placing it.
+  paymentMode  OrderPaymentMode? @map("payment_mode")
+  // Razorpay order id of the in-flight/last checkout attempt (online orders only).
+  razorpayOrderId String?        @map("razorpay_order_id")
+  // Set at dispatch: which location the stock was pulled from.
   fulfillmentSource FulfillmentSource? @map("fulfillment_source")
-  // Set at confirmation: whether the resulting bill carries GST.
+  // Whether the resulting bill carries GST — seeded from the outlet's billing
+  // preference at placement (the price the outlet pays depends on it), and still
+  // adjustable by the main owner while approving a credit order.
   isGstBill    Boolean           @default(true) @map("is_gst_bill")
+  // Credit approval / rejection trail.
+  approvedAt         DateTime? @map("approved_at") @db.Timestamptz(6)
+  approvedById       String?   @map("approved_by") @db.Uuid
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledById      String?   @map("cancelled_by") @db.Uuid
+  cancellationReason String?   @map("cancellation_reason")
   notes        String?
   isDeleted    Boolean           @default(false) @map("is_deleted")
   createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)

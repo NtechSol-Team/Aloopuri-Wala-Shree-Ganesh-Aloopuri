@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
-import { Terminal, Lock, LogIn, Plus, Pencil, Tag, ArrowLeft, Store, Loader2 } from 'lucide-react';
+import { Terminal, Lock, LogIn, Plus, Pencil, Tag, ArrowLeft, Store, Loader2, ReceiptText } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -146,7 +146,7 @@ function suggestCode(name: string): string {
   const letters = name.trim().toUpperCase().replace(/[^A-Z ]/g, '').split(/\s+/).filter(Boolean).map((w) => w.slice(0, 4)).join('-');
   return letters ? `OUT-${letters}` : '';
 }
-const empty = { name: '', code: '', address: '', phone: '', creditPeriodDays: 15, special: false };
+const empty = { name: '', code: '', address: '', phone: '', creditPeriodDays: 15, special: false, gstBilling: true };
 
 function OutletFormDialog({ open, outlet, onOpenChange, onManagePrices }: {
   open: boolean;
@@ -162,7 +162,10 @@ function OutletFormDialog({ open, outlet, onOpenChange, onManagePrices }: {
   useEffect(() => {
     if (open) {
       setForm(outlet
-        ? { name: outlet.name, code: outlet.code, address: outlet.address ?? '', phone: outlet.phone ?? '', creditPeriodDays: outlet.creditPeriodDays, special: outlet.pricingMode === 'SPECIAL' }
+        ? {
+            name: outlet.name, code: outlet.code, address: outlet.address ?? '', phone: outlet.phone ?? '',
+            creditPeriodDays: outlet.creditPeriodDays, special: outlet.pricingMode === 'SPECIAL', gstBilling: outlet.gstBilling,
+          }
         : { ...empty });
       setCodeTouched(!!outlet);
     }
@@ -180,6 +183,7 @@ function OutletFormDialog({ open, outlet, onOpenChange, onManagePrices }: {
         address: form.address || undefined, phone: form.phone || undefined,
         creditPeriodDays: form.creditPeriodDays,
         pricingMode: form.special ? 'SPECIAL' : 'GENERIC',
+        gstBilling: form.gstBilling,
       },
       {
         onSuccess: (saved) => {
@@ -209,6 +213,15 @@ function OutletFormDialog({ open, outlet, onOpenChange, onManagePrices }: {
           <span>
             <span className="flex items-center gap-1 font-medium"><Tag className="h-3.5 w-3.5 text-primary" /> Special price selling</span>
             <span className="block text-caption text-muted-foreground">This outlet gets its own negotiated prices instead of the standard catalog price. You&apos;ll set the actual prices right after saving.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 rounded-md border border-border bg-surface p-2.5 text-body">
+          <input type="checkbox" className="mt-0.5 h-4 w-4" checked={form.gstBilling} onChange={(e) => setForm((f) => ({ ...f, gstBilling: e.target.checked }))} />
+          <span>
+            <span className="flex items-center gap-1 font-medium"><ReceiptText className="h-3.5 w-3.5 text-primary" /> Bill this outlet with GST</span>
+            <span className="block text-caption text-muted-foreground">
+              Their orders are priced — and paid for — before you review them, so this decides whether GST is added to the amount they pay. Untick for a no-GST outlet.
+            </span>
           </span>
         </label>
         <DialogFooter>

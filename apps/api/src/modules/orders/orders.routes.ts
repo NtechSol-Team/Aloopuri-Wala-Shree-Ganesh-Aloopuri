@@ -9,8 +9,14 @@ import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { created, ok, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import { UserRole } from '@prisma/client';
-import { confirmOrderSchema, createOrderSchema, listOrdersQuerySchema } from './orders.schema';
-import type { ConfirmOrderInput, CreateOrderInput, ListOrdersQuery } from './orders.schema';
+import {
+  approveOrderSchema, createOrderSchema, dispatchOrderSchema, listOrdersQuerySchema,
+  rejectOrderSchema, verifyOrderPaymentSchema,
+} from './orders.schema';
+import type {
+  ApproveOrderInput, CreateOrderInput, DispatchOrderInput, ListOrdersQuery,
+  RejectOrderInput, VerifyOrderPaymentInput,
+} from './orders.schema';
 import { ordersService } from './orders.service';
 
 const idParam = z.object({ id: z.string().uuid() });
@@ -36,19 +42,84 @@ router.post(
   requireRole(UserRole.FRANCHISE_OWNER, UserRole.SUPER_ADMIN),
   writeRateLimiter,
   validate({ body: createOrderSchema }),
-  asyncHandler(async (req: Request, res: Response) => created(res, await ordersService.createOrder(user(req), req.body as CreateOrderInput), 'Order placed')),
+  asyncHandler(async (req: Request, res: Response) =>
+    created(res, await ordersService.createOrder(user(req), req.body as CreateOrderInput), 'Order placed — choose how to pay'),
+  ),
 );
 
 router.get('/:id', validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await ordersService.getOrder(user(req), req.params.id))));
 
+// ── Outlet: settle the order ─────────────────────────────────────────────────
 router.post(
-  '/:id/confirm',
-  requireSuperAdmin,
-  validate({ params: idParam, body: confirmOrderSchema }),
-  asyncHandler(async (req: Request, res: Response) => ok(res, await ordersService.confirmOrder(user(req), req.params.id, req.body as ConfirmOrderInput), 'Order confirmed')),
+  '/:id/credit',
+  requireRole(UserRole.FRANCHISE_OWNER, UserRole.SUPER_ADMIN),
+  writeRateLimiter,
+  validate({ params: idParam }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await ordersService.requestCredit(user(req), req.params.id), 'Sent to the main owner for credit approval'),
+  ),
 );
-router.post('/:id/dispatch', requireSuperAdmin, validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await ordersService.dispatchOrder(user(req), req.params.id), 'Order dispatched & bill generated')));
-router.post('/:id/deliver', requireSuperAdmin, validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await ordersService.deliverOrder(user(req), req.params.id), 'Order delivered')));
-router.post('/:id/cancel', validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await ordersService.cancelOrder(user(req), req.params.id), 'Order cancelled')));
+
+router.post(
+  '/:id/razorpay/order',
+  requireRole(UserRole.FRANCHISE_OWNER, UserRole.SUPER_ADMIN),
+  writeRateLimiter,
+  validate({ params: idParam }),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await ordersService.createOrderPaymentIntent(user(req), req.params.id))),
+);
+
+router.post(
+  '/:id/razorpay/verify',
+  requireRole(UserRole.FRANCHISE_OWNER, UserRole.SUPER_ADMIN),
+  validate({ params: idParam, body: verifyOrderPaymentSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await ordersService.verifyOrderPayment(user(req), req.params.id, req.body as VerifyOrderPaymentInput), 'Payment successful — order confirmed'),
+  ),
+);
+
+// ── Main owner: credit approval ──────────────────────────────────────────────
+router.post(
+  '/:id/approve',
+  requireSuperAdmin,
+  validate({ params: idParam, body: approveOrderSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await ordersService.approveOrder(user(req), req.params.id, req.body as ApproveOrderInput), 'Credit order approved'),
+  ),
+);
+
+router.post(
+  '/:id/reject',
+  requireSuperAdmin,
+  validate({ params: idParam, body: rejectOrderSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await ordersService.rejectOrder(user(req), req.params.id, req.body as RejectOrderInput), 'Order rejected'),
+  ),
+);
+
+// ── Fulfilment ───────────────────────────────────────────────────────────────
+router.post(
+  '/:id/dispatch',
+  requireSuperAdmin,
+  validate({ params: idParam, body: dispatchOrderSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await ordersService.dispatchOrder(user(req), req.params.id, req.body as DispatchOrderInput), 'Order dispatched'),
+  ),
+);
+
+/** The outlet confirms the goods are physically in hand. */
+router.post(
+  '/:id/receive',
+  requireRole(UserRole.FRANCHISE_OWNER, UserRole.SUPER_ADMIN),
+  validate({ params: idParam }),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await ordersService.receiveOrder(user(req), req.params.id), 'Order received')),
+);
+
+router.post(
+  '/:id/cancel',
+  validate({ params: idParam, body: rejectOrderSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await ordersService.cancelOrder(user(req), req.params.id, req.body as RejectOrderInput), 'Order cancelled'),
+  ),
+);
 
 export const ordersRouter = router;

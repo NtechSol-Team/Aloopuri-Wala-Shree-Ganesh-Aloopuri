@@ -4,7 +4,7 @@ import type { CreateOutletInput, SetOutletPricesInput, UpdateOutletInput } from 
 
 const outletSelect = {
   id: true, name: true, code: true, address: true, phone: true, creditPeriodDays: true,
-  pricingMode: true, ownerUserId: true, isActive: true,
+  pricingMode: true, gstBilling: true, ownerUserId: true, isActive: true,
 } as const;
 
 export async function listOutlets() {

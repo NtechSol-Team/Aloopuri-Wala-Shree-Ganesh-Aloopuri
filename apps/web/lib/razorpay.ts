@@ -48,6 +48,7 @@ function loadScript(): Promise<boolean> {
 export async function openRazorpayCheckout(opts: {
   order: { orderId: string; amount: number; currency: string; keyId: string };
   customerName?: string;
+  description?: string;
   onSuccess: (r: RazorpayHandlerResponse) => void;
   onDismiss?: () => void;
 }): Promise<boolean> {
@@ -60,7 +61,7 @@ export async function openRazorpayCheckout(opts: {
     currency: opts.order.currency,
     order_id: opts.order.orderId,
     name: 'Surat Food Chain',
-    description: 'Bill payment',
+    description: opts.description ?? 'Bill payment',
     prefill: { name: opts.customerName },
     theme: { color: '#3730A3' },
     handler: opts.onSuccess,
