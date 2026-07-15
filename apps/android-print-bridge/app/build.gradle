@@ -13,8 +13,8 @@ android {
         // covers every POS tablet in the field. The vendor SDK targets much older.
         minSdk 26
         targetSdk 34
-        versionCode 2
-        versionName "1.0.1"
+        versionCode 3
+        versionName "1.0.2"
     }
 
     buildTypes {
@@ -42,4 +42,6 @@ dependencies {
     implementation files('libs/ESC_SDK_V1.23.01.jar')
     // FileProvider (PDF hand-off) + ktx conveniences.
     implementation 'androidx.core:core-ktx:1.13.1'
+    // Pull-to-refresh so staff can force a fresh load after a server update.
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
 }

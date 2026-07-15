@@ -17,6 +17,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import android.widget.EditText
 import android.widget.FrameLayout
 
@@ -39,6 +40,7 @@ class MainActivity : Activity() {
     }
 
     private lateinit var webView: WebView
+    private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var bridge: PrinterBridge
     private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
 
@@ -50,8 +52,21 @@ class MainActivity : Activity() {
 
         webView = WebView(this)
         webView.setBackgroundColor(Color.WHITE)
+
+        // Pull-to-refresh: after a server update, staff can swipe down to load the
+        // latest app without reinstalling or clearing data. Gated to only fire when
+        // the page is already scrolled to the very top, so it never hijacks normal
+        // scrolling inside the POS product grid or cart.
+        swipeRefresh = SwipeRefreshLayout(this).apply {
+            addView(
+                webView,
+                ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+            )
+            setOnRefreshListener { webView.reload() }
+            setOnChildScrollUpCallback { _, _ -> webView.scrollY > 0 }
+        }
         setContentView(
-            webView,
+            swipeRefresh,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
         )
 
@@ -76,6 +91,10 @@ class MainActivity : Activity() {
                     runCatching { startActivity(Intent(Intent.ACTION_VIEW, url)) }
                     true
                 }
+            }
+
+            override fun onPageFinished(view: WebView, url: String) {
+                swipeRefresh.isRefreshing = false
             }
 
             override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
