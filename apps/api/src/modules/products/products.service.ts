@@ -67,7 +67,14 @@ export async function listProducts(query: ListProductsQuery) {
     isDeleted: false,
     ...(query.categoryId ? { categoryId: query.categoryId } : {}),
     ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
-    ...(query.isPosEnabled !== undefined ? { isPosEnabled: query.isPosEnabled } : {}),
+    // POS-only items belong solely to the POS screen (served by /pos/products).
+    // Everywhere else — orders, purchases, transfers, BOM, production — deals in
+    // finished goods, so this endpoint EXCLUDES POS items by default and only
+    // returns them when a caller explicitly asks (the POS Items admin page).
+    // Defaulting here, rather than trusting each caller to pass the filter, means
+    // a POS item can never leak into a finished-goods picker, even from a stale
+    // client that omits the parameter.
+    isPosEnabled: query.isPosEnabled === undefined ? false : query.isPosEnabled,
     ...(query.search
       ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { sku: { contains: query.search, mode: 'insensitive' } }] }
       : {}),

@@ -14,6 +14,15 @@ export const api = axios.create({
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = useAuthStore.getState().accessToken;
   if (token) config.headers.Authorization = `Bearer ${token}`;
+
+  // File uploads send FormData. The instance defaults Content-Type to
+  // application/json, which would clobber the multipart boundary the browser
+  // needs to set — leaving the server unable to parse the body, so the file
+  // never arrives ("attach a file" even though one was). Drop the header and let
+  // the browser fill in `multipart/form-data; boundary=…` itself.
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+    delete config.headers['Content-Type'];
+  }
   return config;
 });
 
