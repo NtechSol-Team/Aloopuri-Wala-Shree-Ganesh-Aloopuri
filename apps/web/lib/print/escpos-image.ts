@@ -70,6 +70,88 @@ function floydSteinberg(gray: Float32Array, w: number, h: number, threshold: num
   }
 }
 
+/**
+ * Render a line (or wrapped block) of text to a 1-bit raster the printer can print
+ * as an image.
+ *
+ * This is how non-Latin scripts reach the paper: a thermal printer's built-in
+ * fonts are single-byte code pages with no Gujarati/Devanagari glyphs, so sending
+ * those characters as text bytes prints "????". The browser's canvas, on the other
+ * hand, has the device's full Unicode fonts — so we draw the text there and ship
+ * the pixels. Latin text stays as native printer text (crisper, faster); only
+ * lines that actually contain non-ASCII take this path.
+ *
+ * Text is drawn crisp (thresholded, not dithered) so small glyphs stay legible.
+ */
+export function textToRaster(
+  text: string,
+  opts: { widthDots: number; fontPx?: number; bold?: boolean; align?: 'left' | 'center'; lineGap?: number },
+): MonoRaster {
+  const fontPx = opts.fontPx ?? 26;
+  const align = opts.align ?? 'left';
+  const lineHeight = Math.ceil(fontPx * 1.32) + (opts.lineGap ?? 0);
+  // Raster width must be a whole number of bytes.
+  const W = Math.max(8, Math.floor(opts.widthDots / 8) * 8);
+
+  // Fonts the device is very likely to have; the canvas falls back through the
+  // list until one renders the script. Gujarati resolves via Noto on Android.
+  const fontStack = `${opts.bold ? '700 ' : '400 '}${fontPx}px "Noto Sans Gujarati","Noto Sans Devanagari","Noto Sans",system-ui,sans-serif`;
+
+  const measure = document.createElement('canvas').getContext('2d')!;
+  measure.font = fontStack;
+  const lines = wrapToWidth(measure, text, W);
+
+  const H = Math.max(lineHeight, lines.length * lineHeight);
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#000';
+  ctx.font = fontStack;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = align;
+  const x = align === 'center' ? W / 2 : 0;
+  lines.forEach((ln, i) => ctx.fillText(ln, x, i * lineHeight + lineHeight / 2));
+
+  const { data } = ctx.getImageData(0, 0, W, H);
+  const widthBytes = W / 8;
+  const out = new Uint8Array(widthBytes * H);
+  // Anti-aliased edges: anything darker than mid-gray becomes a black dot.
+  for (let y = 0; y < H; y++) {
+    for (let px = 0; px < W; px++) {
+      const i = (y * W + px) * 4;
+      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      if (lum < 150) out[y * widthBytes + (px >> 3)] |= 0x80 >> (px & 7);
+    }
+  }
+  return { widthBytes, height: H, data: out };
+}
+
+/** Word-wrap by measured pixel width, hard-breaking words wider than the line. */
+function wrapToWidth(ctx: CanvasRenderingContext2D, text: string, widthPx: number): string[] {
+  const out: string[] = [];
+  for (const para of text.split('\n')) {
+    let cur = '';
+    for (const word of para.split(/\s+/).filter(Boolean)) {
+      const trial = cur ? `${cur} ${word}` : word;
+      if (ctx.measureText(trial).width <= widthPx) { cur = trial; continue; }
+      if (cur) out.push(cur);
+      // Word alone too wide → break it character by character.
+      if (ctx.measureText(word).width <= widthPx) { cur = word; continue; }
+      let chunk = '';
+      for (const ch of word) {
+        if (ctx.measureText(chunk + ch).width <= widthPx) chunk += ch;
+        else { if (chunk) out.push(chunk); chunk = ch; }
+      }
+      cur = chunk;
+    }
+    out.push(cur);
+  }
+  return out.length ? out : [''];
+}
+
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();

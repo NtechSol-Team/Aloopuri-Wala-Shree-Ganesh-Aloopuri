@@ -4,8 +4,50 @@ import { format } from 'date-fns';
 import type { PosTxn } from '@/hooks/usePos';
 import { DEFAULT_STORE, type OrderPickListLine, type ItemReportRow, type StoreProfile } from '@/lib/receipt-print';
 import { EscPosEncoder, wrapText, type MonoRaster } from './escpos-encoder';
-import { loadImageAsRaster } from './escpos-image';
+import { loadImageAsRaster, textToRaster } from './escpos-image';
 import { colsFor, dotsFor, type PrinterSettings } from './printer-settings';
+
+/** True when every character is printable ASCII the thermal font can render. */
+const isAscii = (s: string) => !/[^\x00-\x7f]/.test(s);
+
+/**
+ * Print a standalone text line that might contain non-Latin script (Gujarati
+ * product/shop names). ASCII stays native printer text — crisp and fast; anything
+ * else is rendered to a bitmap and printed as an image, because the printer's
+ * built-in fonts have no glyph for it and would otherwise emit "????".
+ */
+function smartLine(
+  e: EscPosEncoder,
+  s: PrinterSettings,
+  text: string,
+  o: { bold?: boolean; center?: boolean; big?: boolean } = {},
+): void {
+  if (isAscii(text)) {
+    e.align(o.center ? 'center' : 'left');
+    if (o.bold) e.bold(true);
+    if (o.big) e.size(2, 2);
+    for (const ln of wrapText(text, o.big ? Math.floor(e.cols / 2) : e.cols)) e.line(ln);
+    if (o.big) e.size(1, 1);
+    if (o.bold) e.bold(false);
+    e.align('left');
+    return;
+  }
+  e.align(o.center ? 'center' : 'left');
+  e.imageRaster(textToRaster(text, {
+    widthDots: dotsFor(s),
+    fontPx: o.big ? 48 : 28,
+    bold: o.bold ?? o.big,
+    align: o.center ? 'center' : 'left',
+  }));
+  e.align('left');
+}
+
+/** A "Label   value" row where the value might be non-Latin (e.g. customer name). */
+function labelLine(e: EscPosEncoder, s: PrinterSettings, label: string, value: string): void {
+  if (isAscii(value)) { e.leftRight(label, value); return; }
+  e.align('left').line(`${label}:`);
+  e.imageRaster(textToRaster(value, { widthDots: dotsFor(s), fontPx: 28, align: 'left' }));
+}
 
 /**
  * ESC/POS renderings of the same documents `lib/receipt-print.ts` renders as
@@ -41,15 +83,17 @@ async function header(e: EscPosEncoder, s: PrinterSettings, store: StoreProfile,
     const logo = await getLogo(Math.min(dotsFor(s), 320));
     if (logo) { e.imageRaster(logo); e.feed(1); }
   }
-  e.bold(true).size(2, 2).line(store.name).size(1, 1).bold(false);
-  if (subtitle) e.line(subtitle);
-  else if (store.tagline) e.line(store.tagline);
+  // Shop name and address may be Gujarati, so route them through smartLine.
+  smartLine(e, s, store.name, { bold: true, center: true, big: true });
+  if (subtitle) smartLine(e, s, subtitle, { center: true });
+  else if (store.tagline) smartLine(e, s, store.tagline, { center: true });
 
-  // Wrapped, because a full postal address rarely fits one 32/48-char line.
-  if (store.address) for (const w of wrapText(store.address, e.cols)) e.line(w);
+  if (store.address) smartLine(e, s, store.address, { center: true });
+  e.align('center');
   if (store.phone) e.line(`Ph: ${store.phone}`);
   if (store.gstin) e.line(`GSTIN: ${store.gstin}`);
   if (store.fssaiNumber) e.line(`FSSAI: ${store.fssaiNumber}`);
+  e.align('left');
 }
 
 /** 80/58mm POS receipt — mirrors `printReceipt`'s HTML layout. */
@@ -72,16 +116,15 @@ export async function receiptBytes(
   e.align('left').divider();
   e.leftRight('Receipt', txn.receiptNumber);
   e.leftRight('Date', format(new Date(txn.soldAt), 'dd MMM yyyy, hh:mm a'));
-  if (opts.cashierName) e.leftRight('Cashier', opts.cashierName);
-  if (txn.customerName) e.leftRight('Customer', txn.customerName);
+  if (opts.cashierName) labelLine(e, s, 'Cashier', opts.cashierName);
+  if (txn.customerName) labelLine(e, s, 'Customer', txn.customerName);
   e.divider();
 
   for (const it of txn.items) {
     const qty = Number(it.quantity);
     const disc = Number(it.discount);
-    e.bold(true);
-    for (const l of wrapText(it.productNameSnapshot, e.cols)) e.line(l);
-    e.bold(false);
+    // Product name may be Gujarati → printed as an image when it is.
+    smartLine(e, s, it.productNameSnapshot, { bold: true });
     e.leftRight(`  ${qty} x ${inr(it.unitPrice)}${disc > 0 ? ` (-${inr(disc)})` : ''}`, inr(it.lineTotal));
   }
 
@@ -108,9 +151,9 @@ export async function receiptBytes(
     e.leftRight('Change', inr(txn.changeGiven ?? 0));
   }
 
-  e.feed(1).align('center');
-  e.line(store.footer || 'Thank you! Visit again');
-  e.line(`- ${store.tagline || store.name} -`);
+  e.feed(1);
+  smartLine(e, s, store.footer || 'Thank you! Visit again', { center: true });
+  smartLine(e, s, `- ${store.tagline || store.name} -`, { center: true });
 
   if (s.printBarcode) {
     e.feed(1).barcode(txn.receiptNumber, { height: 56, hri: true });
@@ -142,9 +185,7 @@ export function pickListBytes(
   let total = 0;
   for (const l of lines) {
     total += l.approvedQty * l.price;
-    e.bold(true);
-    for (const w of wrapText(l.name, e.cols)) e.line(w);
-    e.bold(false);
+    smartLine(e, s, l.name, { bold: true });
     e.leftRight(`  ${l.approvedQty} ${l.unit} x ${inr(l.price)}`, inr(l.approvedQty * l.price));
   }
 
@@ -163,9 +204,9 @@ export function sessionReportBytes(
 ): Uint8Array {
   const store = meta.store ?? DEFAULT_STORE;
   const e = new EscPosEncoder({ cols: colsFor(s) });
-  e.init().align('center');
-  e.bold(true).size(2, 2).line(store.name).size(1, 1).bold(false);
-  e.line('Item-wise Sales Report');
+  e.init();
+  smartLine(e, s, store.name, { bold: true, center: true, big: true });
+  e.align('center').line('Item-wise Sales Report');
 
   e.align('left').divider();
   e.leftRight('Session', meta.sessionNumber);
@@ -178,9 +219,7 @@ export function sessionReportBytes(
     e.align('center').line('No sales yet.').align('left');
   } else {
     for (const r of rows) {
-      e.bold(true);
-      for (const w of wrapText(r.name, e.cols)) e.line(w);
-      e.bold(false);
+      smartLine(e, s, r.name, { bold: true });
       e.leftRight(`  ${r.qty} sold`, inr(r.revenue));
     }
   }

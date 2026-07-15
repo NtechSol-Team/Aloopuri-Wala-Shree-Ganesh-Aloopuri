@@ -103,6 +103,23 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const searchRef = useRef<HTMLInputElement>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /**
+   * Focus the search box only where a physical keyboard is likely (a device with
+   * a fine pointer). On a touch tablet, programmatic focus pops the on-screen
+   * keyboard — which used to appear on load and after every sale, covering the
+   * screen — so there we leave focus alone until the cashier taps the field.
+   */
+  const focusSearchSoft = () => {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches) {
+      searchRef.current?.focus();
+    }
+  };
+
+  // Desktop convenience: land in the search box on open. Skipped on touch devices
+  // (see focusSearchSoft) so the soft keyboard doesn't cover the product grid.
+  useEffect(() => { focusSearchSoft(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const dialogOpen = payOpen || eodOpen || txnsOpen || !!successTxn;
 
   // Online/offline detection + background sync.
@@ -253,7 +270,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-3 scrollbar-thin">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3 scrollbar-thin">
         {cart.items.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-14 text-center text-muted-foreground">
             <Receipt className="h-8 w-8" />
@@ -300,7 +317,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         )}
       </div>
 
-      <div className="border-t border-border p-3" style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
+      <div className="shrink-0 border-t border-border p-3" style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
         <div className="mb-2 space-y-1 text-body">
           <Row label="Sub-total" value={formatINR(totals.subTotal)} />
           {totals.itemDiscount > 0 && <Row label="Item discounts" value={`−${formatINR(totals.itemDiscount)}`} className="text-success" />}
@@ -329,7 +346,6 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
             <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
             <Input
               ref={searchRef}
-              autoFocus
               placeholder="Scan barcode or search…"
               className="h-11 pl-10 text-base"
               value={search}
@@ -417,7 +433,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
       </div>
 
       {/* RIGHT: cart — static panel on desktop */}
-      <div className="hidden h-full flex-col bg-card lg:flex">
+      <div className="hidden h-full min-h-0 flex-col overflow-hidden bg-card lg:flex">
         <CartPanelBody />
       </div>
 
@@ -442,7 +458,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         />
         <div
           className={cn(
-            'absolute inset-x-0 bottom-0 flex max-h-[88vh] flex-col rounded-t-2xl bg-card shadow-nav transition-transform duration-200 ease-smooth',
+            'absolute inset-x-0 bottom-0 flex max-h-[88vh] supports-[height:100dvh]:max-h-[88dvh] flex-col rounded-t-2xl bg-card shadow-nav transition-transform duration-200 ease-smooth',
             cartSheetOpen ? 'translate-y-0' : 'translate-y-full',
           )}
           role="dialog"
@@ -467,7 +483,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
       <EodDialog open={eodOpen} onOpenChange={setEodOpen} sessionId={sessionId} />
       <TxnsDrawer open={txnsOpen} onOpenChange={setTxnsOpen} sessionId={sessionId} cashierName={cashierName ?? undefined} />
       <PrinterSettingsDialog open={printerOpen} onOpenChange={setPrinterOpen} />
-      <SuccessOverlay txn={successTxn} cashierName={cashierName ?? undefined} onDone={() => { setSuccessTxn(null); searchRef.current?.focus(); }} />
+      <SuccessOverlay txn={successTxn} cashierName={cashierName ?? undefined} onDone={() => { setSuccessTxn(null); focusSearchSoft(); }} />
     </div>
   );
 }
