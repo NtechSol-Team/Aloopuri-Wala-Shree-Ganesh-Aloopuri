@@ -149,7 +149,9 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
 <style>
   @page { size: 80mm auto; margin: 0; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { width: 72mm; margin: 0 auto; padding: 4mm 2mm 8mm; font-family: 'Courier New', ui-monospace, monospace; font-size: 12px; color: #000; }
+  /* Tight top/bottom padding — the header sits near the tear and the thank-you
+     line has minimal trailing blank. */
+  body { width: 72mm; margin: 0 auto; padding: 1mm 2mm 2mm; font-family: 'Courier New', ui-monospace, monospace; font-size: 12px; color: #000; }
   .center { text-align: center; }
   .store { font-size: 16px; font-weight: 700; letter-spacing: 0.5px; }
   .tagline { font-size: 10px; margin-top: 1px; }
@@ -164,7 +166,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   .num { text-align: right; white-space: nowrap; }
   .row { display: flex; justify-content: space-between; padding: 1px 0; }
   .total { font-size: 15px; font-weight: 800; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 3px 0; margin: 4px 0; }
-  .foot { margin-top: 8px; font-size: 11px; }
+  .foot { margin-top: 4px; font-size: 11px; }
   .void { font-size: 18px; font-weight: 800; border: 2px solid #000; padding: 2px 8px; display: inline-block; margin: 6px 0; transform: rotate(-4deg); }
 </style>
 </head>

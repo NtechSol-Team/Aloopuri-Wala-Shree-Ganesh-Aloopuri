@@ -159,7 +159,10 @@ export async function receiptBytes(
     e.feed(1).barcode(txn.receiptNumber, { height: 56, hri: true });
   }
 
-  e.feed(4).cut();
+  // Just enough feed to clear the cutter/tear bar (the head sits a few mm below
+  // it). This trailing gap is also what shows as blank space at the TOP of the
+  // next receipt, so keep it small — was 4, which left too much on both ends.
+  e.feed(2).cut();
   return e.encode();
 }
 
