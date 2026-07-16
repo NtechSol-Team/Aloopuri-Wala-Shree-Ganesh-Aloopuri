@@ -95,6 +95,14 @@ class MainActivity : Activity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 swipeRefresh.isRefreshing = false
+                applyPullToRefreshPolicy(url)
+            }
+
+            // Fires on client-side (SPA) route changes too, not just full loads —
+            // so entering/leaving the POS terminal is caught even though Next.js
+            // navigates without reloading the page.
+            override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                applyPullToRefreshPolicy(url)
             }
 
             override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
@@ -118,6 +126,20 @@ class MainActivity : Activity() {
 
         val url = prefs.getString(KEY_URL, null)
         if (url.isNullOrBlank()) promptForUrl(firstRun = true) else webView.loadUrl(url)
+    }
+
+    /**
+     * Pull-to-refresh is off on the POS terminal (and its kitchen view). Those
+     * screens scroll their own inner lists, not the page body, so the WebView's
+     * scroll position stays at 0 and a downward swipe would otherwise be read as
+     * a refresh — reloading mid-sale instead of scrolling the menu. Everywhere
+     * else (dashboard, orders, …) the page body scrolls normally, so swipe-to-
+     * refresh stays available. The `pos-items` admin page is intentionally NOT
+     * matched — only the live terminal path `/pos` and anything beneath it.
+     */
+    private fun applyPullToRefreshPolicy(url: String) {
+        val path = android.net.Uri.parse(url).path ?: ""
+        swipeRefresh.isEnabled = !(path == "/pos" || path.startsWith("/pos/"))
     }
 
     /** First-run setup and later reconfiguration of which SCFC deployment to load. */
