@@ -2,7 +2,10 @@
 
 import { format } from 'date-fns';
 import type { PosTxn } from '@/hooks/usePos';
-import { DEFAULT_STORE, gstBreakup, type OrderPickListLine, type ItemReportRow, type StoreProfile } from '@/lib/receipt-print';
+import {
+  DEFAULT_STORE, gstBreakup, PAYMENT_MODE_LABEL,
+  type OrderPickListLine, type SessionPaymentModeRow, type StoreProfile,
+} from '@/lib/receipt-print';
 import { EscPosEncoder, wrapText, type MonoRaster } from './escpos-encoder';
 import { loadImageAsRaster, textToRaster } from './escpos-image';
 import { colsFor, dotsFor, type PrinterSettings } from './printer-settings';
@@ -214,9 +217,9 @@ export function pickListBytes(
   return e.encode();
 }
 
-/** POS session item-wise sales report — mirrors `printSessionItemReport`. */
-export function sessionReportBytes(
-  rows: ItemReportRow[],
+/** POS session payment-mode sales report — mirrors `printSessionPaymentModeReport`. */
+export function sessionPaymentModeReportBytes(
+  rows: SessionPaymentModeRow[],
   meta: { sessionNumber: string; cashierName?: string; openedAt: string; store?: StoreProfile },
   s: PrinterSettings,
 ): Uint8Array {
@@ -224,7 +227,7 @@ export function sessionReportBytes(
   const e = new EscPosEncoder({ cols: colsFor(s) });
   e.init();
   smartLine(e, s, store.name, { bold: true, center: true, big: true });
-  e.align('center').line('Item-wise Sales Report');
+  e.align('center').line('Payment Mode Report');
 
   e.align('left').divider();
   e.leftRight('Session', meta.sessionNumber);
@@ -237,14 +240,14 @@ export function sessionReportBytes(
     e.align('center').line('No sales yet.').align('left');
   } else {
     for (const r of rows) {
-      smartLine(e, s, r.name, { bold: true });
-      e.leftRight(`  ${r.qty} sold`, inr(r.revenue));
+      e.bold(true).leftRight(PAYMENT_MODE_LABEL[r.mode] ?? r.mode, inr(r.revenue)).bold(false);
+      e.leftRight(`  ${r.transactions} order${r.transactions === 1 ? '' : 's'}`, '');
     }
   }
 
   e.divider();
-  e.leftRight('Items sold', String(rows.reduce((t, r) => t + r.qty, 0)));
-  e.bold(true).leftRight('TOTAL REVENUE', inr(rows.reduce((t, r) => t + r.revenue, 0))).bold(false);
+  e.leftRight('Orders', String(rows.reduce((t, r) => t + r.transactions, 0)));
+  e.bold(true).leftRight('TOTAL', inr(rows.reduce((t, r) => t + r.revenue, 0))).bold(false);
   e.feed(4).cut();
   return e.encode();
 }

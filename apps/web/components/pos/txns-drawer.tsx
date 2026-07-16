@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { Printer, Ban, ReceiptText, ClipboardList } from 'lucide-react';
+import { Printer, Ban, ReceiptText, Wallet } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,11 +12,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
-import { printReceipt, printSessionItemReport } from '@/lib/print';
+import { printReceipt, printSessionPaymentModeReport } from '@/lib/print';
+import { PAYMENT_MODE_LABEL } from '@/lib/receipt-print';
 import { useStoreProfile } from '@/hooks/useOutlets';
 import { useCurrentSession, useSessionTransactions, useVoidTransaction, type PosTxn } from '@/hooks/usePos';
 
-type Tab = 'receipts' | 'items';
+type Tab = 'receipts' | 'modes';
 
 export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
   open: boolean;
@@ -31,26 +32,26 @@ export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
   const [voidTarget, setVoidTarget] = useState<PosTxn | null>(null);
   const [tab, setTab] = useState<Tab>('receipts');
 
-  const itemSummary = useMemo(() => {
-    const map = new Map<string, { name: string; qty: number; revenue: number }>();
+  // Payment-mode breakdown (Cash/Card/UPI/Split) for this session — how much
+  // came in by each method, and how many sales, instead of a per-item list.
+  const modeSummary = useMemo(() => {
+    const map = new Map<string, { mode: string; transactions: number; revenue: number }>();
     for (const t of txns ?? []) {
       if (t.status !== 'COMPLETED') continue;
-      for (const it of t.items) {
-        const row = map.get(it.productNameSnapshot) ?? { name: it.productNameSnapshot, qty: 0, revenue: 0 };
-        row.qty += Number(it.quantity);
-        row.revenue += Number(it.lineTotal);
-        map.set(it.productNameSnapshot, row);
-      }
+      const row = map.get(t.paymentMode) ?? { mode: t.paymentMode, transactions: 0, revenue: 0 };
+      row.transactions += 1;
+      row.revenue += Number(t.grandTotal);
+      map.set(t.paymentMode, row);
     }
     return [...map.values()].sort((a, b) => b.revenue - a.revenue);
   }, [txns]);
 
-  const itemsTotal = itemSummary.reduce((s, r) => s + r.revenue, 0);
+  const modesTotal = modeSummary.reduce((s, r) => s + r.revenue, 0);
 
   const printReport = () => {
     if (!session) return;
-    printSessionItemReport(itemSummary, { sessionNumber: session.sessionNumber, cashierName, openedAt: session.openedAt, store });
-    toast.success('Printing item report…');
+    printSessionPaymentModeReport(modeSummary, { sessionNumber: session.sessionNumber, cashierName, openedAt: session.openedAt, store });
+    toast.success('Printing payment mode report…');
   };
 
   return (
@@ -59,7 +60,7 @@ export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Today&apos;s Sales</DialogTitle>
-            <DialogDescription>This session&apos;s receipts and item-wise totals.</DialogDescription>
+            <DialogDescription>This session&apos;s receipts and payment mode totals.</DialogDescription>
           </DialogHeader>
 
           <div className="flex items-center justify-between gap-2">
@@ -67,12 +68,12 @@ export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
               <button type="button" onClick={() => setTab('receipts')} className={cn('flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold', tab === 'receipts' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground')}>
                 <ReceiptText className="h-3.5 w-3.5" /> Receipts
               </button>
-              <button type="button" onClick={() => setTab('items')} className={cn('flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold', tab === 'items' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground')}>
-                <ClipboardList className="h-3.5 w-3.5" /> Item Summary
+              <button type="button" onClick={() => setTab('modes')} className={cn('flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold', tab === 'modes' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground')}>
+                <Wallet className="h-3.5 w-3.5" /> Payment Summary
               </button>
             </div>
-            {tab === 'items' && (
-              <Button variant="secondary" size="sm" onClick={printReport} disabled={!itemSummary.length}>
+            {tab === 'modes' && (
+              <Button variant="secondary" size="sm" onClick={printReport} disabled={!modeSummary.length}>
                 <Printer className="h-3.5 w-3.5" /> Print Report
               </Button>
             )}
@@ -123,19 +124,19 @@ export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
             </div>
           ) : (
             <div className="max-h-[55vh] overflow-y-auto scrollbar-thin">
-              {!itemSummary.length ? (
+              {!modeSummary.length ? (
                 <div className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
-                  <ClipboardList className="h-8 w-8" />
+                  <Wallet className="h-8 w-8" />
                   <p className="text-body">No completed sales yet in this session.</p>
                 </div>
               ) : (
                 <Table>
-                  <THead><TR><TH>Item</TH><TH className="text-right">Qty sold</TH><TH className="text-right">Revenue</TH></TR></THead>
+                  <THead><TR><TH>Payment Mode</TH><TH className="text-right">Orders</TH><TH className="text-right">Total Amount</TH></TR></THead>
                   <TBody>
-                    {itemSummary.map((r) => (
-                      <TR key={r.name}>
-                        <TD className="font-medium">{r.name}</TD>
-                        <TD className="text-right">{r.qty}</TD>
+                    {modeSummary.map((r) => (
+                      <TR key={r.mode}>
+                        <TD className="font-medium">{PAYMENT_MODE_LABEL[r.mode] ?? r.mode}</TD>
+                        <TD className="text-right">{r.transactions}</TD>
                         <TD className="text-right font-semibold">{formatINR(r.revenue)}</TD>
                       </TR>
                     ))}
@@ -145,10 +146,10 @@ export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
             </div>
           )}
 
-          {tab === 'items' && itemSummary.length > 0 && (
+          {tab === 'modes' && modeSummary.length > 0 && (
             <DialogFooter className="justify-between sm:justify-between">
-              <span className="text-caption text-muted-foreground">{itemSummary.length} distinct item{itemSummary.length === 1 ? '' : 's'}</span>
-              <span className="text-label font-bold">Total {formatINR(itemsTotal)}</span>
+              <span className="text-caption text-muted-foreground">{modeSummary.reduce((s, r) => s + r.transactions, 0)} order{modeSummary.reduce((s, r) => s + r.transactions, 0) === 1 ? '' : 's'}</span>
+              <span className="text-label font-bold">Total {formatINR(modesTotal)}</span>
             </DialogFooter>
           )}
         </DialogContent>

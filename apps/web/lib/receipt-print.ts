@@ -286,24 +286,26 @@ export function printOrderPickList(
   printHtml(html);
 }
 
-export interface ItemReportRow { name: string; category?: string; qty: number; revenue: number }
+
+export interface SessionPaymentModeRow { mode: string; transactions: number; revenue: number }
 
 /**
- * 80mm thermal item-wise sales report — printed straight from the POS terminal
- * (e.g. current session, via the same printer already set up for receipts).
+ * 80mm thermal payment-mode sales report for the current POS session — how
+ * much came in by Cash / Card / UPI (and Split), with the order count behind
+ * each, printed straight from the till instead of a full item list.
  */
-export function printSessionItemReport(
-  rows: ItemReportRow[],
+export function printSessionPaymentModeReport(
+  rows: SessionPaymentModeRow[],
   meta: { sessionNumber: string; cashierName?: string; openedAt: string; store?: StoreProfile },
 ): void {
   const store = meta.store ?? DEFAULT_STORE;
-  const totalQty = rows.reduce((s, r) => s + r.qty, 0);
+  const totalTxns = rows.reduce((s, r) => s + r.transactions, 0);
   const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
-  const itemRows = rows
+  const modeRows = rows
     .map(
       (r) => `
-      <tr><td class="name" colspan="3">${esc(r.name)}</td></tr>
-      <tr class="sub"><td>${r.qty} sold</td><td></td><td class="num">${inr(r.revenue)}</td></tr>`,
+      <tr><td class="name" colspan="2">${esc(PAYMENT_MODE_LABEL[r.mode] ?? r.mode)}</td><td class="num">${inr(r.revenue)}</td></tr>
+      <tr class="sub"><td colspan="2">${r.transactions} order${r.transactions === 1 ? '' : 's'}</td><td></td></tr>`,
     )
     .join('');
 
@@ -323,7 +325,7 @@ export function printSessionItemReport(
   table { width: 100%; border-collapse: collapse; }
   td { padding: 1px 0; vertical-align: top; }
   td.name { font-weight: 700; padding-top: 3px; }
-  tr.sub td { font-size: 11px; }
+  tr.sub td { font-size: 11px; color: #444; }
   .num { text-align: right; white-space: nowrap; }
   .row { display: flex; justify-content: space-between; padding: 1px 0; }
   .total { font-size: 15px; font-weight: 800; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 3px 0; margin: 4px 0; }
@@ -332,7 +334,7 @@ export function printSessionItemReport(
 <body>
   <div class="center">
     <div class="store">${esc(store.name)}</div>
-    <div class="tagline">Item-wise Sales Report</div>
+    <div class="tagline">Payment Mode Report</div>
   </div>
   <hr />
   <div class="meta">
@@ -342,10 +344,10 @@ export function printSessionItemReport(
     <div class="row"><span>Printed</span><span>${format(new Date(), 'hh:mm a')}</span></div>
   </div>
   <hr />
-  ${rows.length ? `<table>${itemRows}</table>` : '<p class="center">No sales yet.</p>'}
+  ${rows.length ? `<table>${modeRows}</table>` : '<p class="center">No sales yet.</p>'}
   <hr />
-  <div class="row"><span>Items sold</span><span>${totalQty}</span></div>
-  <div class="row total"><span>TOTAL REVENUE</span><span>${inr(totalRevenue)}</span></div>
+  <div class="row"><span>Orders</span><span>${totalTxns}</span></div>
+  <div class="row total"><span>TOTAL</span><span>${inr(totalRevenue)}</span></div>
 </body>
 </html>`;
 
@@ -354,7 +356,7 @@ export function printSessionItemReport(
 
 export interface PaymentModeReportRow { mode: string; transactions: number; revenue: number }
 
-const PAYMENT_MODE_LABEL: Record<string, string> = {
+export const PAYMENT_MODE_LABEL: Record<string, string> = {
   CASH: 'Cash', CARD: 'Card', UPI: 'UPI', SPLIT: 'Split (Cash + Online)',
 };
 

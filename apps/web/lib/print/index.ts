@@ -5,14 +5,14 @@ import type { PosTxn } from '@/hooks/usePos';
 import {
   printReceipt as printReceiptHtml,
   printOrderPickList as printOrderPickListHtml,
-  printSessionItemReport as printSessionItemReportHtml,
+  printSessionPaymentModeReport as printSessionPaymentModeReportHtml,
   type OrderPickListLine,
-  type ItemReportRow,
+  type SessionPaymentModeRow,
   type StoreProfile,
 } from '@/lib/receipt-print';
 import { getPrinterSettings } from './printer-settings';
 import { resolveRawTransport, printRaw, type PrintResult } from './print-manager';
-import { receiptBytes, pickListBytes, sessionReportBytes } from './receipt-escpos';
+import { receiptBytes, pickListBytes, sessionPaymentModeReportBytes } from './receipt-escpos';
 
 /**
  * Smart print entry points — same signatures the UI always used, but now
@@ -56,13 +56,13 @@ export function printOrderPickList(
   })();
 }
 
-export function printSessionItemReport(
-  rows: ItemReportRow[],
+export function printSessionPaymentModeReport(
+  rows: SessionPaymentModeRow[],
   meta: { sessionNumber: string; cashierName?: string; openedAt: string; store?: StoreProfile },
 ): void {
-  if (!resolveRawTransport()) return printSessionItemReportHtml(rows, meta);
+  if (!resolveRawTransport()) return printSessionPaymentModeReportHtml(rows, meta);
   void (async () => {
-    const res = await printRaw(sessionReportBytes(rows, meta, getPrinterSettings()));
+    const res = await printRaw(sessionPaymentModeReportBytes(rows, meta, getPrinterSettings()));
     if (!res.ok) notifyFailure(res);
   })();
 }
