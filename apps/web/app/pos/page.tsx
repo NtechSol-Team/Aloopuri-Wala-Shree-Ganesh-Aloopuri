@@ -321,7 +321,10 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         <div className="mb-2 space-y-1 text-body">
           <Row label="Sub-total" value={formatINR(totals.subTotal)} />
           {totals.itemDiscount > 0 && <Row label="Item discounts" value={`−${formatINR(totals.itemDiscount)}`} className="text-success" />}
-          <Row label="Tax" value={formatINR(totals.tax)} />
+          {/* Prices are GST-inclusive — this is a breakdown of tax already inside
+              the Sub-total above, not an amount added to it. Labelled "(incl.)"
+              so it doesn't read as Sub-total + Tax = Charge (it doesn't). */}
+          <Row label="GST (incl.)" value={formatINR(totals.tax)} className="text-muted-foreground" />
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">Bill discount</span>
             <Input type="number" className="h-8 w-24 text-right" value={cart.billDiscount} onChange={(e) => cart.setBillDiscount(Number(e.target.value))} />
