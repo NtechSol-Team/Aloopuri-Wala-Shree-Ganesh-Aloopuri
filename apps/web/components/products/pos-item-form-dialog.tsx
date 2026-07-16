@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Boxes, Infinity as InfinityIcon } from 'lucide-react';
+import { Plus, Boxes, Infinity as InfinityIcon, ImagePlus } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,7 +10,8 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
-import { UNITS, useCategories, useCreateCategory, useSaveProduct, type Category, type MeasurementUnit, type Product } from '@/hooks/useProducts';
+import { UNITS, useCategories, useCreateCategory, useSaveProduct, useUploadProductPhoto, type Category, type MeasurementUnit, type Product } from '@/hooks/useProducts';
+import { productImageSrc } from '@/lib/menu-images';
 
 const GST_RATES = [0, 5, 12, 18, 28];
 
@@ -25,6 +26,7 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
   const { data: categories } = useCategories();
   const createCategory = useCreateCategory();
   const save = useSaveProduct();
+  const uploadPhoto = useUploadProductPhoto();
   const isEdit = !!item;
 
   const [form, setForm] = useState({ ...empty });
@@ -32,11 +34,17 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
   const [addingCategory, setAddingCategory] = useState(false);
   const costTouched = useRef(false);
   const skuRef = useRef('');
+  const photoRef = useRef<HTMLInputElement>(null);
+  // A newly-picked photo file + its local preview URL (uploaded after the item saves).
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setAddingCategory(false);
     setNewCategory('');
+    setPhotoFile(null);
+    setPhotoPreview(null);
     if (item) {
       costTouched.current = true; // respect the saved value, don't overwrite on price edits
       skuRef.current = item.sku;
@@ -51,6 +59,13 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
       setForm({ ...empty, categoryId: categories?.[0]?.id ?? '' });
     }
   }, [open, item, categories]);
+
+  const pickPhoto = (file: File | null) => {
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { toast.error('Choose a JPG, PNG or WebP image'); return; }
+    setPhotoFile(file);
+    setPhotoPreview(URL.createObjectURL(file));
+  };
 
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }));
   const setPrice = (v: number) => setForm((f) => ({ ...f, price: v, cost: costTouched.current ? f.cost : v }));
@@ -78,11 +93,23 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
         reorderLevel: 0, batchTrackingEnabled: false, isPosEnabled: true, trackInventory: form.trackInventory,
       },
       {
-        onSuccess: () => { toast.success(isEdit ? 'POS item updated' : `${form.name} added to POS`); onOpenChange(false); },
+        onSuccess: async (saved) => {
+          // A freshly-picked photo is uploaded once we have the item's id.
+          if (photoFile) {
+            try { await uploadPhoto.mutateAsync({ id: saved.id, file: photoFile }); }
+            catch (e) { toast.error(`Item saved, but photo upload failed: ${apiErrorMessage(e)}`); onOpenChange(false); return; }
+          }
+          toast.success(isEdit ? 'POS item updated' : `${form.name} added to POS`);
+          onOpenChange(false);
+        },
         onError: (e) => toast.error(apiErrorMessage(e)),
       },
     );
   };
+
+  // What the photo slot shows: the just-picked preview, else the item's saved
+  // photo or the keyword-matched stock photo, else nothing (→ upload prompt).
+  const photoDisplay = photoPreview ?? (item ? productImageSrc(item) : null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -93,9 +120,41 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
         </DialogHeader>
 
         <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label required>Item name</Label>
-            <Input autoFocus value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Cheese Aloo Puri" />
+          <div className="flex gap-3">
+            {/* Photo — tap to set the picture that shows on the POS card. */}
+            <button
+              type="button"
+              onClick={() => photoRef.current?.click()}
+              className="group relative h-[72px] w-[72px] shrink-0 overflow-hidden rounded-xl border border-border bg-surface"
+              title="Set item photo"
+            >
+              {photoDisplay ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={photoDisplay} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <span className="flex h-full w-full flex-col items-center justify-center gap-0.5 text-muted-foreground">
+                  <ImagePlus className="h-5 w-5" />
+                  <span className="text-[9px] font-semibold">Photo</span>
+                </span>
+              )}
+              <span className="absolute inset-x-0 bottom-0 bg-black/55 py-0.5 text-center text-[9px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100">
+                {photoDisplay ? 'Change' : 'Add'}
+              </span>
+            </button>
+            <input
+              ref={photoRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => pickPhoto(e.target.files?.[0] ?? null)}
+            />
+            <div className="flex-1 space-y-1.5">
+              <Label required>Item name</Label>
+              <Input autoFocus value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Cheese Aloo Puri" />
+              <p className="text-[11px] text-muted-foreground">
+                {photoFile ? 'New photo will be saved with the item.' : 'No photo? A matching stock image is used automatically.'}
+              </p>
+            </div>
           </div>
 
           <div className="space-y-1.5">

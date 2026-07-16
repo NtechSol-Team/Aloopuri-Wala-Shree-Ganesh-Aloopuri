@@ -110,6 +110,22 @@ export function useSaveProduct() {
   });
 }
 
+/** Upload/replace a product's photo (multipart). Returns the updated product. */
+export function useUploadProductPhoto() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, file }: { id: string; file: File }) => {
+      const form = new FormData();
+      form.append('file', file);
+      return (await api.post<ApiSuccess<Product>>(`/products/${id}/photo`, form)).data.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['products'] });
+      qc.invalidateQueries({ queryKey: ['pos', 'products'] });
+    },
+  });
+}
+
 export function useDeleteProduct() {
   const qc = useQueryClient();
   return useMutation({

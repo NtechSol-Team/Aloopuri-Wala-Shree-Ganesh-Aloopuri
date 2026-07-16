@@ -18,6 +18,7 @@ import {
   type PosProduct, type PosTxn, type CreateTxnPayload,
 } from '@/hooks/usePos';
 import { usePosCart, cartTotals } from '@/store/pos-cart.store';
+import { productImageSrc } from '@/lib/menu-images';
 import { enqueueSale, flushQueue, queueSize } from '@/lib/offline-queue';
 import { beepAdd, beepError, beepSuccess } from '@/lib/beep';
 import { PaymentDialog, type PayMode } from '@/components/pos/payment-dialog';
@@ -161,9 +162,13 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
       ),
     [products, activeCat, search],
   );
-  // Which product cards are currently in the bill — highlighted green so the
-  // cashier can see at a glance what's already been added.
-  const selectedIds = useMemo(() => new Set(cart.items.map((i) => i.productId)), [cart.items]);
+  // Quantity of each product currently in the bill — cards show a green badge
+  // with the count so the cashier sees at a glance what's already been added.
+  const cartQtyById = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const i of cart.items) m.set(i.productId, (m.get(i.productId) ?? 0) + i.quantity);
+    return m;
+  }, [cart.items]);
 
   /** Add a product honoring the typed-ahead quantity buffer, with feedback. */
   const addProduct = (p: PosProduct) => {
@@ -417,11 +422,12 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
           </div>
         )}
 
-        {/* Product grid */}
-        <div className="grid flex-1 auto-rows-min grid-cols-2 gap-3 overflow-y-auto p-3 pb-24 scrollbar-thin sm:grid-cols-3 lg:pb-3 xl:grid-cols-4">
+        {/* Product grid — dense so a phone shows 3-up and a tablet 5-6-up with
+            minimal scrolling; images keep each item instantly recognisable. */}
+        <div className="grid flex-1 auto-rows-min grid-cols-3 gap-2 overflow-y-auto p-2.5 pb-24 scrollbar-thin sm:grid-cols-4 lg:grid-cols-5 lg:pb-2.5 xl:grid-cols-6">
           {isLoading
-            ? Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="h-32" />)
-            : filtered.map((p) => <ProductCard key={p.id} product={p} flashing={flashId === p.id} selected={selectedIds.has(p.id)} onAdd={() => addProduct(p)} />)}
+            ? Array.from({ length: 18 }).map((_, i) => <Skeleton key={i} className="aspect-[4/5] h-auto" />)
+            : filtered.map((p) => <ProductCard key={p.id} product={p} flashing={flashId === p.id} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={() => addProduct(p)} />)}
           {!isLoading && filtered.length === 0 && (
             <p className="col-span-full py-16 text-center text-body text-muted-foreground">No products match &ldquo;{search}&rdquo;</p>
           )}
@@ -503,36 +509,75 @@ function StatPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ProductCard({ product, flashing, selected, onAdd }: { product: PosProduct; flashing: boolean; selected: boolean; onAdd: () => void }) {
+/**
+ * Image-first product tile — the fastest way for a cashier to recognise an item.
+ * A food photo fills the top square; price sits on a high-contrast chip over it;
+ * the availability/qty state is a corner badge. Items with no photo (uploaded or
+ * matched) fall back to a coloured initial tile so the grid still reads cleanly.
+ */
+function ProductCard({ product, flashing, cartQty, onAdd }: { product: PosProduct; flashing: boolean; cartQty: number; onAdd: () => void }) {
   const out = product.trackInventory && product.stock !== null && product.stock <= 0;
   const low = product.trackInventory && product.stock !== null && !out && product.stock <= 5;
+  const inCart = cartQty > 0;
+  const [imgFailed, setImgFailed] = useState(false);
+  const imgSrc = imgFailed ? null : productImageSrc(product);
+
   return (
     <button
       onClick={onAdd}
       disabled={out}
       className={cn(
-        'relative flex min-h-[120px] flex-col justify-between rounded-xl border border-border bg-card p-3 text-left shadow-sm transition-all hover:shadow-md active:scale-[0.97] disabled:opacity-45',
-        // Currently in the bill — green so it's obvious at a glance what's added.
-        selected && 'border-success bg-success/10 ring-1 ring-success',
-        flashing && 'ring-2 ring-primary',
+        'group relative flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:shadow-md active:scale-[0.98] disabled:opacity-45',
+        // In the bill → green frame so it's obvious at a glance what's added.
+        inCart ? 'border-success ring-[1.5px] ring-success' : 'border-border',
+        flashing && !inCart && 'ring-2 ring-primary',
         out && 'cursor-not-allowed',
       )}
     >
-      {product.popular && <Star className="absolute right-2 top-2 h-4 w-4 fill-amber-400 text-amber-400" />}
-      <div className="flex items-start gap-2">
-        <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-black', catColor(product.category.name))}>
-          {product.name.charAt(0).toUpperCase()}
+      {/* Image / fallback — 4:3 keeps the card compact so more fit per screen. */}
+      <div className="relative aspect-[4/3] w-full overflow-hidden bg-surface">
+        {imgSrc ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={imgSrc}
+            alt={product.name}
+            loading="lazy"
+            onError={() => setImgFailed(true)}
+            className={cn('h-full w-full object-cover transition-transform duration-200 group-hover:scale-105', out && 'grayscale')}
+          />
+        ) : (
+          <div className={cn('flex h-full w-full items-center justify-center text-3xl font-black', catColor(product.category.name))}>
+            {product.name.replace(/[^\p{L}\p{N}]/u, '').charAt(0) || '•'}
+          </div>
+        )}
+
+        {product.popular && (
+          <Star className="absolute left-1 top-1 h-3.5 w-3.5 fill-amber-400 text-amber-400 drop-shadow" />
+        )}
+
+        {/* Top-right: how many are in the bill, else the stock/availability chip. */}
+        {inCart ? (
+          <span className="absolute right-1 top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-success px-1.5 text-caption font-extrabold text-white shadow">
+            {cartQty}
+          </span>
+        ) : (
+          <span className={cn(
+            'absolute right-1 top-1 rounded-full px-1.5 py-px text-[9px] font-bold shadow-sm',
+            out ? 'bg-danger text-white' : low ? 'bg-warning text-white' : 'bg-white/90 text-muted-foreground',
+          )}>
+            {!product.trackInventory ? 'Always' : out ? 'Out' : `${product.stock} ${product.unit}`}
+          </span>
+        )}
+
+        {/* Price chip — dark for contrast over any photo. */}
+        <span className="absolute bottom-1 left-1 rounded-md bg-black/75 px-1.5 py-px text-[12.5px] font-extrabold text-white">
+          {formatINR(product.mrp)}
         </span>
-        <div className="min-w-0">
-          <p className="line-clamp-2 font-semibold leading-tight">{product.name}</p>
-          <p className="text-caption text-muted-foreground">{product.sku}</p>
-        </div>
       </div>
-      <div className="mt-2 flex items-end justify-between">
-        <span className="text-label font-extrabold text-primary">{formatINR(product.mrp)}</span>
-        <span className={cn('rounded-full px-2 py-0.5 text-caption font-semibold', out ? 'bg-danger/10 text-danger' : low ? 'bg-warning/10 text-warning' : 'bg-surface text-muted-foreground')}>
-          {!product.trackInventory ? 'Always' : out ? 'Out' : `${product.stock} ${product.unit}`}
-        </span>
+
+      {/* Name */}
+      <div className="px-1.5 py-1">
+        <p className="line-clamp-2 min-h-[2.4em] text-[14px] font-bold leading-tight text-foreground">{product.name}</p>
       </div>
     </button>
   );
