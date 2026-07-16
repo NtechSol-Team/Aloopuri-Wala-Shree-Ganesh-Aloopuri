@@ -20,14 +20,18 @@ function smartLine(
   e: EscPosEncoder,
   s: PrinterSettings,
   text: string,
-  o: { bold?: boolean; center?: boolean; big?: boolean } = {},
+  o: { bold?: boolean; center?: boolean; big?: boolean; tall?: boolean } = {},
 ): void {
   if (isAscii(text)) {
     e.align(o.center ? 'center' : 'left');
     if (o.bold) e.bold(true);
+    // "big" doubles both dimensions (halving the usable columns — for totals).
+    // "tall" only doubles the height, so item names print larger without
+    // shrinking how many characters fit on a line.
     if (o.big) e.size(2, 2);
+    else if (o.tall) e.size(1, 2);
     for (const ln of wrapText(text, o.big ? Math.floor(e.cols / 2) : e.cols)) e.line(ln);
-    if (o.big) e.size(1, 1);
+    if (o.big || o.tall) e.size(1, 1);
     if (o.bold) e.bold(false);
     e.align('left');
     return;
@@ -35,7 +39,7 @@ function smartLine(
   e.align(o.center ? 'center' : 'left');
   e.imageRaster(textToRaster(text, {
     widthDots: dotsFor(s),
-    fontPx: o.big ? 48 : 28,
+    fontPx: o.big ? 48 : o.tall ? 36 : 28,
     bold: o.bold ?? o.big,
     align: o.center ? 'center' : 'left',
   }));
@@ -86,7 +90,6 @@ async function header(e: EscPosEncoder, s: PrinterSettings, store: StoreProfile,
   // Shop name and address may be Gujarati, so route them through smartLine.
   smartLine(e, s, store.name, { bold: true, center: true, big: true });
   if (subtitle) smartLine(e, s, subtitle, { center: true });
-  else if (store.tagline) smartLine(e, s, store.tagline, { center: true });
 
   if (store.address) smartLine(e, s, store.address, { center: true });
   e.align('center');
@@ -123,8 +126,9 @@ export async function receiptBytes(
   for (const it of txn.items) {
     const qty = Number(it.quantity);
     const disc = Number(it.discount);
-    // Product name may be Gujarati → printed as an image when it is.
-    smartLine(e, s, it.productNameSnapshot, { bold: true });
+    // Product name may be Gujarati → printed as an image when it is. Printed
+    // taller than body text so item names stand out on the paper.
+    smartLine(e, s, it.productNameSnapshot, { bold: true, tall: true });
     e.leftRight(`  ${qty} x ${inr(it.unitPrice)}${disc > 0 ? ` (-${inr(disc)})` : ''}`, inr(it.lineTotal));
   }
 
@@ -150,18 +154,14 @@ export async function receiptBytes(
     e.leftRight(`SGST @${gst.halfRate.toFixed(2)}%`, inr(gst.sgst));
   }
 
-  const cashPart = Number(txn.cashAmount ?? 0);
+  // Card/UPI amount only — cash/cash-received/change is a till-drawer detail,
+  // not something the customer's copy needs to show.
   const onlinePart = Number(txn.cardAmount ?? 0) + Number(txn.upiAmount ?? 0);
-  if (cashPart > 0) e.leftRight('Cash', inr(cashPart));
   if (onlinePart > 0) e.leftRight('Online (Card/UPI)', inr(onlinePart));
-  if (txn.paymentMode === 'CASH') {
-    e.leftRight('Cash received', inr(txn.cashReceived ?? txn.grandTotal));
-    e.leftRight('Change', inr(txn.changeGiven ?? 0));
-  }
 
   e.feed(1);
   smartLine(e, s, store.footer || 'Thank you! Visit again', { center: true });
-  smartLine(e, s, `- ${store.tagline || store.name} -`, { center: true });
+  smartLine(e, s, `- ${store.name} -`, { center: true });
 
   if (s.printBarcode) {
     e.feed(1).barcode(txn.receiptNumber, { height: 56, hri: true });

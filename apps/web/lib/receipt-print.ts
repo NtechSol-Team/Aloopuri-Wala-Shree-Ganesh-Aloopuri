@@ -147,17 +147,10 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   const discountTotal = Number(txn.itemDiscount) + Number(txn.billDiscount);
   const gst = gstBreakup(Number(txn.grandTotal), Number(txn.taxTotal));
 
-  // Cash vs online (card + UPI) breakdown — always from the actual amounts recorded
-  // against the sale, so split payments show both instead of just a mode label.
-  const cashPart = Number(txn.cashAmount ?? 0);
+  // Card/UPI amount only — the cash/cash-received/change breakdown is a
+  // till-drawer detail, not something the customer's copy needs to show.
   const onlinePart = Number(txn.cardAmount ?? 0) + Number(txn.upiAmount ?? 0);
-  const payLine = `
-    ${cashPart > 0 ? `<div class="row"><span>Cash</span><span>${inr(cashPart)}</span></div>` : ''}
-    ${onlinePart > 0 ? `<div class="row"><span>Online (Card/UPI)</span><span>${inr(onlinePart)}</span></div>` : ''}
-    ${txn.paymentMode === 'CASH'
-      ? `<div class="row"><span>Cash received</span><span>${inr(txn.cashReceived ?? txn.grandTotal)}</span></div>
-         <div class="row"><span>Change</span><span>${inr(txn.changeGiven ?? 0)}</span></div>`
-      : ''}`;
+  const payLine = onlinePart > 0 ? `<div class="row"><span>Online (Card/UPI)</span><span>${inr(onlinePart)}</span></div>` : '';
 
   const html = `<!doctype html>
 <html>
@@ -178,7 +171,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   .meta { font-size: 11px; }
   table { width: 100%; border-collapse: collapse; }
   td { padding: 1px 0; vertical-align: top; }
-  td.name { font-size: 16px; font-weight: 700; padding-top: 4px; line-height: 1.25; }
+  td.name { font-size: 20px; font-weight: 700; padding-top: 4px; line-height: 1.25; }
   tr.sub td { font-size: 11px; }
   .num { text-align: right; white-space: nowrap; }
   .row { display: flex; justify-content: space-between; padding: 1px 0; }
@@ -190,7 +183,6 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
 <body>
   <div class="center">
     <div class="store">${esc(store.name)}</div>
-    ${store.tagline ? `<div class="tagline">${esc(store.tagline)}</div>` : ''}
     ${store.address ? `<div class="tagline">${esc(store.address)}</div>` : ''}
     ${store.phone ? `<div class="tagline">Ph: ${esc(store.phone)}</div>` : ''}
     ${store.gstin ? `<div class="tagline">GSTIN: ${esc(store.gstin)}</div>` : ''}
@@ -218,7 +210,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   ${payLine}
   <div class="center foot">
     ${store.footer ? esc(store.footer) : 'Thank you! Visit again 🙏'}<br />
-    — ${esc(store.tagline || store.name)} —
+    — ${esc(store.name)} —
   </div>
 </body>
 </html>`;

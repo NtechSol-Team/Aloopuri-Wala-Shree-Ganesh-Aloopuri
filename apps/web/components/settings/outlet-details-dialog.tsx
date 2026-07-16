@@ -121,7 +121,6 @@ export function OutletDetailsDialog({ outlet, onClose }: { outlet: Outlet | null
           </p>
           <div className="mx-auto w-[260px] rounded bg-card px-3 py-3 text-center font-mono text-[11px] leading-tight text-foreground shadow-sm">
             <div className="text-[14px] font-bold">{form.legalName.trim() || form.name.trim() || 'Outlet name'}</div>
-            <div>Surat Food Chain</div>
             {form.address.trim() && <div>{form.address.trim()}</div>}
             {form.phone.trim() && <div>Ph: {form.phone.trim()}</div>}
             {form.gstin.trim() && <div>GSTIN: {form.gstin.trim()}</div>}
