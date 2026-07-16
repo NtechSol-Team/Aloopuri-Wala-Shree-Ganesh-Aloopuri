@@ -2,7 +2,7 @@
 
 import { format } from 'date-fns';
 import type { PosTxn } from '@/hooks/usePos';
-import { DEFAULT_STORE, type OrderPickListLine, type ItemReportRow, type StoreProfile } from '@/lib/receipt-print';
+import { DEFAULT_STORE, gstBreakup, type OrderPickListLine, type ItemReportRow, type StoreProfile } from '@/lib/receipt-print';
 import { EscPosEncoder, wrapText, type MonoRaster } from './escpos-encoder';
 import { loadImageAsRaster, textToRaster } from './escpos-image';
 import { colsFor, dotsFor, type PrinterSettings } from './printer-settings';
@@ -132,7 +132,6 @@ export async function receiptBytes(
   e.leftRight('Sub-total', inr(txn.subTotal));
   const discountTotal = Number(txn.itemDiscount) + Number(txn.billDiscount);
   if (discountTotal > 0) e.leftRight('Discount', `-${inr(discountTotal)}`);
-  if (Number(txn.taxTotal) > 0) e.leftRight('Tax', inr(txn.taxTotal));
 
   e.bold(true).size(2, 2);
   // At double width only cols/2 characters fit per line.
@@ -141,6 +140,15 @@ export async function receiptBytes(
   const totalPad = Math.max(1, totalCols - 'TOTAL'.length - totalStr.length);
   e.line('TOTAL' + ' '.repeat(totalPad) + totalStr);
   e.size(1, 1).bold(false);
+
+  // GST bifurcation — a breakdown of the tax already inside the total above, not
+  // an addition to it (POS counter sales are intra-state: CGST+SGST, no IGST).
+  const gst = gstBreakup(Number(txn.grandTotal), Number(txn.taxTotal));
+  if (gst) {
+    e.leftRight('Taxable Value', inr(gst.base));
+    e.leftRight(`CGST @${gst.halfRate.toFixed(2)}%`, inr(gst.cgst));
+    e.leftRight(`SGST @${gst.halfRate.toFixed(2)}%`, inr(gst.sgst));
+  }
 
   const cashPart = Number(txn.cashAmount ?? 0);
   const onlinePart = Number(txn.cardAmount ?? 0) + Number(txn.upiAmount ?? 0);

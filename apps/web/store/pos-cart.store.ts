@@ -77,8 +77,12 @@ export function cartTotals(items: CartItem[], billDiscount: number) {
     const taxable = Math.max(0, gross - i.discount);
     subTotal += gross;
     itemDiscount += i.discount;
-    tax += (taxable * i.taxPercent) / 100;
+    // GST is included in the MRP (B2C counter pricing): extract it, don't add it on
+    // top. Must mirror the server (pos.service.ts) exactly or the Charge amount and
+    // the recorded sale would disagree.
+    tax += i.taxPercent > 0 ? (taxable * i.taxPercent) / (100 + i.taxPercent) : 0;
   }
-  const grandTotal = Math.max(0, subTotal - itemDiscount - billDiscount + tax);
+  // Tax already sits inside the prices, so the total is just price minus discounts.
+  const grandTotal = Math.max(0, subTotal - itemDiscount - billDiscount);
   return { subTotal, itemDiscount, billDiscount, tax, grandTotal };
 }

@@ -135,15 +135,24 @@ export async function createTransaction(user: AuthUser, input: CreateTransaction
     const gross = unitPrice.mul(qty);
     const taxable = gross.sub(discount);
     if (taxable.lessThan(0)) throw AppError.badRequest(`Discount exceeds line total for ${p.name}`);
-    const taxAmount = taxable.mul(p.taxPercent).div(100);
+    // Counter (B2C) prices are GST-INCLUSIVE: the MRP is what the customer pays, and
+    // the GST is extracted from within it — tax = amount × rate / (100 + rate) — not
+    // added on top. So the line total equals the inclusive price. (The wholesale
+    // order→bill path is a proper GST invoice and stays tax-exclusive; that lives in
+    // billing.service, not here.)
+    const taxPct = new Prisma.Decimal(p.taxPercent);
+    const taxAmount = taxPct.greaterThan(0)
+      ? taxable.mul(taxPct).div(new Prisma.Decimal(100).add(taxPct))
+      : new Prisma.Decimal(0);
     subTotal = subTotal.add(gross);
     itemDiscountTotal = itemDiscountTotal.add(discount);
     taxTotal = taxTotal.add(taxAmount);
-    return { productId: p.id, productNameSnapshot: p.name, quantity: qty, unitPrice, discount, taxPercent: new Prisma.Decimal(p.taxPercent), taxAmount, lineTotal: taxable.add(taxAmount) };
+    return { productId: p.id, productNameSnapshot: p.name, quantity: qty, unitPrice, discount, taxPercent: taxPct, taxAmount, lineTotal: taxable };
   });
 
   const billDiscount = new Prisma.Decimal(input.billDiscount);
-  const grandTotal = subTotal.sub(itemDiscountTotal).sub(billDiscount).add(taxTotal);
+  // Tax is already inside the prices, so it is NOT added again here.
+  const grandTotal = subTotal.sub(itemDiscountTotal).sub(billDiscount);
   if (grandTotal.lessThan(0)) throw AppError.badRequest('Total cannot be negative');
 
   // Resolve payment split.
@@ -311,9 +320,10 @@ export async function posProducts(user: AuthUser) {
     : await prisma.mainBranchStock.findMany({ select: { productId: true, quantity: true } });
   const stockMap = new Map(stocks.map((s) => [s.productId, Number(s.quantity)]));
 
-  // Bestsellers: top products by units sold at this location in the last 30 days.
+  // Units sold per product at this location in the last 30 days — used both to
+  // order the grid (best-sellers first) and to flag the quick-pick row.
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const top = await prisma.posTransactionItem.groupBy({
+  const sold = await prisma.posTransactionItem.groupBy({
     by: ['productId'],
     where: {
       isDeleted: false,
@@ -321,11 +331,19 @@ export async function posProducts(user: AuthUser) {
     },
     _sum: { quantity: true },
     orderBy: { _sum: { quantity: 'desc' } },
-    take: 8,
   });
-  const popular = new Set(top.map((t) => t.productId));
+  const soldMap = new Map(sold.map((t) => [t.productId, Number(t._sum.quantity ?? 0)]));
+  const popular = new Set(sold.slice(0, 8).map((t) => t.productId));
 
-  return products.map((p) => ({ ...p, stock: p.trackInventory ? stockMap.get(p.id) ?? 0 : null, popular: popular.has(p.id) }));
+  return products
+    .map((p) => ({
+      ...p,
+      stock: p.trackInventory ? stockMap.get(p.id) ?? 0 : null,
+      popular: popular.has(p.id),
+      soldCount: soldMap.get(p.id) ?? 0,
+    }))
+    // Best-sellers first; ties (and not-yet-sold items) fall back to name order.
+    .sort((a, b) => b.soldCount - a.soldCount || a.name.localeCompare(b.name));
 }
 
 export const posService = {

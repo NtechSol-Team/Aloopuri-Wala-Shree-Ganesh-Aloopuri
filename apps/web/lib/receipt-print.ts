@@ -106,6 +106,22 @@ export function printPdfBlob(blob: Blob): void {
 }
 
 /**
+ * Split the GST already embedded in a GST-inclusive total into its CGST/SGST
+ * halves, purely for display. A POS counter sale is always intra-state (a
+ * walk-in customer physically at the shop), so there's no IGST case to handle.
+ * `cgst + sgst` is constructed to equal `taxTotal` to the paisa (no rounding
+ * drift), and `base + taxTotal` always equals `grandTotal`.
+ */
+export function gstBreakup(grandTotal: number, taxTotal: number): { base: number; cgst: number; sgst: number; halfRate: number } | null {
+  if (taxTotal <= 0) return null;
+  const base = grandTotal - taxTotal;
+  const cgst = Math.round(taxTotal * 50) / 100;
+  const sgst = Math.round((taxTotal - cgst) * 100) / 100;
+  const effectiveRate = base > 0 ? (taxTotal / base) * 100 : 0;
+  return { base, cgst, sgst, halfRate: effectiveRate / 2 };
+}
+
+/**
  * 80mm thermal-style receipt (B2C — no GST invoice, taxes shown as included).
  * Renders into a hidden iframe and opens the browser print dialog, which works
  * with any installed thermal/receipt printer as well as normal printers.
@@ -129,6 +145,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
     .join('');
 
   const discountTotal = Number(txn.itemDiscount) + Number(txn.billDiscount);
+  const gst = gstBreakup(Number(txn.grandTotal), Number(txn.taxTotal));
 
   // Cash vs online (card + UPI) breakdown — always from the actual amounts recorded
   // against the sale, so split payments show both instead of just a mode label.
@@ -193,8 +210,11 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   <hr />
   <div class="row"><span>Sub-total</span><span>${inr(txn.subTotal)}</span></div>
   ${discountTotal > 0 ? `<div class="row"><span>Discount</span><span>−${inr(discountTotal)}</span></div>` : ''}
-  ${Number(txn.taxTotal) > 0 ? `<div class="row"><span>Tax</span><span>${inr(txn.taxTotal)}</span></div>` : ''}
   <div class="row total"><span>TOTAL</span><span>${inr(txn.grandTotal)}</span></div>
+  ${gst ? `
+  <div class="row"><span>Taxable Value</span><span>${inr(gst.base)}</span></div>
+  <div class="row"><span>CGST @${gst.halfRate.toFixed(2)}%</span><span>${inr(gst.cgst)}</span></div>
+  <div class="row"><span>SGST @${gst.halfRate.toFixed(2)}%</span><span>${inr(gst.sgst)}</span></div>` : ''}
   ${payLine}
   <div class="center foot">
     ${store.footer ? esc(store.footer) : 'Thank you! Visit again 🙏'}<br />

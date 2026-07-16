@@ -15,6 +15,8 @@ export interface PosProduct {
   stock: number | null;
   trackInventory: boolean;
   popular: boolean;
+  /** Units sold at this location in the last 30 days — grid is ordered by this, best first. */
+  soldCount: number;
   category: { id: string; name: string };
 }
 
