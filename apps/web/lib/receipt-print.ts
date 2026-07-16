@@ -166,7 +166,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   .store { font-size: 16px; font-weight: 700; letter-spacing: 0.5px; }
   .tagline { font-size: 10px; margin-top: 1px; }
   .token { margin: 8px 0 2px; font-size: 12px; font-weight: 700; }
-  .token-num { font-size: 26px; font-weight: 800; line-height: 1; }
+  .token-num { font-size: 20px; font-weight: 800; line-height: 1; }
   hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
   .meta { font-size: 11px; }
   table { width: 100%; border-collapse: collapse; }

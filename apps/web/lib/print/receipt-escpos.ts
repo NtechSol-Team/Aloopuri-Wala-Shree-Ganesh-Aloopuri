@@ -116,7 +116,7 @@ export async function receiptBytes(
   if (txn.tokenNumber != null) {
     // Centered, not left — this is a call-out for the counter, not body text.
     e.align('center').feed(1).line('TOKEN');
-    e.bold(true).size(3, 3).line(`#${txn.tokenNumber}`).size(1, 1).bold(false);
+    e.bold(true).size(2, 2).line(`#${txn.tokenNumber}`).size(1, 1).bold(false);
     e.align('left');
   }
 

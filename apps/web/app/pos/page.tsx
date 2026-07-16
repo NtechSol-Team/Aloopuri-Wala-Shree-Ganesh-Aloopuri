@@ -161,6 +161,9 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
       ),
     [products, activeCat, search],
   );
+  // Which product cards are currently in the bill — highlighted green so the
+  // cashier can see at a glance what's already been added.
+  const selectedIds = useMemo(() => new Set(cart.items.map((i) => i.productId)), [cart.items]);
 
   /** Add a product honoring the typed-ahead quantity buffer, with feedback. */
   const addProduct = (p: PosProduct) => {
@@ -418,7 +421,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         <div className="grid flex-1 auto-rows-min grid-cols-2 gap-3 overflow-y-auto p-3 pb-24 scrollbar-thin sm:grid-cols-3 lg:pb-3 xl:grid-cols-4">
           {isLoading
             ? Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="h-32" />)
-            : filtered.map((p) => <ProductCard key={p.id} product={p} flashing={flashId === p.id} onAdd={() => addProduct(p)} />)}
+            : filtered.map((p) => <ProductCard key={p.id} product={p} flashing={flashId === p.id} selected={selectedIds.has(p.id)} onAdd={() => addProduct(p)} />)}
           {!isLoading && filtered.length === 0 && (
             <p className="col-span-full py-16 text-center text-body text-muted-foreground">No products match &ldquo;{search}&rdquo;</p>
           )}
@@ -500,7 +503,7 @@ function StatPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ProductCard({ product, flashing, onAdd }: { product: PosProduct; flashing: boolean; onAdd: () => void }) {
+function ProductCard({ product, flashing, selected, onAdd }: { product: PosProduct; flashing: boolean; selected: boolean; onAdd: () => void }) {
   const out = product.trackInventory && product.stock !== null && product.stock <= 0;
   const low = product.trackInventory && product.stock !== null && !out && product.stock <= 5;
   return (
@@ -509,6 +512,8 @@ function ProductCard({ product, flashing, onAdd }: { product: PosProduct; flashi
       disabled={out}
       className={cn(
         'relative flex min-h-[120px] flex-col justify-between rounded-xl border border-border bg-card p-3 text-left shadow-sm transition-all hover:shadow-md active:scale-[0.97] disabled:opacity-45',
+        // Currently in the bill — green so it's obvious at a glance what's added.
+        selected && 'border-success bg-success/10 ring-1 ring-success',
         flashing && 'ring-2 ring-primary',
         out && 'cursor-not-allowed',
       )}
