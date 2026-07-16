@@ -90,6 +90,7 @@ async function header(e: EscPosEncoder, s: PrinterSettings, store: StoreProfile,
   // Shop name and address may be Gujarati, so route them through smartLine.
   smartLine(e, s, store.name, { bold: true, center: true, big: true });
   if (subtitle) smartLine(e, s, subtitle, { center: true });
+  else if (store.tagline) smartLine(e, s, store.tagline, { center: true });
 
   if (store.address) smartLine(e, s, store.address, { center: true });
   e.align('center');
@@ -113,7 +114,10 @@ export async function receiptBytes(
     e.feed(1).invert(true).size(2, 2).line('  VOID  ').size(1, 1).invert(false);
   }
   if (txn.tokenNumber != null) {
-    e.feed(1).line('TOKEN').bold(true).size(4, 4).line(`#${txn.tokenNumber}`).size(1, 1).bold(false);
+    // Centered, not left — this is a call-out for the counter, not body text.
+    e.align('center').feed(1).line('TOKEN');
+    e.bold(true).size(3, 3).line(`#${txn.tokenNumber}`).size(1, 1).bold(false);
+    e.align('left');
   }
 
   e.align('left').divider();
@@ -129,7 +133,10 @@ export async function receiptBytes(
     // Product name may be Gujarati → printed as an image when it is. Printed
     // taller than body text so item names stand out on the paper.
     smartLine(e, s, it.productNameSnapshot, { bold: true, tall: true });
-    e.leftRight(`  ${qty} x ${inr(it.unitPrice)}${disc > 0 ? ` (-${inr(disc)})` : ''}`, inr(it.lineTotal));
+    // Qty and the item's final total both stand out (bold) under the name.
+    e.bold(true);
+    e.leftRight(`Qty: ${qty}${disc > 0 ? ` (-${inr(disc)})` : ''}`, inr(it.lineTotal));
+    e.bold(false);
   }
 
   e.divider();

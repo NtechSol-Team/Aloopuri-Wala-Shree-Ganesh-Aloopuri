@@ -16,7 +16,7 @@ import { useRevenueTrend, useTopProducts, useFinancial, useOutletPerformance, us
 import { TrendingUp, Wallet, BadgeIndianRupee } from 'lucide-react';
 import { OutletDetailDialog } from '@/components/analytics/outlet-detail-dialog';
 import { useAuthStore } from '@/store/auth.store';
-import { printAnalyticsItemReport } from '@/lib/receipt-print';
+import { printAnalyticsPaymentModeReport } from '@/lib/receipt-print';
 
 type Tab = 'sales' | 'pos' | 'outlets' | 'inventory' | 'financial';
 
@@ -142,7 +142,7 @@ function PosTab() {
         <TopChart title="Top 10 POS Items by Quantity Sold" data={data.topByQty.map((d) => ({ name: d.name, value: d.qty }))} />
       </div>
 
-      <ItemWiseReport rows={data.itemsReport} />
+      <ItemWiseReport rows={data.itemsReport} paymentModeRows={data.byPaymentMode} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
@@ -203,8 +203,11 @@ function PosTab() {
 
 type ItemSortKey = 'revenue' | 'qty' | 'name';
 
-/** Full item-wise sales report (last 30 days) — every item sold, searchable, sortable, printable. */
-function ItemWiseReport({ rows }: { rows: Array<{ name: string; category: string; qty: number; revenue: number; avgPrice: number; revenueSharePct: number }> }) {
+/** Full item-wise sales report (last 30 days) — every item sold, searchable, sortable. */
+function ItemWiseReport({ rows, paymentModeRows }: {
+  rows: Array<{ name: string; category: string; qty: number; revenue: number; avgPrice: number; revenueSharePct: number }>;
+  paymentModeRows: Array<{ mode: string; transactions: number; revenue: number }>;
+}) {
   const userName = useAuthStore((s) => s.user?.name);
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<ItemSortKey>('revenue');
@@ -215,9 +218,12 @@ function ItemWiseReport({ rows }: { rows: Array<{ name: string; category: string
     return [...list].sort((a, b) => (sortKey === 'name' ? a.name.localeCompare(b.name) : b[sortKey] - a[sortKey]));
   }, [rows, search, sortKey]);
 
+  // The printed report is payment-mode-wise (Cash/Card/UPI: method, orders,
+  // total) rather than item-wise — the on-screen table below stays item-wise
+  // for browsing, but that's not what goes to paper.
   const printReport = () => {
-    printAnalyticsItemReport(filtered, { periodLabel: 'Last 30 days (POS sales)', generatedBy: userName });
-    toast.success('Printing item-wise report…');
+    printAnalyticsPaymentModeReport(paymentModeRows, { periodLabel: 'This month (POS sales)', generatedBy: userName });
+    toast.success('Printing payment mode report…');
   };
 
   return (
@@ -232,8 +238,8 @@ function ItemWiseReport({ rows }: { rows: Array<{ name: string; category: string
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input placeholder="Search item or category…" className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <Button variant="secondary" size="sm" onClick={printReport} disabled={!filtered.length}>
-            <Printer className="h-3.5 w-3.5" /> Print Report
+          <Button variant="secondary" size="sm" onClick={printReport} disabled={!paymentModeRows.length}>
+            <Printer className="h-3.5 w-3.5" /> Print Payment Report
           </Button>
         </div>
       </CardHeader>
