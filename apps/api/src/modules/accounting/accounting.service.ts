@@ -89,8 +89,15 @@ export async function getDayBook(from: Date, to: Date) {
       FROM payments p JOIN outlets o ON o.id=p.outlet_id
       WHERE p.is_deleted=false AND p.payment_date BETWEEN $1::timestamptz AND $2::timestamptz
     UNION ALL
-    SELECT 'POS_SALE', t.sold_at, 'POS / Walk-in', t.payment_mode::text, t.receipt_number, t.grand_total::float, 0::float
-      FROM pos_transactions t WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at BETWEEN $1::timestamptz AND $2::timestamptz
+    -- POS sales are rolled up one row per day per payment mode (not one row per
+    -- sale) — a single counter can ring up hundreds of walk-in bills a day, which
+    -- would otherwise drown every other entry type out of the book.
+    SELECT 'POS_SALE', date_trunc('day', t.sold_at), 'POS / Walk-in', t.payment_mode::text,
+           count(*)::text || CASE WHEN count(*)=1 THEN ' bill' ELSE ' bills' END,
+           SUM(t.grand_total)::float, 0::float
+      FROM pos_transactions t
+      WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at BETWEEN $1::timestamptz AND $2::timestamptz
+      GROUP BY date_trunc('day', t.sold_at), t.payment_mode
     UNION ALL
     SELECT 'EXPENSE', e.expense_date, e.paid_to, e.payment_method::text, ec.name, 0::float, e.amount::float
       FROM expenses e JOIN expense_categories ec ON ec.id=e.category_id
