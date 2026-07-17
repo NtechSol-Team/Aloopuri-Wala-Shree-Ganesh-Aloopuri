@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
+import { useQueryClient } from '@tanstack/react-query';
+import { getSocket } from '@/lib/socket';
 import {
   Search, Plus, Minus, Trash2, Pause, Play, ArrowLeft, Wifi, WifiOff, Receipt,
   ChefHat, ReceiptText, Power, Star, Keyboard, X, ShoppingCart, Printer,
@@ -85,6 +87,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const { data: products, isLoading } = usePosProducts();
   const { data: summary } = useSessionSummary(sessionId);
   const cashierName = useAuthStore((s) => s.user?.name);
+  const qc = useQueryClient();
   const cart = usePosCart();
   const totals = cartTotals(cart.items, cart.billDiscount);
   const sale = useCreateSale();
@@ -123,6 +126,20 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   }, []);
 
   const dialogOpen = payOpen || eodOpen || txnsOpen || !!successTxn;
+
+  // Midnight auto-rollover: the till this terminal was using just got auto-closed
+  // and replaced with a fresh one server-side. Swap over instantly so an
+  // unattended overnight terminal doesn't sell against a now-closed session.
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const handler = () => {
+      toast('New day started — session refreshed', { icon: '🌙' });
+      void qc.invalidateQueries({ queryKey: ['pos', 'session'] });
+    };
+    socket.on('pos_session_rollover', handler);
+    return () => { socket.off('pos_session_rollover', handler); };
+  }, [qc]);
 
   // Online/offline detection + background sync.
   useEffect(() => {
@@ -263,9 +280,9 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         </div>
         {summary && (
           <div className="mt-2 flex gap-2">
-            <StatPill label="Sales" value={formatINR(summary.totalSales)} />
-            <StatPill label="Bills" value={String(summary.transactionCount)} />
-            <StatPill label="Avg" value={summary.transactionCount ? formatINR(summary.totalSales / summary.transactionCount) : '—'} />
+            <StatPill label="Sales" value={formatINR(summary.todaySales)} />
+            <StatPill label="Bills" value={String(summary.todayTransactionCount)} />
+            <StatPill label="Avg" value={summary.todayTransactionCount ? formatINR(summary.todaySales / summary.todayTransactionCount) : '—'} />
           </div>
         )}
 

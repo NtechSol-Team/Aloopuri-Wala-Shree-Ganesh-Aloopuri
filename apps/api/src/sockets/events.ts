@@ -12,6 +12,8 @@ export const RealtimeEvent = {
   TRANSFER_STATUS_CHANGED: 'transfer_status_changed',
   POS_SALE: 'pos_sale',
   POS_KOT: 'pos_kot',
+  /** Midnight auto-close/reopen of a till session — terminal must swap to the new session id. */
+  POS_SESSION_ROLLOVER: 'pos_session_rollover',
   PAYMENT_DUE_REMINDER: 'payment_due_reminder',
   REPORT_READY: 'report_ready',
 } as const;

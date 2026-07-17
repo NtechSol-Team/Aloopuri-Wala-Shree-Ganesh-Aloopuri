@@ -39,6 +39,7 @@ const envSchema = z.object({
   KPI_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
   MATERIALIZED_VIEW_REFRESH_CRON: z.string().default('*/15 * * * *'),
   SUPPLIER_BILL_REMINDER_CRON: z.string().default('0 8 * * *'), // daily 8am: flags bills due in 10 or 5 days
+  POS_SESSION_ROLLOVER_CRON: z.string().default('0 0 * * *'), // midnight IST: auto-close + reopen every open till
 
   // Company letterhead details for invoice PDFs. GSTIN blank by default — only
   // printed on GST invoices once the business's actual registered GSTIN is set.

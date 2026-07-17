@@ -1,3 +1,4 @@
+import { startOfDay } from 'date-fns';
 import { Prisma, KotStatus, PosPaymentMode, PosSessionStatus, PosTransactionStatus, UserRole } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
@@ -74,6 +75,23 @@ export async function getSessionSummary(id: string) {
   const completed = txns.filter((t) => t.status === PosTransactionStatus.COMPLETED);
   const voids = txns.filter((t) => t.status === PosTransactionStatus.VOID);
   const sum = (sel: (t: (typeof txns)[number]) => Prisma.Decimal) => completed.reduce((s, t) => s + Number(sel(t)), 0);
+
+  // A till session can span past midnight if a shift doesn't close out (e.g. left
+  // open overnight) — totalSales above is deliberately its full lifetime, since the
+  // EOD dialog needs that for cash-drawer reconciliation. But the terminal's on-screen
+  // "Sales" stat should read like the Dashboard's "Today's Sales" (same outlet, same
+  // calendar day), or the two numbers visibly disagree.
+  const todayAgg = await prisma.posTransaction.aggregate({
+    _sum: { grandTotal: true },
+    _count: true,
+    where: {
+      status: PosTransactionStatus.COMPLETED,
+      isDeleted: false,
+      soldAt: { gte: startOfDay(new Date()) },
+      ...(session.outletId ? { outletId: session.outletId } : {}),
+    },
+  });
+
   return {
     sessionNumber: session.sessionNumber,
     status: session.status,
@@ -86,6 +104,8 @@ export async function getSessionSummary(id: string) {
     upiCollected: sum((t) => t.upiAmount),
     transactionCount: completed.length,
     voidCount: voids.length,
+    todaySales: Number(todayAgg._sum.grandTotal ?? 0),
+    todayTransactionCount: todayAgg._count,
   };
 }
 

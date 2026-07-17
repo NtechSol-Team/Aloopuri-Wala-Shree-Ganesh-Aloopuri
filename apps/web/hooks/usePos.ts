@@ -93,6 +93,8 @@ export interface SessionSummary {
   transactionCount: number;
   voidCount: number;
   openingCash: number;
+  todaySales: number;
+  todayTransactionCount: number;
 }
 
 export interface KitchenTicket {
