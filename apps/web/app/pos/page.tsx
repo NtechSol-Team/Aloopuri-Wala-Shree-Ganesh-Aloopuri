@@ -288,38 +288,40 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         ) : (
           <div className="space-y-2">
             {cart.items.map((i) => (
-              <div key={i.productId} className="rounded-lg border border-border">
-                <button className="flex w-full items-center justify-between p-2.5 text-left" onClick={() => setExpandedLine(expandedLine === i.productId ? null : i.productId)}>
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold">{i.name}</p>
-                    <p className="text-caption text-muted-foreground">
-                      {i.quantity} × {formatINR(i.mrp)}
-                      {i.discount > 0 && <span className="text-success"> · −{formatINR(i.discount)}</span>}
-                    </p>
+              <SwipeToDeleteRow key={i.productId} onDelete={() => cart.removeItem(i.productId)}>
+                <div className="border border-border">
+                  <button className="flex w-full items-center justify-between p-2.5 text-left" onClick={() => setExpandedLine(expandedLine === i.productId ? null : i.productId)}>
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold">{i.name}</p>
+                      <p className="text-caption text-muted-foreground">
+                        {i.quantity} × {formatINR(i.mrp)}
+                        {i.discount > 0 && <span className="text-success"> · −{formatINR(i.discount)}</span>}
+                      </p>
+                    </div>
+                    <span className="ml-2 font-bold">{formatINR(Math.max(0, i.mrp * i.quantity - i.discount))}</span>
+                  </button>
+                  <div className="flex items-center justify-between border-t border-border px-2.5 py-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => cart.setQty(i.productId, i.quantity - 1)}><Minus className="h-4 w-4" /></Button>
+                      <span className="w-10 text-center font-bold">{i.quantity}</span>
+                      <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => cart.setQty(i.productId, i.quantity + 1)}><Plus className="h-4 w-4" /></Button>
+                    </div>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => cart.removeItem(i.productId)}><Trash2 className="h-4 w-4 text-danger" /></Button>
                   </div>
-                  <span className="ml-2 font-bold">{formatINR(Math.max(0, i.mrp * i.quantity - i.discount))}</span>
-                </button>
-                <div className="flex items-center justify-between border-t border-border px-2.5 py-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => cart.setQty(i.productId, i.quantity - 1)}><Minus className="h-4 w-4" /></Button>
-                    <span className="w-10 text-center font-bold">{i.quantity}</span>
-                    <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => cart.setQty(i.productId, i.quantity + 1)}><Plus className="h-4 w-4" /></Button>
-                  </div>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => cart.removeItem(i.productId)}><Trash2 className="h-4 w-4 text-danger" /></Button>
+                  {expandedLine === i.productId && (
+                    <div className="grid grid-cols-2 gap-2 border-t border-border bg-surface/60 p-2.5">
+                      <div>
+                        <label className="text-caption font-medium text-muted-foreground">Exact qty ({i.unit})</label>
+                        <Input type="number" step="0.01" className="mt-0.5 h-9" value={i.quantity} onChange={(e) => cart.setQty(i.productId, Number(e.target.value))} />
+                      </div>
+                      <div>
+                        <label className="text-caption font-medium text-muted-foreground">Line discount ₹</label>
+                        <Input type="number" step="0.01" className="mt-0.5 h-9" value={i.discount} onChange={(e) => cart.setItemDiscount(i.productId, Number(e.target.value))} />
+                      </div>
+                    </div>
+                  )}
                 </div>
-                {expandedLine === i.productId && (
-                  <div className="grid grid-cols-2 gap-2 border-t border-border bg-surface/60 p-2.5">
-                    <div>
-                      <label className="text-caption font-medium text-muted-foreground">Exact qty ({i.unit})</label>
-                      <Input type="number" step="0.01" className="mt-0.5 h-9" value={i.quantity} onChange={(e) => cart.setQty(i.productId, Number(e.target.value))} />
-                    </div>
-                    <div>
-                      <label className="text-caption font-medium text-muted-foreground">Line discount ₹</label>
-                      <Input type="number" step="0.01" className="mt-0.5 h-9" value={i.discount} onChange={(e) => cart.setItemDiscount(i.productId, Number(e.target.value))} />
-                    </div>
-                  </div>
-                )}
-              </div>
+              </SwipeToDeleteRow>
             ))}
           </div>
         )}
@@ -588,6 +590,82 @@ function Row({ label, value, className }: { label: string; value: string; classN
     <div className="flex justify-between">
       <span className="text-muted-foreground">{label}</span>
       <span className={cn('font-medium', className)}>{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Wraps a cart line so swiping it left deletes it — the delete button stays too,
+ * this is just the faster gesture cashiers expect from any mobile cart (Swiggy/
+ * Zomato/Amazon all do this). A red "delete" bed sits behind the row and is
+ * revealed as it's dragged; releasing past ~40% of the row's width commits the
+ * removal (row flies the rest of the way off), otherwise it snaps back — so a
+ * short, accidental drag while scrolling never deletes anything.
+ *
+ * Pointer events (not touch-only) so it works with a mouse on the Windows till
+ * too. `touch-action: pan-y` lets the list's own vertical scroll keep working;
+ * we only take over once a drag is confirmed to be more horizontal than vertical.
+ */
+function SwipeToDeleteRow({ onDelete, children }: { onDelete: () => void; children: React.ReactNode }) {
+  const [dragX, setDragX] = useState(0);
+  const [animating, setAnimating] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const widthRef = useRef(0);
+  const gesture = useRef<{ x: number; y: number; locked: 'h' | 'v' | null } | null>(null);
+
+  const commitDelete = () => {
+    setAnimating(true);
+    setDragX(-(widthRef.current || 400));
+    setTimeout(onDelete, 160);
+  };
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    widthRef.current = rowRef.current?.offsetWidth ?? 0;
+    gesture.current = { x: e.clientX, y: e.clientY, locked: null };
+    setAnimating(false);
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    const g = gesture.current;
+    if (!g) return;
+    const dx = e.clientX - g.x;
+    const dy = e.clientY - g.y;
+    if (!g.locked && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+      g.locked = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      if (g.locked === 'h') rowRef.current?.setPointerCapture(e.pointerId);
+    }
+    if (g.locked === 'h') {
+      e.preventDefault();
+      setDragX(Math.min(0, dx)); // left only — this is a delete swipe, not a drawer
+    }
+  };
+
+  const endGesture = () => {
+    const g = gesture.current;
+    gesture.current = null;
+    if (g?.locked !== 'h') return;
+    const threshold = (widthRef.current || 400) * 0.4;
+    if (-dragX >= threshold) commitDelete();
+    else { setAnimating(true); setDragX(0); }
+  };
+
+  return (
+    <div className="relative overflow-hidden rounded-lg">
+      <div className="absolute inset-0 flex items-center justify-end bg-danger pr-4">
+        <Trash2 className="h-5 w-5 text-white" />
+      </div>
+      <div
+        ref={rowRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endGesture}
+        onPointerCancel={endGesture}
+        style={{ transform: `translateX(${dragX}px)`, transition: animating ? 'transform 180ms ease-out' : 'none' }}
+        className="relative bg-card"
+      >
+        {children}
+      </div>
     </div>
   );
 }
