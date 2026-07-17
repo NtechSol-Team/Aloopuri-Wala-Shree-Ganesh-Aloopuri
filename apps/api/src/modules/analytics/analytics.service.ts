@@ -40,11 +40,14 @@ export async function getDashboard(user: AuthUser): Promise<DashboardKpis> {
     const lastMonthStart = startOfMonth(subMonths(now, 1));
     const lastMonthEnd = endOfMonth(subMonths(now, 1));
 
+    // POS is never "all outlets combined" for anyone — SUPER_ADMIN's own
+    // dashboard means the main branch's own counter (outletId null), never
+    // other outlets' retail sales. Unlike billWhere below, always filter.
     const posWhere = (from: Date, to?: Date): Prisma.PosTransactionWhereInput => ({
       status: 'COMPLETED',
       isDeleted: false,
       soldAt: to ? { gte: from, lte: to } : { gte: from },
-      ...(outletId ? { outletId } : {}),
+      outletId: outletId ?? null,
     });
     const billWhere = (from: Date, to?: Date): Prisma.BillWhereInput => ({
       isDeleted: false,
@@ -156,7 +159,7 @@ async function getTopProductToday(
         SELECT i.product_name_snapshot AS name, SUM(i.quantity)::float AS qty
         FROM pos_transaction_items i
         JOIN pos_transactions t ON t.id = i.transaction_id
-        WHERE t.status = 'COMPLETED' AND t.is_deleted = false AND t.sold_at >= ${from}
+        WHERE t.status = 'COMPLETED' AND t.is_deleted = false AND t.sold_at >= ${from} AND t.outlet_id IS NULL
         GROUP BY i.product_name_snapshot ORDER BY qty DESC LIMIT 1`;
   const top = rows[0];
   return top ? { name: top.name, quantity: top.qty } : null;
@@ -177,7 +180,7 @@ export async function getRevenueTrend(period: TrendPeriod) {
   const rows = await prisma.$queryRawUnsafe<Array<{ bucket: string; pos: number; billing: number }>>(
     `WITH pos AS (
         SELECT date_trunc('${c.trunc}', sold_at) AS b, SUM(grand_total) AS v
-        FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= now() - interval '${c.interval}' GROUP BY 1),
+        FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= now() - interval '${c.interval}' AND outlet_id IS NULL GROUP BY 1),
       billing AS (
         SELECT date_trunc('${c.trunc}', bill_date) AS b, SUM(grand_total) AS v
         FROM bills WHERE is_deleted=false AND status<>'CANCELLED' AND bill_date >= now() - interval '${c.interval}' GROUP BY 1)
@@ -193,14 +196,14 @@ export async function getRevenueTrend(period: TrendPeriod) {
 export async function getTopProducts() {
   const byRevenue = await prisma.$queryRawUnsafe<Array<{ name: string; revenue: number }>>(
     `SELECT name, SUM(revenue)::float AS revenue FROM (
-        SELECT product_name_snapshot AS name, SUM(line_total) AS revenue FROM pos_transaction_items i JOIN pos_transactions t ON t.id=i.transaction_id WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at >= now() - interval '90 days' GROUP BY 1
+        SELECT product_name_snapshot AS name, SUM(line_total) AS revenue FROM pos_transaction_items i JOIN pos_transactions t ON t.id=i.transaction_id WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at >= now() - interval '90 days' AND t.outlet_id IS NULL GROUP BY 1
         UNION ALL
         SELECT product_name_snapshot AS name, SUM(line_total) AS revenue FROM bill_items bi JOIN bills b ON b.id=bi.bill_id WHERE b.is_deleted=false AND b.status<>'CANCELLED' AND b.bill_date >= now() - interval '90 days' GROUP BY 1
       ) u GROUP BY name ORDER BY revenue DESC LIMIT 10`,
   );
   const byQuantity = await prisma.$queryRawUnsafe<Array<{ name: string; qty: number }>>(
     `SELECT name, SUM(qty)::float AS qty FROM (
-        SELECT product_name_snapshot AS name, SUM(quantity) AS qty FROM pos_transaction_items i JOIN pos_transactions t ON t.id=i.transaction_id WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at >= now() - interval '90 days' GROUP BY 1
+        SELECT product_name_snapshot AS name, SUM(quantity) AS qty FROM pos_transaction_items i JOIN pos_transactions t ON t.id=i.transaction_id WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at >= now() - interval '90 days' AND t.outlet_id IS NULL GROUP BY 1
         UNION ALL
         SELECT product_name_snapshot AS name, SUM(quantity) AS qty FROM bill_items bi JOIN bills b ON b.id=bi.bill_id WHERE b.is_deleted=false AND b.status<>'CANCELLED' AND b.bill_date >= now() - interval '90 days' GROUP BY 1
       ) u GROUP BY name ORDER BY qty DESC LIMIT 10`,
@@ -342,10 +345,11 @@ export async function getOutletDetail(outletId: string) {
  * a franchise owner viewing only their own counter); omitted = store-wide.
  */
 export async function getPosAnalytics(outletId: string | null = null) {
-  // Every subquery below ANDs this in — `$1::uuid IS NULL` short-circuits to
-  // "no filter" for the store-wide (super admin) view.
-  const outletFilter = '($1::uuid IS NULL OR outlet_id = $1::uuid)';
-  const outletFilterT = '($1::uuid IS NULL OR t.outlet_id = $1::uuid)';
+  // Null-safe equality: a null $1 (SUPER_ADMIN / no outlet) matches only
+  // main-branch rows (outlet_id IS NULL), never "every outlet combined" — POS
+  // is never store-wide for anyone, unlike the wholesale bills/orders side.
+  const outletFilter = '(outlet_id IS NOT DISTINCT FROM $1::uuid)';
+  const outletFilterT = '(t.outlet_id IS NOT DISTINCT FROM $1::uuid)';
 
   const [daily, summaryRows, byPaymentMode, byHourRaw, topItems, byCashier] = await Promise.all([
     // Last 30 days, one row per calendar day (zero-filled).

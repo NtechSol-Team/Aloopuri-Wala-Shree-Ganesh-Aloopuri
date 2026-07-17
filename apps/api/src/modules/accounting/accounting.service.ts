@@ -19,9 +19,9 @@ export async function getPosition() {
     ] = await Promise.all([
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM payments WHERE is_deleted=false AND channel='CASH' AND payment_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM payments WHERE is_deleted=false AND channel='DIGITAL' AND payment_date >= ${monthStart}`,
-      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(cash_amount),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart}`,
-      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(card_amount+upi_amount),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart}`,
-      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(grand_total),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart}`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(cash_amount),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(card_amount+upi_amount),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(grand_total),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(grand_total),0)::float v FROM bills WHERE is_deleted=false AND status<>'CANCELLED' AND bill_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM expenses WHERE is_deleted=false AND expense_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(total_cost),0)::float v FROM raw_material_intake WHERE is_deleted=false AND intake_date >= ${monthStart}`,
@@ -96,7 +96,7 @@ export async function getDayBook(from: Date, to: Date) {
            count(*)::text || CASE WHEN count(*)=1 THEN ' bill' ELSE ' bills' END,
            SUM(t.grand_total)::float, 0::float
       FROM pos_transactions t
-      WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at BETWEEN $1::timestamptz AND $2::timestamptz
+      WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at BETWEEN $1::timestamptz AND $2::timestamptz AND t.outlet_id IS NULL
       GROUP BY date_trunc('day', t.sold_at), t.payment_mode
     UNION ALL
     SELECT 'EXPENSE', e.expense_date, e.paid_to, e.payment_method::text, ec.name, 0::float, e.amount::float
@@ -141,7 +141,7 @@ export async function getProductProfitability() {
         UNION ALL
         SELECT product_id, quantity, (unit_price*quantity - discount)
           FROM pos_transaction_items pi JOIN pos_transactions t ON t.id=pi.transaction_id
-          WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at >= now()-interval '90 days'
+          WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at >= now()-interval '90 days' AND t.outlet_id IS NULL
       ) u GROUP BY product_id
     ),
     bomcost AS (
