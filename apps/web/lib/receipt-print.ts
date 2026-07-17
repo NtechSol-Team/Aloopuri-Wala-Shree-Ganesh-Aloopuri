@@ -165,7 +165,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   .center { text-align: center; }
   .store { font-size: 16px; font-weight: 700; letter-spacing: 0.5px; }
   .tagline { font-size: 10px; margin-top: 1px; }
-  .token { margin: 8px 0 2px; font-size: 12px; font-weight: 700; }
+  .token { margin: 2px 0 2px; font-size: 12px; font-weight: 700; }
   .token-num { font-size: 20px; font-weight: 800; line-height: 1; }
   hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
   .meta { font-size: 11px; }
@@ -179,6 +179,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   .total { font-size: 15px; font-weight: 800; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 3px 0; margin: 4px 0; }
   .foot { margin-top: 4px; font-size: 11px; }
   .void { font-size: 18px; font-weight: 800; border: 2px solid #000; padding: 2px 8px; display: inline-block; margin: 6px 0; transform: rotate(-4deg); }
+  .parcel { font-size: 13px; font-weight: 800; letter-spacing: 0.5px; border: 1.5px dashed #000; padding: 2px 10px; display: inline-block; margin: 3px 0; }
 </style>
 </head>
 <body>
@@ -190,6 +191,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
     ${store.gstin ? `<div class="tagline">GSTIN: ${esc(store.gstin)}</div>` : ''}
     ${store.fssaiNumber ? `<div class="tagline">FSSAI: ${esc(store.fssaiNumber)}</div>` : ''}
     ${txn.status === 'VOID' ? '<div class="void">VOID</div>' : ''}
+    ${txn.orderType === 'PARCEL' ? '<div class="parcel">🥡 PARCEL / TAKEAWAY</div>' : ''}
     ${txn.tokenNumber != null ? `<div class="token">TOKEN</div><div class="token-num">#${txn.tokenNumber}</div>` : ''}
   </div>
   <hr />

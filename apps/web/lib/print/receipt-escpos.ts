@@ -116,9 +116,13 @@ export async function receiptBytes(
   if (txn.status === 'VOID') {
     e.feed(1).invert(true).size(2, 2).line('  VOID  ').size(1, 1).invert(false);
   }
+  if (txn.orderType === 'PARCEL') {
+    e.align('center').bold(true).line('* PARCEL / TAKEAWAY *').bold(false).align('left');
+  }
   if (txn.tokenNumber != null) {
     // Centered, not left — this is a call-out for the counter, not body text.
-    e.align('center').feed(1).line('TOKEN');
+    // No feed() before it — that blank line was the gap after GSTIN/FSSAI.
+    e.align('center').line('TOKEN');
     e.bold(true).size(2, 2).line(`#${txn.tokenNumber}`).size(1, 1).bold(false);
     e.align('left');
   }

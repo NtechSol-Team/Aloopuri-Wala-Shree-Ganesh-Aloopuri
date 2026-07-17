@@ -179,7 +179,7 @@ export async function createTransaction(user: AuthUser, input: CreateTransaction
     const created = await tx.posTransaction.create({
       data: {
         receiptNumber, tokenNumber, sessionId: session.id, outletId: session.outletId, status: PosTransactionStatus.COMPLETED,
-        customerName: input.customerName, customerPhone: input.customerPhone,
+        orderType: input.orderType, customerName: input.customerName, customerPhone: input.customerPhone,
         subTotal, itemDiscount: itemDiscountTotal, billDiscount, taxTotal, grandTotal,
         paymentMode: input.paymentMode, cashReceived, changeGiven, cashAmount, cardAmount, upiAmount,
         soldById: user.id, soldAt: input.soldAt ?? new Date(),
@@ -286,7 +286,7 @@ export async function kitchenQueue(user: AuthUser) {
     },
     orderBy: { soldAt: 'asc' },
     select: {
-      id: true, tokenNumber: true, kotStatus: true, soldAt: true, customerName: true,
+      id: true, tokenNumber: true, kotStatus: true, soldAt: true, customerName: true, orderType: true,
       items: { select: { productNameSnapshot: true, quantity: true } },
     },
   });

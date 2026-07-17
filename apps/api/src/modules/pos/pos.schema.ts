@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { KotStatus, PosPaymentMode } from '@prisma/client';
+import { KotStatus, PosOrderType, PosPaymentMode } from '@prisma/client';
 
 export const openSessionSchema = z.object({
   openingCash: z.coerce.number().nonnegative().default(0),
@@ -13,6 +13,7 @@ export const closeSessionSchema = z.object({
 export const createTransactionSchema = z.object({
   sessionId: z.string().uuid(),
   clientUuid: z.string().uuid().optional(), // offline idempotency key
+  orderType: z.nativeEnum(PosOrderType).default('DINE_IN'),
   customerName: z.string().max(120).optional(),
   customerPhone: z.string().max(20).optional(),
   billDiscount: z.coerce.number().nonnegative().default(0),

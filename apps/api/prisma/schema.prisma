@@ -165,6 +165,14 @@ enum PosPaymentMode {
   SPLIT
 }
 
+/// Whether a counter sale is eaten in / served on a plate (DINE_IN, the
+/// default) or packed to go (PARCEL) — printed on the receipt and flagged on
+/// the kitchen ticket so kitchen staff pack rather than plate it.
+enum PosOrderType {
+  DINE_IN
+  PARCEL
+}
+
 enum AuditAction {
   INSERT
   UPDATE
@@ -914,6 +922,7 @@ model PosTransaction {
   sessionId         String               @map("session_id") @db.Uuid
   outletId          String?              @map("outlet_id") @db.Uuid
   status            PosTransactionStatus @default(COMPLETED)
+  orderType         PosOrderType         @default(DINE_IN) @map("order_type")
   customerName      String?              @map("customer_name")
   customerPhone     String?              @map("customer_phone")
   subTotal          Decimal              @map("sub_total") @db.Decimal(12, 2)

@@ -30,6 +30,7 @@ export interface PosSession {
 }
 
 export type KotStatus = 'PREPARING' | 'READY' | 'DELIVERED';
+export type PosOrderType = 'DINE_IN' | 'PARCEL';
 
 export interface PosTxnItem { productId: string; quantity: number; discount: number }
 
@@ -49,6 +50,7 @@ export interface PosTxn {
   tokenNumber: number | null;
   status: 'COMPLETED' | 'VOID' | 'HELD';
   kotStatus: KotStatus;
+  orderType: PosOrderType;
   customerName: string | null;
   customerPhone: string | null;
   subTotal: string;
@@ -70,6 +72,7 @@ export interface PosTxn {
 export interface CreateTxnPayload {
   sessionId: string;
   clientUuid?: string;
+  orderType?: PosOrderType;
   customerName?: string;
   customerPhone?: string;
   billDiscount: number;
@@ -96,6 +99,7 @@ export interface KitchenTicket {
   id: string;
   tokenNumber: number | null;
   kotStatus: KotStatus;
+  orderType: PosOrderType;
   soldAt: string;
   customerName: string | null;
   items: Array<{ productNameSnapshot: string; quantity: string }>;

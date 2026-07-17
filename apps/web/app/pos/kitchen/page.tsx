@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ChefHat, CheckCheck, Soup } from 'lucide-react';
+import { ArrowLeft, ChefHat, CheckCheck, Soup, ShoppingBag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getSocket } from '@/lib/socket';
 import { beepNewOrder } from '@/lib/beep';
@@ -122,7 +122,14 @@ function BoardColumn({ title, accent, empty, tickets, now, actionLabel, onAction
               >
                 <div className="flex items-start justify-between">
                   <span className={cn('text-4xl font-black leading-none', late ? 'text-red-400' : text)}>#{t.tokenNumber ?? '—'}</span>
-                  <span className={cn('rounded-full px-2 py-0.5 text-xs font-bold', late ? 'bg-red-500/15 text-red-400' : 'bg-slate-800 text-slate-400')}>{mins}m</span>
+                  <div className="flex items-center gap-1.5">
+                    {t.orderType === 'PARCEL' && (
+                      <span className="flex items-center gap-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-xs font-bold text-amber-300">
+                        <ShoppingBag className="h-3 w-3" /> PARCEL
+                      </span>
+                    )}
+                    <span className={cn('rounded-full px-2 py-0.5 text-xs font-bold', late ? 'bg-red-500/15 text-red-400' : 'bg-slate-800 text-slate-400')}>{mins}m</span>
+                  </div>
                 </div>
                 {t.customerName && <p className="mt-1 truncate text-xs text-slate-400">{t.customerName}</p>}
                 <ul className="mt-3 space-y-1 text-[15px] leading-snug">

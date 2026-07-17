@@ -101,6 +101,7 @@ export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
                         {t.status === 'VOID'
                           ? <Badge variant="danger">Void</Badge>
                           : <Badge variant="neutral">{t.paymentMode}</Badge>}
+                        {t.orderType === 'PARCEL' && <Badge variant="warning">Parcel</Badge>}
                       </div>
                       <p className="truncate text-caption text-muted-foreground">
                         {format(new Date(t.soldAt), 'hh:mm a')} · {t.items.length} item{t.items.length === 1 ? '' : 's'}

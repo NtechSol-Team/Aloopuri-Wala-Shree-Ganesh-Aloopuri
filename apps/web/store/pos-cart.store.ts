@@ -10,11 +10,14 @@ export interface CartItem {
   discount: number; // line-level amount
 }
 
+export type OrderType = 'DINE_IN' | 'PARCEL';
+
 export interface HeldBill {
   id: string;
   items: CartItem[];
   billDiscount: number;
   customerName: string;
+  orderType: OrderType;
   at: string;
 }
 
@@ -23,6 +26,7 @@ interface CartState {
   billDiscount: number;
   customerName: string;
   customerPhone: string;
+  orderType: OrderType;
   held: HeldBill[];
   addItem: (p: { productId: string; name: string; unit: string; mrp: number; taxPercent: number }) => void;
   setQty: (productId: string, qty: number) => void;
@@ -30,6 +34,7 @@ interface CartState {
   removeItem: (productId: string) => void;
   setBillDiscount: (v: number) => void;
   setCustomer: (name: string, phone: string) => void;
+  setOrderType: (t: OrderType) => void;
   clear: () => void;
   hold: () => void;
   resume: (id: string) => void;
@@ -40,6 +45,7 @@ export const usePosCart = create<CartState>((set, get) => ({
   billDiscount: 0,
   customerName: '',
   customerPhone: '',
+  orderType: 'DINE_IN',
   held: [],
   addItem: (p) =>
     set((s) => {
@@ -53,17 +59,26 @@ export const usePosCart = create<CartState>((set, get) => ({
   removeItem: (productId) => set((s) => ({ items: s.items.filter((i) => i.productId !== productId) })),
   setBillDiscount: (v) => set({ billDiscount: Math.max(0, v) }),
   setCustomer: (customerName, customerPhone) => set({ customerName, customerPhone }),
-  clear: () => set({ items: [], billDiscount: 0, customerName: '', customerPhone: '' }),
+  setOrderType: (orderType) => set({ orderType }),
+  // Dine In is the reset default — a held/resumed bill carries its own choice,
+  // but a brand-new sale always starts from the common case.
+  clear: () => set({ items: [], billDiscount: 0, customerName: '', customerPhone: '', orderType: 'DINE_IN' }),
   hold: () =>
     set((s) => {
       if (!s.items.length) return s;
-      const bill: HeldBill = { id: crypto.randomUUID(), items: s.items, billDiscount: s.billDiscount, customerName: s.customerName, at: new Date().toISOString() };
-      return { held: [...s.held, bill], items: [], billDiscount: 0, customerName: '', customerPhone: '' };
+      const bill: HeldBill = {
+        id: crypto.randomUUID(), items: s.items, billDiscount: s.billDiscount,
+        customerName: s.customerName, orderType: s.orderType, at: new Date().toISOString(),
+      };
+      return { held: [...s.held, bill], items: [], billDiscount: 0, customerName: '', customerPhone: '', orderType: 'DINE_IN' };
     }),
   resume: (id) => {
     const bill = get().held.find((b) => b.id === id);
     if (!bill) return;
-    set((s) => ({ items: bill.items, billDiscount: bill.billDiscount, customerName: bill.customerName, held: s.held.filter((b) => b.id !== id) }));
+    set((s) => ({
+      items: bill.items, billDiscount: bill.billDiscount, customerName: bill.customerName,
+      orderType: bill.orderType, held: s.held.filter((b) => b.id !== id),
+    }));
   },
 }));
 

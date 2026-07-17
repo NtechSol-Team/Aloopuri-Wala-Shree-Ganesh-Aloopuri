@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import {
   Search, Plus, Minus, Trash2, Pause, Play, ArrowLeft, Wifi, WifiOff, Receipt,
   ChefHat, ReceiptText, Power, Star, Keyboard, X, ShoppingCart, Printer,
+  Utensils, ShoppingBag,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -215,6 +216,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
     const full: CreateTxnPayload = {
       sessionId,
       clientUuid: crypto.randomUUID(),
+      orderType: cart.orderType,
       billDiscount: cart.billDiscount,
       items: cart.items.map((i) => ({ productId: i.productId, quantity: i.quantity, discount: i.discount })),
       ...payload,
@@ -266,6 +268,31 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
             <StatPill label="Avg" value={summary.transactionCount ? formatINR(summary.totalSales / summary.transactionCount) : '—'} />
           </div>
         )}
+
+        {/* Dine In vs Parcel — decided per bill; defaults back to Dine In after
+            every sale/hold since that's the common case at this counter. */}
+        <div className="mt-2 flex overflow-hidden rounded-md border border-border">
+          <button
+            type="button"
+            onClick={() => cart.setOrderType('DINE_IN')}
+            className={cn(
+              'flex flex-1 items-center justify-center gap-1.5 py-1.5 text-caption font-semibold transition-colors',
+              cart.orderType === 'DINE_IN' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground',
+            )}
+          >
+            <Utensils className="h-3.5 w-3.5" /> Dine In
+          </button>
+          <button
+            type="button"
+            onClick={() => cart.setOrderType('PARCEL')}
+            className={cn(
+              'flex flex-1 items-center justify-center gap-1.5 py-1.5 text-caption font-semibold transition-colors',
+              cart.orderType === 'PARCEL' ? 'bg-warning text-white' : 'bg-card text-muted-foreground',
+            )}
+          >
+            <ShoppingBag className="h-3.5 w-3.5" /> Parcel
+          </button>
+        </div>
       </div>
 
       {cart.held.length > 0 && (
@@ -273,6 +300,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
           {cart.held.map((h) => (
             <button key={h.id} onClick={() => cart.resume(h.id)} className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-caption font-medium">
               <Play className="h-3 w-3 text-primary" /> {h.items.length} items · {formatINR(cartTotals(h.items, h.billDiscount).grandTotal)}
+              {h.orderType === 'PARCEL' && <ShoppingBag className="h-3 w-3 text-warning" />}
             </button>
           ))}
         </div>
@@ -661,8 +689,8 @@ function SwipeToDeleteRow({ onDelete, children }: { onDelete: () => void; childr
         onPointerMove={onPointerMove}
         onPointerUp={endGesture}
         onPointerCancel={endGesture}
-        style={{ transform: `translateX(${dragX}px)`, transition: animating ? 'transform 180ms ease-out' : 'none' }}
-        className="relative bg-card"
+        style={{ transform: `translateX(${dragX}px)`, transition: animating ? 'transform 180ms ease-out' : 'none', touchAction: 'pan-y' }}
+        className="relative select-none bg-card"
       >
         {children}
       </div>
