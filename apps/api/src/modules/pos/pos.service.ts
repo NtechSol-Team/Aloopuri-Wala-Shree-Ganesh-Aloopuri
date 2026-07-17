@@ -332,7 +332,7 @@ export async function posProducts(user: AuthUser) {
   const outletId = resolveOutlet(user, undefined);
   const products = await prisma.product.findMany({
     where: { isDeleted: false, isActive: true, isPosEnabled: true },
-    orderBy: { name: 'asc' },
+    orderBy: { sku: 'asc' },
     select: { id: true, name: true, sku: true, unit: true, mrp: true, taxPercent: true, photoUrl: true, trackInventory: true, category: { select: { id: true, name: true } } },
   });
   const stocks = outletId
@@ -362,8 +362,11 @@ export async function posProducts(user: AuthUser) {
       popular: popular.has(p.id),
       soldCount: soldMap.get(p.id) ?? 0,
     }))
-    // Best-sellers first; ties (and not-yet-sold items) fall back to name order.
-    .sort((a, b) => b.soldCount - a.soldCount || a.name.localeCompare(b.name));
+    // Fixed menu order matching the printed menu board — SKU (MENU-01..NN) is
+    // assigned in menu order, so items keep the same position every time.
+    // Muscle memory beats a shifting best-seller sort at a fast counter; the
+    // soldCount/popular flags above still drive the "★ Popular" quick-pick row.
+    .sort((a, b) => a.sku.localeCompare(b.sku, undefined, { numeric: true }));
 }
 
 export const posService = {
