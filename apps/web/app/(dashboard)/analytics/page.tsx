@@ -20,12 +20,29 @@ import { printAnalyticsPaymentModeReport } from '@/lib/receipt-print';
 
 type Tab = 'sales' | 'pos' | 'outlets' | 'inventory' | 'financial';
 
+// Store-wide tabs (Sales trend, Outlets, Inventory, Financial P&L) hit
+// super-admin-only endpoints — a franchise owner only ever sees their own
+// outlet's POS collections, so they get just that one tab, no picker at all.
+const ALL_TABS = [['sales', 'Sales'], ['pos', 'POS'], ['outlets', 'Outlets'], ['inventory', 'Inventory'], ['financial', 'Financial P&L']] as const;
+
 export default function AnalyticsPage() {
-  const [tab, setTab] = useState<Tab>('sales');
+  const role = useAuthStore((s) => s.user?.role);
+  const isOwner = role === 'FRANCHISE_OWNER';
+  const [tab, setTab] = useState<Tab>(isOwner ? 'pos' : 'sales');
+
+  if (isOwner) {
+    return (
+      <div className="space-y-5">
+        <p className="text-caption text-muted-foreground">Your outlet&apos;s POS collections.</p>
+        <PosTab />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex gap-2 border-b border-border">
-        {([['sales', 'Sales'], ['pos', 'POS'], ['outlets', 'Outlets'], ['inventory', 'Inventory'], ['financial', 'Financial P&L']] as const).map(([k, l]) => (
+        {ALL_TABS.map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} className={cn('border-b-2 px-4 py-2 text-body font-medium', tab === k ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{l}</button>
         ))}
       </div>

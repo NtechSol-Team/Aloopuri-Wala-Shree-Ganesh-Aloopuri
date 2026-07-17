@@ -4,10 +4,11 @@ import type { Request, Response } from 'express';
 import { asyncHandler } from '../../shared/utils/asyncHandler';
 import { validate } from '../../shared/middleware/validate';
 import { authGuard } from '../../shared/guards/authGuard';
-import { requireSuperAdmin } from '../../shared/guards/roleGuard';
+import { requireSuperAdmin, requireOwnerOrAdmin } from '../../shared/guards/roleGuard';
+import { AppError } from '../../shared/utils/AppError';
 import { ok } from '../../shared/utils/apiResponse';
 import { dashboardController } from './analytics.controller';
-import { analyticsService, type TrendPeriod } from './analytics.service';
+import { analyticsService, scopeOutlet, type TrendPeriod } from './analytics.service';
 
 const router = Router();
 router.use(authGuard);
@@ -32,6 +33,17 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => ok(res, await analyticsService.getOutletDetail(req.params.outletId))),
 );
 router.get('/inventory', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getInventoryAnalytics())));
-router.get('/pos', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getPosAnalytics())));
+
+// POS counter analytics — super admin sees store-wide, franchise owners see
+// only their own outlet (never another owner's till).
+router.get(
+  '/pos',
+  requireOwnerOrAdmin,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw AppError.unauthorized();
+    const outletId = scopeOutlet(req.user) ?? null;
+    return ok(res, await analyticsService.getPosAnalytics(outletId));
+  }),
+);
 
 export const analyticsRouter = router;
