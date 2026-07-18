@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -231,6 +231,11 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlashId(null), 350);
   };
+  // Identity-stable handler for the memoized cards: without it every render
+  // hands each of the ~30 cards a fresh closure and the memo never skips work.
+  const addProductRef = useRef(addProduct);
+  addProductRef.current = addProduct;
+  const onCardAdd = useCallback((p: PosProduct) => addProductRef.current(p), []);
 
   /** Barcode/SKU fast path: Enter in search adds the exact or only match. */
   const onSearchEnter = () => {
@@ -291,8 +296,12 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
 
   const popular = (products ?? []).filter((p) => p.popular).slice(0, 8);
 
-  /** Session header + held bills + cart lines + totals/charge — shared by the desktop panel and the mobile sheet. */
-  const CartPanelBody = () => (
+  /** Session header + held bills + cart lines + totals/charge — shared by the
+   *  desktop panel and the mobile sheet. Kept as a JSX value, NOT an inline
+   *  component: an inline `const X = () => …` gets a new identity every render,
+   *  which makes React unmount + rebuild the whole panel DOM on each keystroke —
+   *  visibly sluggish on the shop's Android tablet. */
+  const cartPanelBody = (
     <>
       <div className="border-b border-border p-3">
         <div className="flex items-center justify-between">
@@ -511,12 +520,12 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <SortableContext items={filtered.map((p) => p.id)} strategy={rectSortingStrategy}>
                 {filtered.map((p) => (
-                  <SortableProductCard key={p.id} product={p} flashing={flashId === p.id} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={() => addProduct(p)} />
+                  <SortableProductCard key={p.id} product={p} flashing={flashId === p.id} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={onCardAdd} />
                 ))}
               </SortableContext>
             </DndContext>
           ) : (
-            filtered.map((p) => <ProductCard key={p.id} product={p} flashing={flashId === p.id} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={() => addProduct(p)} />)
+            filtered.map((p) => <ProductCard key={p.id} product={p} flashing={flashId === p.id} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={onCardAdd} />)
           )}
         </div>
 
@@ -533,7 +542,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
 
       {/* RIGHT: cart — static panel on desktop */}
       <div className="hidden h-full min-h-0 flex-col overflow-hidden bg-card lg:flex">
-        <CartPanelBody />
+        {cartPanelBody}
       </div>
 
       {/* Mobile: floating "view cart / charge" bar, shown once something's in the bill */}
@@ -573,7 +582,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
             </button>
           </div>
           <div className="flex flex-1 flex-col overflow-hidden">
-            <CartPanelBody />
+            {cartPanelBody}
           </div>
         </div>
       </div>
@@ -605,12 +614,13 @@ type DragBindings = {
   isDragging: boolean;
 };
 
-/** Wraps ProductCard with drag-to-reorder behavior (press-hold 2s / mouse-drag). */
-function SortableProductCard(props: { product: PosProduct; flashing: boolean; cartQty: number; onAdd: () => void }) {
+/** Wraps ProductCard with drag-to-reorder behavior (press-hold 2s / mouse-drag).
+ *  memo'd so cart typing / other cards' changes don't re-render the whole grid. */
+const SortableProductCard = memo(function SortableProductCard(props: { product: PosProduct; flashing: boolean; cartQty: number; onAdd: (p: PosProduct) => void }) {
   const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id: props.product.id });
   const style: CSSProperties = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 20 : undefined };
-  return <ProductCard {...props} drag={{ setNodeRef, attributes, listeners, style, isDragging }} />;
-}
+  return <ProductCardInner {...props} drag={{ setNodeRef, attributes, listeners, style, isDragging }} />;
+});
 
 /**
  * Image-first product tile — the fastest way for a cashier to recognise an item.
@@ -618,7 +628,7 @@ function SortableProductCard(props: { product: PosProduct; flashing: boolean; ca
  * the availability/qty state is a corner badge. Items with no photo (uploaded or
  * matched) fall back to a coloured initial tile so the grid still reads cleanly.
  */
-function ProductCard({ product, flashing, cartQty, onAdd, drag }: { product: PosProduct; flashing: boolean; cartQty: number; onAdd: () => void; drag?: DragBindings }) {
+function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product: PosProduct; flashing: boolean; cartQty: number; onAdd: (p: PosProduct) => void; drag?: DragBindings }) {
   const out = product.trackInventory && product.stock !== null && product.stock <= 0;
   const low = product.trackInventory && product.stock !== null && !out && product.stock <= 5;
   const inCart = cartQty > 0;
@@ -631,7 +641,7 @@ function ProductCard({ product, flashing, cartQty, onAdd, drag }: { product: Pos
       style={drag?.style}
       {...(drag?.attributes ?? {})}
       {...(drag?.listeners ?? {})}
-      onClick={onAdd}
+      onClick={() => onAdd(product)}
       disabled={out}
       className={cn(
         'group relative flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:shadow-md active:scale-[0.98] disabled:opacity-45',
@@ -691,6 +701,10 @@ function ProductCard({ product, flashing, cartQty, onAdd, drag }: { product: Pos
     </button>
   );
 }
+
+// Only re-render a card when its own product/qty/flash state changes — not on
+// every keystroke or unrelated cart update across the ~30-card grid.
+const ProductCard = memo(ProductCardInner);
 
 function Row({ label, value, className }: { label: string; value: string; className?: string }) {
   return (

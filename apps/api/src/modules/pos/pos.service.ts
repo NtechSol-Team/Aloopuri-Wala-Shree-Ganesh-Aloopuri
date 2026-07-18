@@ -88,7 +88,10 @@ export async function getSessionSummary(id: string) {
       status: PosTransactionStatus.COMPLETED,
       isDeleted: false,
       soldAt: { gte: startOfDay(new Date()) },
-      ...(session.outletId ? { outletId: session.outletId } : {}),
+      // Always scope to this till's own location. A main-branch session has
+      // outletId null, which must mean "main branch only" (outlet_id IS NULL) —
+      // never "no filter", or the counter would total up every outlet's sales.
+      outletId: session.outletId,
     },
   });
 

@@ -2,6 +2,7 @@ import path from 'node:path';
 import express, { type Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import { pinoHttp } from 'pino-http';
 import { env } from './config/env';
@@ -16,6 +17,9 @@ export function createApp(): Express {
 
   app.set('trust proxy', 1); // correct req.ip behind a proxy (rate limiting)
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+  // Gzip JSON responses — POS tablets on shop Wi-Fi/4G pull product lists and
+  // analytics payloads that shrink ~80% compressed.
+  app.use(compression());
   app.use(
     cors({
       origin: env.WEB_ORIGIN,
@@ -52,8 +56,11 @@ export function createApp(): Express {
     }),
   );
 
-  // Static file serving for uploaded receipts / generated PDFs.
-  app.use('/uploads', express.static(path.resolve(process.cwd(), env.UPLOAD_DIR)));
+  // Static file serving for uploaded product photos / generated PDFs.
+  // Filenames are random UUIDs (a re-upload gets a new name), so clients can
+  // cache aggressively — the POS tablet then loads its ~30 card photos from
+  // disk instead of re-requesting them on every terminal load.
+  app.use('/uploads', express.static(path.resolve(process.cwd(), env.UPLOAD_DIR), { maxAge: '30d', immutable: true }));
 
   app.get('/health', (_req, res) => {
     ok(res, { status: 'ok', uptime: process.uptime() }, 'healthy');

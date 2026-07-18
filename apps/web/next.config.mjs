@@ -4,6 +4,7 @@ const { hostname, port, protocol } = new URL(apiUrl);
 
 const nextConfig = {
   reactStrictMode: true,
+  poweredByHeader: false, // don't advertise the framework in response headers
   eslint: { ignoreDuringBuilds: true },
   images: {
     remotePatterns: [
