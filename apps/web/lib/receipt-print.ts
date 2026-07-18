@@ -137,7 +137,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
           <td class="name" colspan="3">${esc(it.productNameSnapshot)}</td>
         </tr>
         <tr class="sub">
-          <td class="qty">Qty: ${qty}${disc > 0 ? ` (−${inr(disc)})` : ''}</td>
+          <td class="qty">Qty: ${qty} × ${Number(it.unitPrice).toFixed(2)}${disc > 0 ? ` (−${inr(disc)})` : ''}</td>
           <td></td>
           <td class="num qty">${inr(it.lineTotal)}</td>
         </tr>`;
@@ -173,13 +173,18 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   td { padding: 1px 0; vertical-align: top; }
   td.name { font-size: 20px; font-weight: 700; padding-top: 4px; line-height: 1.25; }
   tr.sub td { font-size: 11px; }
-  tr.sub td.qty { font-size: 13px; font-weight: 700; padding-top: 2px; }
+  tr.sub td.qty { font-size: 17px; font-weight: 700; padding-top: 2px; }
   .num { text-align: right; white-space: nowrap; }
   .row { display: flex; justify-content: space-between; padding: 1px 0; }
   .total { font-size: 15px; font-weight: 800; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 3px 0; margin: 4px 0; }
   .foot { margin-top: 4px; font-size: 11px; }
   .void { font-size: 18px; font-weight: 800; border: 2px solid #000; padding: 2px 8px; display: inline-block; margin: 6px 0; transform: rotate(-4deg); }
-  .parcel { font-size: 13px; font-weight: 800; letter-spacing: 0.5px; border: 1.5px dashed #000; padding: 2px 10px; display: inline-block; margin: 3px 0; }
+  /* A single big "P" — a quick visual flag for the counter, not a label to read.
+     Absolutely placed in the token block's empty left margin so it costs no
+     extra vertical space on the slip. */
+  .tokenwrap { position: relative; }
+  .parcel { position: absolute; left: 1mm; bottom: -2px; font-size: 46px; font-weight: 800; line-height: 1; }
+  .parcel-solo { font-size: 46px; font-weight: 800; line-height: 1; margin: 2px 0; }
 </style>
 </head>
 <body>
@@ -191,8 +196,12 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
     ${store.gstin ? `<div class="tagline">GSTIN: ${esc(store.gstin)}</div>` : ''}
     ${store.fssaiNumber ? `<div class="tagline">FSSAI: ${esc(store.fssaiNumber)}</div>` : ''}
     ${txn.status === 'VOID' ? '<div class="void">VOID</div>' : ''}
-    ${txn.orderType === 'PARCEL' ? '<div class="parcel">🥡 PARCEL / TAKEAWAY</div>' : ''}
-    ${txn.tokenNumber != null ? `<div class="token">TOKEN</div><div class="token-num">#${txn.tokenNumber}</div>` : ''}
+    ${txn.tokenNumber != null
+      ? `<div class="tokenwrap">
+           ${txn.orderType === 'PARCEL' ? '<span class="parcel">P</span>' : ''}
+           <div class="token">TOKEN</div><div class="token-num">#${txn.tokenNumber}</div>
+         </div>`
+      : (txn.orderType === 'PARCEL' ? '<div class="parcel-solo">P</div>' : '')}
   </div>
   <hr />
   <div class="meta">

@@ -21,7 +21,9 @@ export function useLogin() {
     },
     onSuccess: (session) => {
       setSession(session);
-      router.replace('/');
+      // Cashiers only ever use the POS terminal — skip the (empty, for them)
+      // admin dashboard and land straight on the till.
+      router.replace(session.user.role === 'CASHIER' ? '/pos' : '/');
     },
     onError: (err) => apiErrorMessage(err),
   });

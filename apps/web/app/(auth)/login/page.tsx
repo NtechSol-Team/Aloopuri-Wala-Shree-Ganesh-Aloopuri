@@ -25,10 +25,11 @@ export default function LoginPage() {
   const login = useLogin();
   const router = useRouter();
   const token = useAuthStore((s) => s.accessToken);
+  const role = useAuthStore((s) => s.user?.role);
 
   useEffect(() => {
-    if (token) router.replace('/');
-  }, [token, router]);
+    if (token) router.replace(role === 'CASHIER' ? '/pos' : '/');
+  }, [token, role, router]);
 
   const {
     register,

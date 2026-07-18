@@ -11,7 +11,7 @@ import { getSocket } from '@/lib/socket';
 import {
   Search, Plus, Minus, Trash2, Pause, Play, ArrowLeft, Wifi, WifiOff, Receipt,
   ChefHat, ReceiptText, Power, Star, Keyboard, X, ShoppingCart, Printer,
-  Utensils, ShoppingBag,
+  ShoppingBag, LogOut,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,8 +19,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/store/auth.store';
+import { useLogout } from '@/hooks/useAuth';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
-  useCurrentSession, useOpenSession, usePosProducts, useCreateSale, useSessionSummary, useReorderPosProducts,
+  useCurrentSession, useOpenSession, usePosProducts, useCreateSale, useReorderPosProducts,
   type PosProduct, type PosTxn, type CreateTxnPayload,
 } from '@/hooks/usePos';
 import { usePosCart, cartTotals } from '@/store/pos-cart.store';
@@ -88,8 +90,8 @@ function OpenSessionScreen() {
 // ─────────────────────────────── POS terminal ───────────────────────────────
 function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionNumber: string }) {
   const { data: products, isLoading } = usePosProducts();
-  const { data: summary } = useSessionSummary(sessionId);
   const cashierName = useAuthStore((s) => s.user?.name);
+  const logout = useLogout();
   const qc = useQueryClient();
   const cart = usePosCart();
   const totals = cartTotals(cart.items, cart.billDiscount);
@@ -111,6 +113,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const [eodOpen, setEodOpen] = useState(false);
   const [txnsOpen, setTxnsOpen] = useState(false);
   const [printerOpen, setPrinterOpen] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [successTxn, setSuccessTxn] = useState<PosTxn | null>(null);
   const [qtyBuffer, setQtyBuffer] = useState('');
@@ -136,7 +139,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   useEffect(() => { focusSearchSoft(); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const dialogOpen = payOpen || eodOpen || txnsOpen || !!successTxn;
+  const dialogOpen = payOpen || eodOpen || txnsOpen || logoutOpen || !!successTxn;
 
   // Midnight auto-rollover: the till this terminal was using just got auto-closed
   // and replaced with a fresh one server-side. Swap over instantly so an
@@ -315,39 +318,10 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
             <Button variant="ghost" size="icon" title="Printer settings" onClick={() => setPrinterOpen(true)}><Printer className="h-5 w-5" /></Button>
             <Button variant="ghost" size="icon" title="Hold bill (F8)" onClick={cart.hold}><Pause className="h-5 w-5" /></Button>
             <Button variant="ghost" size="icon" title="End of day" onClick={() => setEodOpen(true)}><Power className="h-5 w-5 text-danger" /></Button>
+            {/* Cashiers never see the dashboard header, so this is their only
+                way out. Confirmed, so a mis-tap mid-service can't sign them out. */}
+            <Button variant="ghost" size="icon" title="Sign out" onClick={() => setLogoutOpen(true)}><LogOut className="h-5 w-5" /></Button>
           </div>
-        </div>
-        {summary && (
-          <div className="mt-2 flex gap-2">
-            <StatPill label="Sales" value={formatINR(summary.todaySales)} />
-            <StatPill label="Bills" value={String(summary.todayTransactionCount)} />
-            <StatPill label="Avg" value={summary.todayTransactionCount ? formatINR(summary.todaySales / summary.todayTransactionCount) : '—'} />
-          </div>
-        )}
-
-        {/* Dine In vs Parcel — decided per bill; defaults back to Dine In after
-            every sale/hold since that's the common case at this counter. */}
-        <div className="mt-2 flex overflow-hidden rounded-md border border-border">
-          <button
-            type="button"
-            onClick={() => cart.setOrderType('DINE_IN')}
-            className={cn(
-              'flex flex-1 items-center justify-center gap-1.5 py-1.5 text-caption font-semibold transition-colors',
-              cart.orderType === 'DINE_IN' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground',
-            )}
-          >
-            <Utensils className="h-3.5 w-3.5" /> Dine In
-          </button>
-          <button
-            type="button"
-            onClick={() => cart.setOrderType('PARCEL')}
-            className={cn(
-              'flex flex-1 items-center justify-center gap-1.5 py-1.5 text-caption font-semibold transition-colors',
-              cart.orderType === 'PARCEL' ? 'bg-warning text-white' : 'bg-card text-muted-foreground',
-            )}
-          >
-            <ShoppingBag className="h-3.5 w-3.5" /> Parcel
-          </button>
         </div>
       </div>
 
@@ -592,16 +566,26 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
       <TxnsDrawer open={txnsOpen} onOpenChange={setTxnsOpen} sessionId={sessionId} cashierName={cashierName ?? undefined} />
       <PrinterSettingsDialog open={printerOpen} onOpenChange={setPrinterOpen} />
       <SuccessOverlay txn={successTxn} cashierName={cashierName ?? undefined} onDone={() => { setSuccessTxn(null); focusSearchSoft(); }} />
-    </div>
-  );
-}
 
-function StatPill({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="flex-1 rounded-md bg-surface px-2 py-1 text-center text-caption">
-      <span className="text-muted-foreground">{label} </span>
-      <b>{value}</b>
-    </span>
+      <Dialog open={logoutOpen} onOpenChange={setLogoutOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Sign out{cashierName ? ` ${cashierName}` : ''}?</DialogTitle>
+            <DialogDescription>
+              {cart.items.length > 0
+                ? `The current bill (${cart.items.length} item${cart.items.length === 1 ? '' : 's'}) will be lost. Hold it first if you want to come back to it.`
+                : 'The till stays open — signing out only ends your session on this device.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setLogoutOpen(false)}>Cancel</Button>
+            <Button variant="danger" loading={logout.isPending} onClick={() => logout.mutate()}>
+              <LogOut className="h-4 w-4" /> Sign Out
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 

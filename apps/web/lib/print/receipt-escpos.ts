@@ -68,6 +68,31 @@ const STORE_NAME = DEFAULT_STORE.name;
 
 const inr = (v: string | number) => `Rs ${Number(v).toFixed(2)}`;
 
+/**
+ * The parcel "P", drawn one row per line of text that the receipt already
+ * prints, so it occupies nothing but the blank left margin and adds no height.
+ *
+ * A magnified character can't do this: a printer sizes each line to its tallest
+ * glyph, so a 4x "P" forces its whole line 4x tall and opens a band of white
+ * space. Spreading the letter across four existing 1x lines keeps it just as
+ * large while costing zero extra paper. '#' cells print as CP437 solid blocks.
+ */
+const PARCEL_GLYPHS = [
+  ['#####', '#   #', '#####', '#    '], // 80mm: plenty of margin
+  ['###', '# #', '###', '#  '],         // 58mm: narrower letter still reads
+];
+const BLOCK_BYTE = 0xdb;
+const TOKEN_LABEL = 'TOKEN';
+
+/** Centred line that may carry one row of the parcel glyph in its left margin. */
+function glyphLine(e: EscPosEncoder, text: string, row?: string): void {
+  if (!row) { e.align('center').line(text); return; }
+  const pad = Math.max(1, Math.floor((e.cols - text.length) / 2) - row.length);
+  e.align('left');
+  e.raw([...row].map((c) => (c === '#' ? BLOCK_BYTE : 0x20)));
+  e.text(' '.repeat(pad) + text).raw([0x0a]);
+}
+
 // The logo raster is expensive to build (fetch + dither), so cache per dot-width.
 const logoCache = new Map<number, Promise<MonoRaster | null>>();
 function getLogo(maxWidthDots: number): Promise<MonoRaster | null> {
@@ -84,7 +109,14 @@ function getLogo(maxWidthDots: number): Promise<MonoRaster | null> {
  * receipt that means the outlet's name, address, GSTIN and food licence — the
  * company name only stands in when no outlet is in context.
  */
-async function header(e: EscPosEncoder, s: PrinterSettings, store: StoreProfile, subtitle?: string): Promise<void> {
+async function header(
+  e: EscPosEncoder,
+  s: PrinterSettings,
+  store: StoreProfile,
+  subtitle?: string,
+  /** One entry per plain contact line (phone, GSTIN, FSSAI) — a parcel-glyph row or undefined. */
+  glyphRows?: Array<string | undefined>,
+): Promise<void> {
   e.init().align('center');
   if (s.printLogo) {
     const logo = await getLogo(Math.min(dotsFor(s), 320));
@@ -95,11 +127,21 @@ async function header(e: EscPosEncoder, s: PrinterSettings, store: StoreProfile,
   if (subtitle) smartLine(e, s, subtitle, { center: true });
   else if (store.tagline) smartLine(e, s, store.tagline, { center: true });
 
-  if (store.address) smartLine(e, s, store.address, { center: true });
+  const g = glyphRows ?? [];
+  let gi = 0;
+  // The address hosts a glyph row too when it's plain ASCII on one line —
+  // otherwise smartLine handles it (wrapping, or rasterising Gujarati).
+  const addressHosts = !!store.address && isAscii(store.address) && store.address.length <= e.cols;
+  if (store.address && !addressHosts) smartLine(e, s, store.address, { center: true });
+  // Pull the lines flush together so the glyph's rows join into one letter
+  // instead of printing as separate bands. Only while the glyph is running —
+  // and it also tightens the contact block a touch, which is no loss.
+  if (g.some(Boolean)) e.raw([0x1b, 0x33, 24]);
   e.align('center');
-  if (store.phone) e.line(`Ph: ${store.phone}`);
-  if (store.gstin) e.line(`GSTIN: ${store.gstin}`);
-  if (store.fssaiNumber) e.line(`FSSAI: ${store.fssaiNumber}`);
+  if (store.address && addressHosts) glyphLine(e, store.address, g[gi++]);
+  if (store.phone) glyphLine(e, `Ph: ${store.phone}`, g[gi++]);
+  if (store.gstin) glyphLine(e, `GSTIN: ${store.gstin}`, g[gi++]);
+  if (store.fssaiNumber) glyphLine(e, `FSSAI: ${store.fssaiNumber}`, g[gi++]);
   e.align('left');
 }
 
@@ -111,22 +153,55 @@ export async function receiptBytes(
 ): Promise<Uint8Array> {
   const store = opts.store ?? DEFAULT_STORE;
   const e = new EscPosEncoder({ cols: colsFor(s) });
-  await header(e, s, store);
+  const isParcel = txn.orderType === 'PARCEL';
+  const hasToken = txn.tokenNumber != null;
+
+  // Lay the parcel glyph over the last few lines that already print centred and
+  // short, so every row lands in blank margin: the contact lines, ending on the
+  // TOKEN label directly above the number. Only used when every one of those
+  // rows genuinely has room to its left, else we fall back to a plain marker.
+  const contactLines: string[] = [];
+  // Must mirror header()'s own ordering and its address-hosting rule exactly.
+  if (store.address && isAscii(store.address) && store.address.length <= e.cols) contactLines.push(store.address);
+  if (store.phone) contactLines.push(`Ph: ${store.phone}`);
+  if (store.gstin) contactLines.push(`GSTIN: ${store.gstin}`);
+  if (store.fssaiNumber) contactLines.push(`FSSAI: ${store.fssaiNumber}`);
+  const hosts = hasToken ? [...contactLines, TOKEN_LABEL] : contactLines;
+  const glyph = !isParcel || !hasToken
+    ? undefined
+    : PARCEL_GLYPHS.find((rows) => {
+        const first = hosts.length - rows.length;
+        return first >= 0 && rows.every((row, i) => Math.floor((e.cols - hosts[first + i].length) / 2) - row.length >= 1);
+      });
+  const firstHost = glyph ? hosts.length - glyph.length : -1;
+
+  const headerGlyph = contactLines.map((_, i) => (glyph && i >= firstHost ? glyph[i - firstHost] : undefined));
+  await header(e, s, store, undefined, headerGlyph);
 
   if (txn.status === 'VOID') {
     e.feed(1).invert(true).size(2, 2).line('  VOID  ').size(1, 1).invert(false);
   }
-  if (txn.orderType === 'PARCEL') {
-    e.align('center').bold(true).line('* PARCEL / TAKEAWAY *').bold(false).align('left');
+  const TOKEN_MAG = 2;
+  if (hasToken) {
+    // Final glyph row rides the TOKEN label; the number below is untouched, so
+    // a parcel receipt is exactly as tall as a dine-in one.
+    glyphLine(e, TOKEN_LABEL, glyph ? glyph[glyph.length - 1] : undefined);
+    if (glyph) e.raw([0x1b, 0x32]); // restore default line spacing
+    if (isParcel && !glyph) {
+      // Narrow paper or a sparse store profile left no margin — mark it inline
+      // at the token's own size, which still costs no extra height.
+      e.align('left').bold(true).size(TOKEN_MAG, TOKEN_MAG);
+      const tokenStr = `#${txn.tokenNumber}`;
+      const start = Math.floor((e.cols - tokenStr.length * TOKEN_MAG) / 2);
+      e.line('P' + ' '.repeat(Math.max(1, Math.floor((start - TOKEN_MAG) / TOKEN_MAG))) + tokenStr);
+      e.size(1, 1).bold(false);
+    } else {
+      e.align('center').bold(true).size(TOKEN_MAG, TOKEN_MAG).line(`#${txn.tokenNumber}`).size(1, 1).bold(false);
+    }
+  } else if (isParcel) {
+    // No token to hang it off (shouldn't happen for a counter sale) — stand alone.
+    e.align('center').bold(true).size(4, 4).line('P').size(1, 1).bold(false);
   }
-  if (txn.tokenNumber != null) {
-    // Centered, not left — this is a call-out for the counter, not body text.
-    // No feed() before it — that blank line was the gap after GSTIN/FSSAI.
-    e.align('center').line('TOKEN');
-    e.bold(true).size(2, 2).line(`#${txn.tokenNumber}`).size(1, 1).bold(false);
-    e.align('left');
-  }
-
   e.align('left').divider();
   e.leftRight('Receipt', txn.receiptNumber);
   e.leftRight('Date', format(new Date(txn.soldAt), 'dd MMM yyyy, hh:mm a'));
@@ -140,10 +215,13 @@ export async function receiptBytes(
     // Product name may be Gujarati → printed as an image when it is. Printed
     // taller than body text so item names stand out on the paper.
     smartLine(e, s, it.productNameSnapshot, { bold: true, tall: true });
-    // Qty and the item's final total both stand out (bold) under the name.
-    e.bold(true);
-    e.leftRight(`Qty: ${qty}${disc > 0 ? ` (-${inr(disc)})` : ''}`, inr(it.lineTotal));
-    e.bold(false);
+    // "Qty: 2 x 35.00" then the line total, so the customer can check the maths.
+    // Double height (not width) makes it easy to read while keeping the full
+    // column count, so the left/right layout still fits on 58mm paper.
+    const unit = Number(it.unitPrice).toFixed(2);
+    e.bold(true).size(1, 2);
+    e.leftRight(`Qty: ${qty} x ${unit}${disc > 0 ? ` (-${inr(disc)})` : ''}`, inr(it.lineTotal));
+    e.size(1, 1).bold(false);
   }
 
   e.divider();

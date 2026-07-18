@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Banknote, CreditCard, QrCode, SplitSquareHorizontal, X } from 'lucide-react';
+import { Banknote, Check, CreditCard, QrCode, ShoppingBag, SplitSquareHorizontal, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn, formatINR } from '@/lib/utils';
+import { usePosCart } from '@/store/pos-cart.store';
 
 export type PayMode = 'CASH' | 'CARD' | 'UPI' | 'SPLIT';
 
@@ -34,6 +35,11 @@ export function PaymentDialog({ open, onOpenChange, total, onComplete, busy }: {
   const [received, setReceived] = useState(0);
   const [split, setSplit] = useState({ cash: 0, card: 0, upi: 0 });
   const quicks = useMemo(() => quickAmounts(total), [total]);
+  // Parcel/Dine In is decided here (not in the cart) — applies to whichever
+  // payment mode is chosen, so it lives above the mode-specific sections.
+  const orderType = usePosCart((s) => s.orderType);
+  const setOrderType = usePosCart((s) => s.setOrderType);
+  const isParcel = orderType === 'PARCEL';
 
   useEffect(() => {
     if (open) { setMode('CASH'); setReceived(Math.ceil(total)); setSplit({ cash: 0, card: 0, upi: total }); }
@@ -133,6 +139,20 @@ export function PaymentDialog({ open, onOpenChange, total, onComplete, busy }: {
             </p>
           </div>
         )}
+
+        <button
+          type="button"
+          onClick={() => setOrderType(isParcel ? 'DINE_IN' : 'PARCEL')}
+          className={cn(
+            'flex items-center justify-between rounded-lg border-2 px-4 py-2.5 text-body font-semibold transition-colors',
+            isParcel ? 'border-warning bg-warning/10 text-warning' : 'border-border text-muted-foreground hover:border-warning/40',
+          )}
+        >
+          <span className="flex items-center gap-2"><ShoppingBag className="h-4 w-4" /> Parcel (Takeaway)</span>
+          <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded border-2', isParcel ? 'border-warning bg-warning text-white' : 'border-border')}>
+            {isParcel && <Check className="h-3.5 w-3.5" />}
+          </span>
+        </button>
 
         <DialogFooter>
           <Button variant="secondary" onClick={() => onOpenChange(false)}><X className="h-4 w-4" /> Cancel</Button>
