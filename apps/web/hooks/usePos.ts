@@ -15,8 +15,10 @@ export interface PosProduct {
   stock: number | null;
   trackInventory: boolean;
   popular: boolean;
-  /** Units sold at this location in the last 30 days — grid is ordered by this, best first. */
+  /** Units sold at this location in the last 30 days — drives the ★ Popular row. */
   soldCount: number;
+  /** Manual grid position (lower = earlier); set by dragging cards. */
+  displayOrder: number;
   category: { id: string; name: string };
 }
 
@@ -109,6 +111,30 @@ export interface KitchenTicket {
 
 export function usePosProducts() {
   return useQuery({ queryKey: ['pos', 'products'], queryFn: async () => (await api.get<ApiSuccess<PosProduct[]>>('/pos/products')).data.data });
+}
+
+/** Persist a dragged grid order. Optimistically re-sorts the cached grid so the
+ *  move sticks instantly; reverts if the save fails. */
+export function useReorderPosProducts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (items: Array<{ id: string; displayOrder: number }>) =>
+      (await api.patch('/pos/products/order', { items })).data,
+    onMutate: async (items) => {
+      await qc.cancelQueries({ queryKey: ['pos', 'products'] });
+      const prev = qc.getQueryData<PosProduct[]>(['pos', 'products']);
+      if (prev) {
+        const orderById = new Map(items.map((i) => [i.id, i.displayOrder]));
+        const next = prev
+          .map((p) => (orderById.has(p.id) ? { ...p, displayOrder: orderById.get(p.id)! } : p))
+          .sort((a, b) => a.displayOrder - b.displayOrder || a.sku.localeCompare(b.sku, undefined, { numeric: true }));
+        qc.setQueryData(['pos', 'products'], next);
+      }
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(['pos', 'products'], ctx.prev); },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['pos', 'products'] }),
+  });
 }
 
 export function useCurrentSession() {

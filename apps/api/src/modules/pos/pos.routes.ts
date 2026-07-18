@@ -9,8 +9,8 @@ import { requireRole } from '../../shared/guards/roleGuard';
 import { created, ok } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import {
-  closeSessionSchema, createTransactionSchema, openSessionSchema, updateKotSchema, voidTransactionSchema,
-  type CreateTransactionInput, type OpenSessionInput, type UpdateKotInput, type VoidTransactionInput,
+  closeSessionSchema, createTransactionSchema, openSessionSchema, reorderProductsSchema, updateKotSchema, voidTransactionSchema,
+  type CreateTransactionInput, type OpenSessionInput, type ReorderProductsInput, type UpdateKotInput, type VoidTransactionInput,
 } from './pos.schema';
 import { posService } from './pos.service';
 
@@ -25,6 +25,9 @@ const user = (req: Request) => {
 };
 
 router.get('/products', asyncHandler(async (req: Request, res: Response) => ok(res, await posService.posProducts(user(req)))));
+// Save a dragged grid order. Any POS user may rearrange their counter; the
+// order is a shared presentation setting on the product catalog.
+router.patch('/products/order', validate({ body: reorderProductsSchema }), asyncHandler(async (req: Request, res: Response) => ok(res, await posService.reorderProducts((req.body as ReorderProductsInput).items), 'Order saved')));
 
 router.get('/sessions/current', asyncHandler(async (req: Request, res: Response) => ok(res, await posService.getCurrentSession(user(req)))));
 router.post('/sessions', validate({ body: openSessionSchema }), asyncHandler(async (req: Request, res: Response) => created(res, await posService.openSession(user(req), req.body as OpenSessionInput), 'Session opened')));

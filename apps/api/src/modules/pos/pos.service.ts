@@ -332,8 +332,8 @@ export async function posProducts(user: AuthUser) {
   const outletId = resolveOutlet(user, undefined);
   const products = await prisma.product.findMany({
     where: { isDeleted: false, isActive: true, isPosEnabled: true },
-    orderBy: { sku: 'asc' },
-    select: { id: true, name: true, sku: true, unit: true, mrp: true, taxPercent: true, photoUrl: true, trackInventory: true, category: { select: { id: true, name: true } } },
+    orderBy: [{ displayOrder: 'asc' }, { sku: 'asc' }],
+    select: { id: true, name: true, sku: true, unit: true, mrp: true, taxPercent: true, photoUrl: true, trackInventory: true, displayOrder: true, category: { select: { id: true, name: true } } },
   });
   const stocks = outletId
     ? await prisma.outletStock.findMany({ where: { outletId }, select: { productId: true, quantity: true } })
@@ -362,15 +362,27 @@ export async function posProducts(user: AuthUser) {
       popular: popular.has(p.id),
       soldCount: soldMap.get(p.id) ?? 0,
     }))
-    // Fixed menu order matching the printed menu board — SKU (MENU-01..NN) is
-    // assigned in menu order, so items keep the same position every time.
-    // Muscle memory beats a shifting best-seller sort at a fast counter; the
-    // soldCount/popular flags above still drive the "★ Popular" quick-pick row.
-    .sort((a, b) => a.sku.localeCompare(b.sku, undefined, { numeric: true }));
+    // Manual menu-board order — cashiers drag cards to arrange the grid, saved
+    // as displayOrder. Ties (and anything not yet arranged) fall back to SKU so
+    // items keep a stable position. The soldCount/popular flags above still
+    // drive the "★ Popular" quick-pick row.
+    .sort((a, b) => a.displayOrder - b.displayOrder || a.sku.localeCompare(b.sku, undefined, { numeric: true }));
+}
+
+/**
+ * Persist a manual POS grid order. Accepts the dragged subset only (e.g. one
+ * category's cards) with each item's new displayOrder slot; other products are
+ * left untouched. Applied in one transaction so the grid can't half-reorder.
+ */
+export async function reorderProducts(items: Array<{ id: string; displayOrder: number }>) {
+  await prisma.$transaction(
+    items.map((it) => prisma.product.update({ where: { id: it.id }, data: { displayOrder: it.displayOrder } })),
+  );
+  return { updated: items.length };
 }
 
 export const posService = {
   openSession, getCurrentSession, closeSession, getSessionSummary,
-  createTransaction, voidTransaction, listTransactions, getTransaction, posProducts,
+  createTransaction, voidTransaction, listTransactions, getTransaction, posProducts, reorderProducts,
   kitchenQueue, updateKotStatus,
 };

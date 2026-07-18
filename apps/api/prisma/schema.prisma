@@ -370,6 +370,9 @@ model Product {
   // being an active catalog item — e.g. wholesale-only products can stay active
   // for franchise ordering but be hidden from the cashier's tap-to-sell grid).
   isPosEnabled         Boolean         @default(true) @map("is_pos_enabled")
+  // Manual sort position on the POS tap-to-sell grid (lower = earlier). Set by
+  // dragging cards in the counter UI; 0 for non-POS items. Ties break by SKU.
+  displayOrder         Int             @default(0) @map("display_order")
   // Whether this product has real finished-goods stock (godown/main-branch/outlet
   // ledgers). Off for counter items sold without formal inventory (e.g. made-to-order
   // or resold-as-is) — POS sales of these skip the stock check and don't decrement anything.

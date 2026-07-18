@@ -34,6 +34,12 @@ export const createTransactionSchema = z.object({
 
 export const voidTransactionSchema = z.object({ reason: z.string().min(2).max(200) });
 
+export const reorderProductsSchema = z.object({
+  items: z
+    .array(z.object({ id: z.string().uuid(), displayOrder: z.coerce.number().int().min(0) }))
+    .min(1, 'Nothing to reorder'),
+});
+
 export const updateKotSchema = z.object({ status: z.enum([KotStatus.READY, KotStatus.DELIVERED]) });
 
 export type OpenSessionInput = z.infer<typeof openSessionSchema>;
@@ -41,3 +47,4 @@ export type CloseSessionInput = z.infer<typeof closeSessionSchema>;
 export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;
 export type VoidTransactionInput = z.infer<typeof voidTransactionSchema>;
 export type UpdateKotInput = z.infer<typeof updateKotSchema>;
+export type ReorderProductsInput = z.infer<typeof reorderProductsSchema>;

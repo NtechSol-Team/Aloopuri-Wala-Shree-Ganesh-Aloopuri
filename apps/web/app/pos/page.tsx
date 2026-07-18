@@ -1,9 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
+import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, rectSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { getSocket } from '@/lib/socket';
 import {
   Search, Plus, Minus, Trash2, Pause, Play, ArrowLeft, Wifi, WifiOff, Receipt,
@@ -17,7 +20,7 @@ import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/store/auth.store';
 import {
-  useCurrentSession, useOpenSession, usePosProducts, useCreateSale, useSessionSummary,
+  useCurrentSession, useOpenSession, usePosProducts, useCreateSale, useSessionSummary, useReorderPosProducts,
   type PosProduct, type PosTxn, type CreateTxnPayload,
 } from '@/hooks/usePos';
 import { usePosCart, cartTotals } from '@/store/pos-cart.store';
@@ -91,6 +94,14 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const cart = usePosCart();
   const totals = cartTotals(cart.items, cart.billDiscount);
   const sale = useCreateSale();
+  const reorder = useReorderPosProducts();
+
+  // Drag-to-arrange: a normal tap adds to cart; press-and-hold 2s (or a
+  // mouse drag) lifts the card so it can be dropped into a new position.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 2000, tolerance: 8 } }),
+  );
 
   const [search, setSearch] = useState('');
   const [activeCat, setActiveCat] = useState('all');
@@ -187,6 +198,25 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
     for (const i of cart.items) m.set(i.productId, (m.get(i.productId) ?? 0) + i.quantity);
     return m;
   }, [cart.items]);
+
+  // Arranging only makes sense on a stable list — not the dynamic ★ Popular
+  // view, and not a search result subset.
+  const canReorder = activeCat !== 'popular' && search.trim() === '';
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const ids = filtered.map((p) => p.id);
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    const moved = arrayMove(filtered, from, to);
+    // Reassign the same set of displayOrder slots this view already occupies,
+    // so rearranging inside one tab never shifts other tabs' items.
+    const slots = filtered.map((p) => p.displayOrder).sort((a, b) => a - b);
+    const updates = moved.map((p, i) => ({ id: p.id, displayOrder: slots[i] }));
+    reorder.mutate(updates, { onError: () => toast.error('Could not save the new order') });
+  };
 
   /** Add a product honoring the typed-ahead quantity buffer, with feedback. */
   const addProduct = (p: PosProduct) => {
@@ -470,13 +500,23 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         )}
 
         {/* Product grid — dense so a phone shows 3-up and a tablet 5-6-up with
-            minimal scrolling; images keep each item instantly recognisable. */}
+            minimal scrolling; images keep each item instantly recognisable.
+            Press-and-hold a card 2s (or mouse-drag) to rearrange the order. */}
         <div className="grid flex-1 auto-rows-min grid-cols-3 gap-2 overflow-y-auto p-2.5 pb-24 scrollbar-thin sm:grid-cols-4 lg:grid-cols-5 lg:pb-2.5 xl:grid-cols-6">
-          {isLoading
-            ? Array.from({ length: 18 }).map((_, i) => <Skeleton key={i} className="aspect-[4/5] h-auto" />)
-            : filtered.map((p) => <ProductCard key={p.id} product={p} flashing={flashId === p.id} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={() => addProduct(p)} />)}
-          {!isLoading && filtered.length === 0 && (
+          {isLoading ? (
+            Array.from({ length: 18 }).map((_, i) => <Skeleton key={i} className="aspect-[4/5] h-auto" />)
+          ) : filtered.length === 0 ? (
             <p className="col-span-full py-16 text-center text-body text-muted-foreground">No products match &ldquo;{search}&rdquo;</p>
+          ) : canReorder ? (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={filtered.map((p) => p.id)} strategy={rectSortingStrategy}>
+                {filtered.map((p) => (
+                  <SortableProductCard key={p.id} product={p} flashing={flashId === p.id} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={() => addProduct(p)} />
+                ))}
+              </SortableContext>
+            </DndContext>
+          ) : (
+            filtered.map((p) => <ProductCard key={p.id} product={p} flashing={flashId === p.id} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={() => addProduct(p)} />)
           )}
         </div>
 
@@ -556,13 +596,29 @@ function StatPill({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** dnd bindings the sortable wrapper passes down to the card's root button. */
+type DragBindings = {
+  setNodeRef: (node: HTMLElement | null) => void;
+  attributes: ReturnType<typeof useSortable>['attributes'];
+  listeners: ReturnType<typeof useSortable>['listeners'];
+  style: CSSProperties;
+  isDragging: boolean;
+};
+
+/** Wraps ProductCard with drag-to-reorder behavior (press-hold 2s / mouse-drag). */
+function SortableProductCard(props: { product: PosProduct; flashing: boolean; cartQty: number; onAdd: () => void }) {
+  const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id: props.product.id });
+  const style: CSSProperties = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 20 : undefined };
+  return <ProductCard {...props} drag={{ setNodeRef, attributes, listeners, style, isDragging }} />;
+}
+
 /**
  * Image-first product tile — the fastest way for a cashier to recognise an item.
  * A food photo fills the top square; price sits on a high-contrast chip over it;
  * the availability/qty state is a corner badge. Items with no photo (uploaded or
  * matched) fall back to a coloured initial tile so the grid still reads cleanly.
  */
-function ProductCard({ product, flashing, cartQty, onAdd }: { product: PosProduct; flashing: boolean; cartQty: number; onAdd: () => void }) {
+function ProductCard({ product, flashing, cartQty, onAdd, drag }: { product: PosProduct; flashing: boolean; cartQty: number; onAdd: () => void; drag?: DragBindings }) {
   const out = product.trackInventory && product.stock !== null && product.stock <= 0;
   const low = product.trackInventory && product.stock !== null && !out && product.stock <= 5;
   const inCart = cartQty > 0;
@@ -571,6 +627,10 @@ function ProductCard({ product, flashing, cartQty, onAdd }: { product: PosProduc
 
   return (
     <button
+      ref={drag?.setNodeRef}
+      style={drag?.style}
+      {...(drag?.attributes ?? {})}
+      {...(drag?.listeners ?? {})}
       onClick={onAdd}
       disabled={out}
       className={cn(
@@ -578,6 +638,8 @@ function ProductCard({ product, flashing, cartQty, onAdd }: { product: PosProduc
         // In the bill → green frame so it's obvious at a glance what's added.
         inCart ? 'border-success ring-[1.5px] ring-success' : 'border-border',
         flashing && !inCart && 'ring-2 ring-primary',
+        // Lifted while being dragged into a new position.
+        drag?.isDragging && 'scale-105 opacity-80 shadow-xl ring-2 ring-primary',
         out && 'cursor-not-allowed',
       )}
     >
