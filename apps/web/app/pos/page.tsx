@@ -562,10 +562,12 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
           </div>
         )}
 
-        {/* Product grid — dense so a phone shows 3-up and a tablet 5-6-up with
-            minimal scrolling; images keep each item instantly recognisable.
+        {/* Product grid — a phone shows 3-up and a tablet 4-5-up with minimal
+            scrolling; images keep each item instantly recognisable. Cards sized
+            up a step from before (one fewer column per breakpoint from sm up)
+            so both the photo and the name read more comfortably.
             Press-and-hold a card 2s (or mouse-drag) to rearrange the order. */}
-        <div className="grid flex-1 auto-rows-min grid-cols-3 gap-2 overflow-y-auto p-2.5 pb-24 scrollbar-thin sm:grid-cols-4 lg:grid-cols-5 lg:pb-2.5 xl:grid-cols-6">
+        <div className="grid flex-1 auto-rows-min grid-cols-3 gap-2 overflow-y-auto p-2.5 pb-24 scrollbar-thin sm:grid-cols-3 lg:grid-cols-4 lg:pb-2.5 xl:grid-cols-5">
           {isLoading ? (
             Array.from({ length: 18 }).map((_, i) => <Skeleton key={i} className="aspect-[4/5] h-auto" />)
           ) : filtered.length === 0 ? (
@@ -764,7 +766,7 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
       {/* Name — dark translucent bar (not clipped like the image above: no
           fixed height here, so a long name just grows the bar, never cuts off). */}
       <div className="bg-black/80 px-1.5 py-1.5">
-        <p className="whitespace-normal break-words text-[14px] font-extrabold leading-tight text-white">{product.name}</p>
+        <p className="whitespace-normal break-words text-[16px] font-extrabold leading-tight text-white">{product.name}</p>
       </div>
     </button>
   );

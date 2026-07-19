@@ -1,5 +1,8 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
+import { env } from '../../config/env';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
@@ -123,6 +126,22 @@ export async function updateProduct(id: string, input: UpdateProductInput) {
 export async function setProductPhoto(id: string, photoUrl: string) {
   await getProduct(id);
   return prisma.product.update({ where: { id }, data: { photoUrl }, select: productSelect });
+}
+
+export async function removeProductPhoto(id: string) {
+  const product = await getProduct(id);
+  // Only ever unlink our own uploaded files (served under /uploads/…) — never
+  // an external URL a caller could have set, and never anything outside the
+  // upload dir even if photoUrl were somehow malformed.
+  if (product.photoUrl?.startsWith('/uploads/')) {
+    const filePath = path.resolve(process.cwd(), env.UPLOAD_DIR, product.photoUrl.replace(/^\/uploads\//, ''));
+    if (filePath.startsWith(path.resolve(process.cwd(), env.UPLOAD_DIR))) {
+      await fs.unlink(filePath).catch(() => {}); // already gone is fine
+    }
+  }
+  // '' (not null) — an explicit "no photo" the frontend won't paper over with
+  // its keyword-matched stock image, unlike a product that never had one.
+  return prisma.product.update({ where: { id }, data: { photoUrl: '' }, select: productSelect });
 }
 
 export async function deleteProduct(id: string) {
@@ -254,7 +273,7 @@ export async function deleteRawMaterial(id: string) {
 
 export const productsService = {
   listCategories, createCategory, updateCategory, deleteCategory,
-  listProducts, getProduct, createProduct, updateProduct, setProductPhoto, deleteProduct,
+  listProducts, getProduct, createProduct, updateProduct, setProductPhoto, removeProductPhoto, deleteProduct,
   getBom, setBom,
   listRawMaterials, createRawMaterial, updateRawMaterial, deleteRawMaterial,
 };

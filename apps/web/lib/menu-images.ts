@@ -36,8 +36,14 @@ const RULES: Array<{ test: RegExp; img: string }> = [
 /**
  * Resolve the image to show for a product card. Returns null when there's no
  * uploaded photo and no keyword match — the card then renders its initial tile.
+ *
+ * `photoUrl` has three meaningful states: a URL (use it), `null`/`undefined`
+ * (no preference — try the keyword match), or `''` (explicitly cleared by the
+ * "remove photo" action — skip the keyword match too, since the whole point
+ * of removing was to stop showing a picture for this item).
  */
 export function productImageSrc(product: { name: string; photoUrl?: string | null }): string | null {
+  if (product.photoUrl === '') return null;
   const uploaded = product.photoUrl?.trim();
   if (uploaded) {
     // Uploaded photos are served by the API; bundled/absolute ones as-is.

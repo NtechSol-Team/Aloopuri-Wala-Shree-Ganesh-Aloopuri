@@ -43,6 +43,8 @@ export const uploadProductPhotoController = async (req: Request, res: Response) 
   const url = uploadUrl('products', req.file.filename);
   return ok(res, await productsService.setProductPhoto(req.params.id, url), 'Photo updated');
 };
+export const removeProductPhotoController = async (req: Request, res: Response) =>
+  ok(res, await productsService.removeProductPhoto(req.params.id), 'Photo removed');
 
 // BOM
 export const getBomController = async (req: Request, res: Response) =>

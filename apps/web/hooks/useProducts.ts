@@ -126,6 +126,18 @@ export function useUploadProductPhoto() {
   });
 }
 
+/** Clear a product's photo, falling back to its keyword-matched stock image (if any). */
+export function useRemoveProductPhoto() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete<ApiSuccess<Product>>(`/products/${id}/photo`)).data.data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['products'] });
+      qc.invalidateQueries({ queryKey: ['pos', 'products'] });
+    },
+  });
+}
+
 export function useDeleteProduct() {
   const qc = useQueryClient();
   return useMutation({

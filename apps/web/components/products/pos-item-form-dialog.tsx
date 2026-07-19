@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Boxes, Infinity as InfinityIcon, ImagePlus } from 'lucide-react';
+import { Plus, Boxes, Infinity as InfinityIcon, ImagePlus, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,7 +10,10 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
-import { UNITS, useCategories, useCreateCategory, useSaveProduct, useUploadProductPhoto, type Category, type MeasurementUnit, type Product } from '@/hooks/useProducts';
+import {
+  UNITS, useCategories, useCreateCategory, useSaveProduct, useUploadProductPhoto, useRemoveProductPhoto,
+  type Category, type MeasurementUnit, type Product,
+} from '@/hooks/useProducts';
 import { productImageSrc } from '@/lib/menu-images';
 
 const GST_RATES = [0, 5, 12, 18, 28];
@@ -27,6 +30,7 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
   const createCategory = useCreateCategory();
   const save = useSaveProduct();
   const uploadPhoto = useUploadProductPhoto();
+  const removePhoto = useRemoveProductPhoto();
   const isEdit = !!item;
 
   const [form, setForm] = useState({ ...empty });
@@ -38,6 +42,9 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
   // A newly-picked photo file + its local preview URL (uploaded after the item saves).
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  // Removing the item's existing saved photo is deferred to save-time too, so
+  // Cancel still discards it like every other field.
+  const [photoRemoved, setPhotoRemoved] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -45,6 +52,7 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
     setNewCategory('');
     setPhotoFile(null);
     setPhotoPreview(null);
+    setPhotoRemoved(false);
     if (item) {
       costTouched.current = true; // respect the saved value, don't overwrite on price edits
       skuRef.current = item.sku;
@@ -65,6 +73,16 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
     if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { toast.error('Choose a JPG, PNG or WebP image'); return; }
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
+    setPhotoRemoved(false); // picking a new photo supersedes any pending removal
+  };
+
+  /** Clears whatever photo is currently showing — an unsaved pick just reverts;
+   *  a saved item (whether it has a real uploaded photo or is only showing the
+   *  keyword-matched stock one) is only actually cleared once saved (see submit). */
+  const clearPhoto = (e: React.MouseEvent) => {
+    e.stopPropagation(); // don't also trigger the photo-picker button underneath
+    if (photoFile) { setPhotoFile(null); setPhotoPreview(null); }
+    else if (item) setPhotoRemoved(true);
   };
 
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -98,6 +116,9 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
           if (photoFile) {
             try { await uploadPhoto.mutateAsync({ id: saved.id, file: photoFile }); }
             catch (e) { toast.error(`Item saved, but photo upload failed: ${apiErrorMessage(e)}`); onOpenChange(false); return; }
+          } else if (photoRemoved) {
+            try { await removePhoto.mutateAsync(saved.id); }
+            catch (e) { toast.error(`Item saved, but photo removal failed: ${apiErrorMessage(e)}`); onOpenChange(false); return; }
           }
           toast.success(isEdit ? 'POS item updated' : `${form.name} added to POS`);
           onOpenChange(false);
@@ -108,8 +129,12 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
   };
 
   // What the photo slot shows: the just-picked preview, else the item's saved
-  // photo or the keyword-matched stock photo, else nothing (→ upload prompt).
-  const photoDisplay = photoPreview ?? (item ? productImageSrc(item) : null);
+  // photo (unless pending removal — '' forces no photo at all, not even the
+  // keyword-matched stock one, since removing was the whole point) or nothing.
+  const photoDisplay = photoPreview ?? (item ? productImageSrc(photoRemoved ? { ...item, photoUrl: '' } : item) : null);
+  // Offer to clear whenever something is actually showing — a real uploaded
+  // photo or just the auto-matched stock one — not only a real upload.
+  const canClearPhoto = !!photoFile || (!!photoDisplay && !photoRemoved);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -140,6 +165,18 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
               <span className="absolute inset-x-0 bottom-0 bg-black/55 py-0.5 text-center text-[9px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100">
                 {photoDisplay ? 'Change' : 'Add'}
               </span>
+              {canClearPhoto && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={clearPhoto}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') clearPhoto(e as unknown as React.MouseEvent); }}
+                  title="Remove photo"
+                  className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/65 text-white transition-colors hover:bg-danger"
+                >
+                  <X className="h-3 w-3" />
+                </span>
+              )}
             </button>
             <input
               ref={photoRef}
@@ -152,7 +189,11 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
               <Label required>Item name</Label>
               <Input autoFocus value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Cheese Aloo Puri" />
               <p className="text-[11px] text-muted-foreground">
-                {photoFile ? 'New photo will be saved with the item.' : 'No photo? A matching stock image is used automatically.'}
+                {photoFile
+                  ? 'New photo will be saved with the item.'
+                  : photoRemoved
+                    ? 'Photo will be removed when you save.'
+                    : 'No photo? A matching stock image is used automatically.'}
               </p>
             </div>
           </div>
