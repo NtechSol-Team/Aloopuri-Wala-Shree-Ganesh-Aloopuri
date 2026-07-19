@@ -134,13 +134,15 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
       const disc = Number(it.discount);
       return `
         <tr>
-          <td class="name" colspan="3">${esc(it.productNameSnapshot)}</td>
+          <td class="name" colspan="4">${esc(it.productNameSnapshot)}</td>
         </tr>
         <tr class="sub">
-          <td class="qty">Qty: ${qty} × ${Number(it.unitPrice).toFixed(2)}${disc > 0 ? ` (−${inr(disc)})` : ''}</td>
           <td></td>
-          <td class="num qty">${inr(it.lineTotal)}</td>
-        </tr>`;
+          <td class="num qty">${qty}</td>
+          <td class="num rate">${Number(it.unitPrice).toFixed(2)}</td>
+          <td class="num amt">${inr(it.lineTotal)}</td>
+        </tr>
+        ${disc > 0 ? `<tr class="sub"><td colspan="4" class="disc-note">Discount −${inr(disc)}</td></tr>` : ''}`;
     })
     .join('');
 
@@ -165,16 +167,25 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   .center { text-align: center; }
   .store { font-size: 16px; font-weight: 700; letter-spacing: 0.5px; }
   .tagline { font-size: 10px; margin-top: 1px; }
-  .token { margin: 2px 0 2px; font-size: 12px; font-weight: 700; }
-  .token-num { font-size: 20px; font-weight: 800; line-height: 1; }
+  .token-num { margin: 2px 0; font-size: 20px; font-weight: 800; line-height: 1; }
   hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
   .meta { font-size: 11px; }
-  table { width: 100%; border-collapse: collapse; }
-  td { padding: 1px 0; vertical-align: top; }
+  /* Items table — header and data rows share one colgroup/table-layout so QTY,
+     RATE and AMT genuinely sit under their own header label instead of two
+     loose text blobs. Item name keeps its own full width, unclamped; qty stays
+     at its existing size, rate/amt are the only ones sized down to make three
+     real columns fit on 72mm paper alongside a readable name. */
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  col.qty { width: 46px; }
+  col.rate { width: 60px; }
+  col.amt { width: 84px; }
+  td, th { padding: 1px 0; vertical-align: top; }
+  th { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; text-align: left; border-bottom: 1px dashed #000; padding-bottom: 3px; }
   td.name { font-size: 20px; font-weight: 700; padding-top: 4px; line-height: 1.25; }
-  tr.sub td { font-size: 11px; }
-  tr.sub td.qty { font-size: 17px; font-weight: 700; padding-top: 2px; }
-  .num { text-align: right; white-space: nowrap; }
+  tr.sub td.qty { font-size: 24px; font-weight: 700; padding-top: 0; }
+  tr.sub td.rate, tr.sub td.amt { font-size: 13px; font-weight: 700; padding-top: 4px; }
+  td.disc-note { font-size: 10px; color: #444; }
+  .num, th.num { text-align: right; white-space: nowrap; }
   .row { display: flex; justify-content: space-between; padding: 1px 0; }
   .total { font-size: 15px; font-weight: 800; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 3px 0; margin: 4px 0; }
   .foot { margin-top: 4px; font-size: 11px; }
@@ -199,7 +210,7 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
     ${txn.tokenNumber != null
       ? `<div class="tokenwrap">
            ${txn.orderType === 'PARCEL' ? '<span class="parcel">P</span>' : ''}
-           <div class="token">TOKEN</div><div class="token-num">#${txn.tokenNumber}</div>
+           <div class="token-num">TOKEN : ${txn.tokenNumber}</div>
          </div>`
       : (txn.orderType === 'PARCEL' ? '<div class="parcel-solo">P</div>' : '')}
   </div>
@@ -211,7 +222,11 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
     ${txn.customerName ? `<div class="row"><span>Customer</span><span>${esc(txn.customerName)}</span></div>` : ''}
   </div>
   <hr />
-  <table>${itemsRows}</table>
+  <table>
+    <colgroup><col /><col class="qty" /><col class="rate" /><col class="amt" /></colgroup>
+    <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amt</th></tr></thead>
+    <tbody>${itemsRows}</tbody>
+  </table>
   <hr />
   <div class="row"><span>Sub-total</span><span>${inr(txn.subTotal)}</span></div>
   ${discountTotal > 0 ? `<div class="row"><span>Discount</span><span>−${inr(discountTotal)}</span></div>` : ''}

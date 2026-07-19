@@ -1,9 +1,16 @@
 import type { NextFunction, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
+import { MulterError } from 'multer';
 import { ZodError } from 'zod';
 import { AppError } from '../utils/AppError';
 import { ErrorCode, type ApiError } from '../types/api';
+import { env } from '../../config/env';
 import { logger } from '../../config/logger';
+
+const MULTER_MESSAGE: Partial<Record<MulterError['code'], string>> = {
+  LIMIT_FILE_SIZE: `File is too large (max ${env.MAX_UPLOAD_MB}MB) — try a smaller photo`,
+  LIMIT_UNEXPECTED_FILE: 'Unexpected file field',
+};
 
 function sendError(res: Response, status: number, code: ErrorCode, message: string, field?: string) {
   const body: ApiError = { success: false, error: { code, message, field } };
@@ -21,6 +28,11 @@ export function errorHandler(
   if (err instanceof AppError) {
     if (!err.isOperational) logger.error({ err, path: req.path }, 'non-operational AppError');
     sendError(res, err.statusCode, err.code, err.message, err.field);
+    return;
+  }
+
+  if (err instanceof MulterError) {
+    sendError(res, 400, ErrorCode.VALIDATION_ERROR, MULTER_MESSAGE[err.code] ?? err.message, err.field);
     return;
   }
 

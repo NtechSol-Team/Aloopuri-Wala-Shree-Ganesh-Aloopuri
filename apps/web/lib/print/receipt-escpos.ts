@@ -77,12 +77,28 @@ const inr = (v: string | number) => `Rs ${Number(v).toFixed(2)}`;
  * space. Spreading the letter across four existing 1x lines keeps it just as
  * large while costing zero extra paper. '#' cells print as CP437 solid blocks.
  */
+// Fixed-width QTY/RATE/AMT segments shared by the header and every item's
+// detail line, so the numbers actually sit under their column label instead
+// of floating as one loose "qty x rate ... amount" blob. `left` is padded out
+// to the same total line length on every call (header or data), so the
+// segment always starts at the exact same column.
+const QTY_W = 5;
+const RATE_W = 9;
+const AMT_W = 12;
+const COLS_W = QTY_W + RATE_W + AMT_W;
+function tableRow(cols: number, left: string, qty: string, rate: string, amt: string): string {
+  const segment = qty.padStart(QTY_W) + rate.padStart(RATE_W) + amt.padStart(AMT_W);
+  return left.padEnd(Math.max(left.length, cols - COLS_W)) + segment;
+}
+function tableRowPrefix(cols: number, left: string): string {
+  return left.padEnd(Math.max(left.length, cols - COLS_W));
+}
+
 const PARCEL_GLYPHS = [
   ['#####', '#   #', '#####', '#    '], // 80mm: plenty of margin
   ['###', '# #', '###', '#  '],         // 58mm: narrower letter still reads
 ];
 const BLOCK_BYTE = 0xdb;
-const TOKEN_LABEL = 'TOKEN';
 
 /** Centred line that may carry one row of the parcel glyph in its left margin. */
 function glyphLine(e: EscPosEncoder, text: string, row?: string): void {
@@ -156,24 +172,25 @@ export async function receiptBytes(
   const isParcel = txn.orderType === 'PARCEL';
   const hasToken = txn.tokenNumber != null;
 
-  // Lay the parcel glyph over the last few lines that already print centred and
-  // short, so every row lands in blank margin: the contact lines, ending on the
-  // TOKEN label directly above the number. Only used when every one of those
-  // rows genuinely has room to its left, else we fall back to a plain marker.
+  // Lay the parcel glyph over the last few contact lines that already print
+  // centred and short, so every row lands in blank margin. Only used when
+  // every one of those rows genuinely has room to its left, else we fall
+  // back to a plain marker. The token line is now one combined "TOKEN : N"
+  // line at its own (larger) size, so it can't host glyph rows itself —
+  // the glyph must fully resolve within the plain contact lines.
   const contactLines: string[] = [];
   // Must mirror header()'s own ordering and its address-hosting rule exactly.
   if (store.address && isAscii(store.address) && store.address.length <= e.cols) contactLines.push(store.address);
   if (store.phone) contactLines.push(`Ph: ${store.phone}`);
   if (store.gstin) contactLines.push(`GSTIN: ${store.gstin}`);
   if (store.fssaiNumber) contactLines.push(`FSSAI: ${store.fssaiNumber}`);
-  const hosts = hasToken ? [...contactLines, TOKEN_LABEL] : contactLines;
   const glyph = !isParcel || !hasToken
     ? undefined
     : PARCEL_GLYPHS.find((rows) => {
-        const first = hosts.length - rows.length;
-        return first >= 0 && rows.every((row, i) => Math.floor((e.cols - hosts[first + i].length) / 2) - row.length >= 1);
+        const first = contactLines.length - rows.length;
+        return first >= 0 && rows.every((row, i) => Math.floor((e.cols - contactLines[first + i].length) / 2) - row.length >= 1);
       });
-  const firstHost = glyph ? hosts.length - glyph.length : -1;
+  const firstHost = glyph ? contactLines.length - glyph.length : -1;
 
   const headerGlyph = contactLines.map((_, i) => (glyph && i >= firstHost ? glyph[i - firstHost] : undefined));
   await header(e, s, store, undefined, headerGlyph);
@@ -183,20 +200,17 @@ export async function receiptBytes(
   }
   const TOKEN_MAG = 2;
   if (hasToken) {
-    // Final glyph row rides the TOKEN label; the number below is untouched, so
-    // a parcel receipt is exactly as tall as a dine-in one.
-    glyphLine(e, TOKEN_LABEL, glyph ? glyph[glyph.length - 1] : undefined);
-    if (glyph) e.raw([0x1b, 0x32]); // restore default line spacing
+    if (glyph) e.raw([0x1b, 0x32]); // restore default line spacing after the glyph block
     if (isParcel && !glyph) {
       // Narrow paper or a sparse store profile left no margin — mark it inline
       // at the token's own size, which still costs no extra height.
       e.align('left').bold(true).size(TOKEN_MAG, TOKEN_MAG);
-      const tokenStr = `#${txn.tokenNumber}`;
+      const tokenStr = `TOKEN : ${txn.tokenNumber}`;
       const start = Math.floor((e.cols - tokenStr.length * TOKEN_MAG) / 2);
       e.line('P' + ' '.repeat(Math.max(1, Math.floor((start - TOKEN_MAG) / TOKEN_MAG))) + tokenStr);
       e.size(1, 1).bold(false);
     } else {
-      e.align('center').bold(true).size(TOKEN_MAG, TOKEN_MAG).line(`#${txn.tokenNumber}`).size(1, 1).bold(false);
+      e.align('center').bold(true).size(TOKEN_MAG, TOKEN_MAG).line(`TOKEN : ${txn.tokenNumber}`).size(1, 1).bold(false);
     }
   } else if (isParcel) {
     // No token to hang it off (shouldn't happen for a counter sale) — stand alone.
@@ -208,21 +222,30 @@ export async function receiptBytes(
   if (opts.cashierName) labelLine(e, s, 'Cashier', opts.cashierName);
   if (txn.customerName) labelLine(e, s, 'Customer', txn.customerName);
   e.divider();
+  e.bold(true).line(tableRow(e.cols, 'ITEM', 'QTY', 'RATE', 'AMT')).bold(false);
+  e.divider();
 
-  for (const it of txn.items) {
+  txn.items.forEach((it) => {
     const qty = Number(it.quantity);
     const disc = Number(it.discount);
     // Product name may be Gujarati → printed as an image when it is. Printed
     // taller than body text so item names stand out on the paper.
     smartLine(e, s, it.productNameSnapshot, { bold: true, tall: true });
-    // "Qty: 2 x 35.00" then the line total, so the customer can check the maths.
-    // Double height (not width) makes it easy to read while keeping the full
-    // column count, so the left/right layout still fits on 58mm paper.
+    // Qty/Rate/Amt as three fixed columns lined up under the header above —
+    // not free-flowing text, so they actually read as a table. Qty prints at
+    // double height — size() with width fixed at 1 only affects vertical size,
+    // so the column math (all done in plain character counts) still lines up.
     const unit = Number(it.unitPrice).toFixed(2);
-    e.bold(true).size(1, 2);
-    e.leftRight(`Qty: ${qty} x ${unit}${disc > 0 ? ` (-${inr(disc)})` : ''}`, inr(it.lineTotal));
-    e.size(1, 1).bold(false);
-  }
+    e.bold(true);
+    e.text(tableRowPrefix(e.cols, ''));
+    e.size(1, 2).text(String(qty).padStart(QTY_W)).size(1, 1);
+    e.text(unit.padStart(RATE_W) + inr(it.lineTotal).padStart(AMT_W));
+    e.raw([0x0a]);
+    e.bold(false);
+    // Own line — appending it to the qty line risks the printer word-wrapping
+    // "(-Rs" onto a different line than "5.00)", splitting the note in half.
+    if (disc > 0) e.line(`Discount -${inr(disc)}`);
+  });
 
   e.divider();
   e.leftRight('Sub-total', inr(txn.subTotal));

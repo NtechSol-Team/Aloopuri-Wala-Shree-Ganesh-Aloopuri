@@ -11,7 +11,7 @@ import { getSocket } from '@/lib/socket';
 import {
   Search, Plus, Minus, Trash2, Pause, Play, ArrowLeft, Wifi, WifiOff, Receipt,
   ChefHat, ReceiptText, Power, Star, Keyboard, X, ShoppingCart, Printer,
-  ShoppingBag, LogOut,
+  ShoppingBag, LogOut, Banknote, QrCode, SplitSquareHorizontal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,30 +25,46 @@ import {
   useCurrentSession, useOpenSession, usePosProducts, useCreateSale, useReorderPosProducts,
   type PosProduct, type PosTxn, type CreateTxnPayload,
 } from '@/hooks/usePos';
-import { usePosCart, cartTotals } from '@/store/pos-cart.store';
+import { usePosCart, cartTotals, type CartItem } from '@/store/pos-cart.store';
 import { productImageSrc } from '@/lib/menu-images';
 import { enqueueSale, flushQueue, queueSize } from '@/lib/offline-queue';
 import { beepAdd, beepError, beepSuccess } from '@/lib/beep';
-import { PaymentDialog, type PayMode } from '@/components/pos/payment-dialog';
 import { SuccessOverlay } from '@/components/pos/success-overlay';
+import { CartLineDialog } from '@/components/pos/cart-line-dialog';
 import { EodDialog } from '@/components/pos/eod-dialog';
 import { TxnsDrawer } from '@/components/pos/txns-drawer';
 import { PrinterSettingsDialog } from '@/components/printer-settings-dialog';
 
-/** Stable accent color per category for tiles/avatars. */
-const CAT_COLORS = [
+/** Stable-but-varied light accent color per product (no-image fallback tiles) —
+ *  hashed off the product id so neighbouring items in the same category don't
+ *  all land on the same color, matching the client's old POS menu board look. */
+const TILE_COLORS = [
   'bg-orange-500/15 text-orange-600',
   'bg-emerald-500/15 text-emerald-600',
   'bg-sky-500/15 text-sky-600',
   'bg-violet-500/15 text-violet-600',
   'bg-rose-500/15 text-rose-600',
   'bg-amber-500/15 text-amber-700',
+  'bg-pink-500/15 text-pink-600',
+  'bg-cyan-500/15 text-cyan-600',
+  'bg-lime-500/15 text-lime-700',
+  'bg-fuchsia-500/15 text-fuchsia-600',
+  'bg-indigo-500/15 text-indigo-600',
+  'bg-teal-500/15 text-teal-600',
 ];
-function catColor(name: string): string {
+function tileColor(id: string): string {
   let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
-  return CAT_COLORS[Math.abs(h) % CAT_COLORS.length];
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return TILE_COLORS[Math.abs(h) % TILE_COLORS.length];
 }
+
+type PayMode = 'CASH' | 'UPI' | 'SPLIT';
+
+const PAY_MODES: Array<{ key: PayMode; label: string; icon: typeof Banknote }> = [
+  { key: 'CASH', label: 'Cash', icon: Banknote },
+  { key: 'UPI', label: 'UPI', icon: QrCode },
+  { key: 'SPLIT', label: 'Split', icon: SplitSquareHorizontal },
+];
 
 export default function PosPage() {
   const { data: session, isLoading } = useCurrentSession();
@@ -97,6 +113,17 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const totals = cartTotals(cart.items, cart.billDiscount);
   const sale = useCreateSale();
   const reorder = useReorderPosProducts();
+  const [payMode, setPayMode] = useState<PayMode>('CASH');
+  const [split, setSplit] = useState({ cash: 0, card: 0, upi: 0 });
+  const splitTotal = split.cash + split.card + split.upi;
+
+  // Keep the default even split (all-UPI) in sync with the live total — as
+  // items are added it should track the bill, not the amount from before
+  // the last item was scanned.
+  useEffect(() => {
+    setSplit({ cash: 0, card: 0, upi: totals.grandTotal });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totals.grandTotal]);
 
   // Drag-to-arrange: a normal tap adds to cart; press-and-hold 2s (or a
   // mouse drag) lifts the card so it can be dropped into a new position.
@@ -109,7 +136,6 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const [activeCat, setActiveCat] = useState('all');
   const [online, setOnline] = useState(true);
   const [pendingSync, setPendingSync] = useState(0);
-  const [payOpen, setPayOpen] = useState(false);
   const [eodOpen, setEodOpen] = useState(false);
   const [txnsOpen, setTxnsOpen] = useState(false);
   const [printerOpen, setPrinterOpen] = useState(false);
@@ -118,7 +144,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const [successTxn, setSuccessTxn] = useState<PosTxn | null>(null);
   const [qtyBuffer, setQtyBuffer] = useState('');
   const [flashId, setFlashId] = useState<string | null>(null);
-  const [expandedLine, setExpandedLine] = useState<string | null>(null);
+  const [editingLine, setEditingLine] = useState<CartItem | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -139,7 +165,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   useEffect(() => { focusSearchSoft(); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const dialogOpen = payOpen || eodOpen || txnsOpen || logoutOpen || !!successTxn;
+  const dialogOpen = eodOpen || txnsOpen || logoutOpen || !!successTxn || !!editingLine;
 
   // Midnight auto-rollover: the till this terminal was using just got auto-closed
   // and replaced with a fresh one server-side. Swap over instantly so an
@@ -249,24 +275,6 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
     if (target) { addProduct(target); setSearch(''); } else { beepError(); }
   };
 
-  // Global shortcuts: F2 search · F4 sales · F8 hold · F9 pay · digits = qty buffer.
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (dialogOpen) return;
-      if (e.key === 'F2') { e.preventDefault(); searchRef.current?.focus(); return; }
-      if (e.key === 'F4') { e.preventDefault(); setTxnsOpen(true); return; }
-      if (e.key === 'F8') { e.preventDefault(); cart.hold(); return; }
-      if (e.key === 'F9') { e.preventDefault(); if (cart.items.length) setPayOpen(true); return; }
-      const inInput = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA';
-      if (e.key === 'Escape') { setQtyBuffer(''); if (!inInput) setSearch(''); return; }
-      if (inInput) return;
-      if (/^[0-9.]$/.test(e.key)) setQtyBuffer((b) => (e.key === '.' && b.includes('.') ? b : (b + e.key).slice(0, 6)));
-      else if (e.key === 'Backspace') setQtyBuffer((b) => b.slice(0, -1));
-    };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [dialogOpen, cart]);
-
   const completeSale = (payload: { paymentMode: PayMode; cashReceived?: number; split?: { cash: number; card: number; upi: number } }) => {
     const full: CreateTxnPayload = {
       sessionId,
@@ -281,7 +289,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
       setPendingSync(queueSize());
       toast.success('Saved offline — will sync when back online');
       cart.clear();
-      setPayOpen(false);
+      setPayMode('CASH');
       setCartSheetOpen(false);
       return;
     }
@@ -289,13 +297,44 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
       onSuccess: (res) => {
         beepSuccess();
         cart.clear();
-        setPayOpen(false);
+        setPayMode('CASH');
         setCartSheetOpen(false);
         setSuccessTxn(res);
       },
       onError: (e) => { beepError(); toast.error(apiErrorMessage(e)); },
     });
   };
+
+  /** Charge now completes the sale directly using whichever mode is selected
+   *  above the button — there's no separate confirm step. */
+  const handleCharge = () => {
+    if (cart.items.length === 0 || sale.isPending) return;
+    if (payMode === 'SPLIT' && Math.abs(splitTotal - totals.grandTotal) > 0.01) { toast.error('Split must equal the total'); return; }
+    completeSale({
+      paymentMode: payMode,
+      cashReceived: payMode === 'CASH' ? totals.grandTotal : undefined,
+      split: payMode === 'SPLIT' ? split : undefined,
+    });
+  };
+
+  // Global shortcuts: F2 search · F4 sales · F8 hold · F9 pay · digits = qty buffer.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (dialogOpen) return;
+      if (e.key === 'F2') { e.preventDefault(); searchRef.current?.focus(); return; }
+      if (e.key === 'F4') { e.preventDefault(); setTxnsOpen(true); return; }
+      if (e.key === 'F8') { e.preventDefault(); cart.hold(); return; }
+      if (e.key === 'F9') { e.preventDefault(); handleCharge(); return; }
+      const inInput = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA';
+      if (e.key === 'Escape') { setQtyBuffer(''); if (!inInput) setSearch(''); return; }
+      if (inInput) return;
+      if (/^[0-9.]$/.test(e.key)) setQtyBuffer((b) => (e.key === '.' && b.includes('.') ? b : (b + e.key).slice(0, 6)));
+      else if (e.key === 'Backspace') setQtyBuffer((b) => b.slice(0, -1));
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogOpen, cart, payMode, split, totals.grandTotal]);
 
   const popular = (products ?? []).filter((p) => p.popular).slice(0, 8);
 
@@ -348,7 +387,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
             {cart.items.map((i) => (
               <SwipeToDeleteRow key={i.productId} onDelete={() => cart.removeItem(i.productId)}>
                 <div className="border border-border">
-                  <button className="flex w-full items-center justify-between p-2.5 text-left" onClick={() => setExpandedLine(expandedLine === i.productId ? null : i.productId)}>
+                  <button className="flex w-full items-center justify-between p-2.5 text-left" onClick={() => setEditingLine(i)}>
                     <div className="min-w-0">
                       <p className="truncate font-semibold">{i.name}</p>
                       <p className="text-caption text-muted-foreground">
@@ -366,18 +405,6 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
                     </div>
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => cart.removeItem(i.productId)}><Trash2 className="h-4 w-4 text-danger" /></Button>
                   </div>
-                  {expandedLine === i.productId && (
-                    <div className="grid grid-cols-2 gap-2 border-t border-border bg-surface/60 p-2.5">
-                      <div>
-                        <label className="text-caption font-medium text-muted-foreground">Exact qty ({i.unit})</label>
-                        <Input type="number" step="0.01" className="mt-0.5 h-9" value={i.quantity} onChange={(e) => cart.setQty(i.productId, Number(e.target.value))} />
-                      </div>
-                      <div>
-                        <label className="text-caption font-medium text-muted-foreground">Line discount ₹</label>
-                        <Input type="number" step="0.01" className="mt-0.5 h-9" value={i.discount} onChange={(e) => cart.setItemDiscount(i.productId, Number(e.target.value))} />
-                      </div>
-                    </div>
-                  )}
                 </div>
               </SwipeToDeleteRow>
             ))}
@@ -398,7 +425,60 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
             <Input type="number" className="h-8 w-24 text-right" value={cart.billDiscount} onChange={(e) => cart.setBillDiscount(Number(e.target.value))} />
           </div>
         </div>
-        <Button className="h-14 w-full text-lg font-bold" disabled={cart.items.length === 0} onClick={() => setPayOpen(true)}>
+
+        {/* Payment mode + Parcel live right on the panel now — Charge below
+            completes the sale immediately, there's no separate confirm dialog. */}
+        <div className="mb-2 grid grid-cols-4 gap-1.5">
+          {PAY_MODES.map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              onClick={() => setPayMode(m.key)}
+              className={cn(
+                'flex flex-col items-center gap-1 rounded-lg border-2 py-2 text-caption font-semibold transition-colors',
+                payMode === m.key ? 'border-primary bg-accent text-primary' : 'border-border text-muted-foreground hover:border-primary/40',
+              )}
+            >
+              <m.icon className="h-4 w-4" />
+              {m.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => cart.setOrderType(cart.orderType === 'PARCEL' ? 'DINE_IN' : 'PARCEL')}
+            className={cn(
+              'flex flex-col items-center gap-1 rounded-lg border-2 py-2 text-caption font-semibold transition-colors',
+              cart.orderType === 'PARCEL' ? 'border-warning bg-warning/10 text-warning' : 'border-border text-muted-foreground hover:border-warning/40',
+            )}
+          >
+            <ShoppingBag className="h-4 w-4" />
+            Parcel
+          </button>
+        </div>
+
+        {payMode === 'UPI' && (
+          <p className="mb-2 rounded-lg bg-surface p-2.5 text-center text-caption text-muted-foreground">
+            Scan the counter QR and confirm <b className="text-foreground">{formatINR(totals.grandTotal)}</b> received.
+          </p>
+        )}
+
+        {payMode === 'SPLIT' && (
+          <div className="mb-2 space-y-1.5">
+            <div className="grid grid-cols-3 gap-1.5">
+              {(['cash', 'card', 'upi'] as const).map((k) => (
+                <div key={k} className="space-y-0.5">
+                  <label className="text-[10px] font-semibold uppercase text-muted-foreground">{k}</label>
+                  <Input type="number" className="h-9 text-right text-caption font-semibold" value={split[k]} onChange={(e) => setSplit({ ...split, [k]: Number(e.target.value) })} />
+                </div>
+              ))}
+            </div>
+            <p className={cn('text-right text-caption font-semibold', Math.abs(splitTotal - totals.grandTotal) < 0.01 ? 'text-success' : 'text-danger')}>
+              Split total {formatINR(splitTotal)} / {formatINR(totals.grandTotal)}
+            </p>
+          </div>
+        )}
+
+        <Button className="h-14 w-full text-lg font-bold" disabled={cart.items.length === 0} loading={sale.isPending} onClick={handleCharge}>
           Charge {formatINR(totals.grandTotal)}
           <span className="ml-2 hidden rounded bg-primary-foreground/20 px-1.5 text-caption font-semibold lg:inline">F9</span>
         </Button>
@@ -407,7 +487,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   );
 
   return (
-    <div className="relative grid h-full grid-cols-1 lg:grid-cols-[1fr_380px]">
+    <div className="relative grid h-full grid-cols-1 lg:grid-cols-[1fr_440px]">
       {/* LEFT: products */}
       <div className="flex h-full flex-col overflow-hidden lg:border-r lg:border-border">
         {/* Top bar */}
@@ -561,7 +641,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         </div>
       </div>
 
-      <PaymentDialog open={payOpen} onOpenChange={setPayOpen} total={totals.grandTotal} onComplete={completeSale} busy={sale.isPending} />
+      <CartLineDialog item={editingLine} onClose={() => setEditingLine(null)} onQty={cart.setQty} onDiscount={cart.setItemDiscount} />
       <EodDialog open={eodOpen} onOpenChange={setEodOpen} sessionId={sessionId} />
       <TxnsDrawer open={txnsOpen} onOpenChange={setTxnsOpen} sessionId={sessionId} cashierName={cashierName ?? undefined} />
       <PrinterSettingsDialog open={printerOpen} onOpenChange={setPrinterOpen} />
@@ -628,7 +708,10 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
       onClick={() => onAdd(product)}
       disabled={out}
       className={cn(
-        'group relative flex flex-col overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:shadow-md active:scale-[0.98] disabled:opacity-45',
+        // self-start: full (unclamped) names can make some cards taller than
+        // their row-mates — this keeps each card its own height instead of
+        // every card in the row stretching to match the tallest one.
+        'group relative flex flex-col self-start overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:shadow-md active:scale-[0.98] disabled:opacity-45',
         // In the bill → green frame so it's obvious at a glance what's added.
         inCart ? 'border-success ring-[1.5px] ring-success' : 'border-border',
         flashing && !inCart && 'ring-2 ring-primary',
@@ -649,7 +732,7 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
             className={cn('h-full w-full object-cover transition-transform duration-200 group-hover:scale-105', out && 'grayscale')}
           />
         ) : (
-          <div className={cn('flex h-full w-full items-center justify-center text-3xl font-black', catColor(product.category.name))}>
+          <div className={cn('flex h-full w-full items-center justify-center text-3xl font-black', tileColor(product.id))}>
             {product.name.replace(/[^\p{L}\p{N}]/u, '').charAt(0) || '•'}
           </div>
         )}
@@ -678,9 +761,10 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
         </span>
       </div>
 
-      {/* Name */}
-      <div className="px-1.5 py-1">
-        <p className="line-clamp-2 min-h-[2.4em] text-[14px] font-bold leading-tight text-foreground">{product.name}</p>
+      {/* Name — dark translucent bar (not clipped like the image above: no
+          fixed height here, so a long name just grows the bar, never cuts off). */}
+      <div className="bg-black/80 px-1.5 py-1.5">
+        <p className="whitespace-normal break-words text-[14px] font-extrabold leading-tight text-white">{product.name}</p>
       </div>
     </button>
   );
