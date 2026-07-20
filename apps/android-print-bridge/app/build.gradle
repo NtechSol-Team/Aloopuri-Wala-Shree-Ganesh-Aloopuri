@@ -13,8 +13,8 @@ android {
         // covers every POS tablet in the field. The vendor SDK targets much older.
         minSdk 26
         targetSdk 34
-        versionCode 4
-        versionName "1.0.3"
+        versionCode 5
+        versionName "1.0.4"
     }
 
     buildTypes {
