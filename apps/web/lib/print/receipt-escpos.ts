@@ -195,6 +195,15 @@ export async function receiptBytes(
   const headerGlyph = contactLines.map((_, i) => (glyph && i >= firstHost ? glyph[i - firstHost] : undefined));
   await header(e, s, store, undefined, headerGlyph);
 
+  // Kick the cash drawer on any sale that takes cash. The drawer is wired to
+  // the printer's RJ11 port, so this rides the receipt's own byte stream: it
+  // pops as the receipt prints, and on a till with no drawer (or no printer)
+  // the command is simply ignored — nothing to configure either way.
+  // Card/UPI-only sales deliberately leave it shut; there's no cash to handle.
+  if (txn.status !== 'VOID' && (txn.paymentMode === 'CASH' || Number(txn.cashAmount ?? 0) > 0)) {
+    e.drawer();
+  }
+
   if (txn.status === 'VOID') {
     e.feed(1).invert(true).size(2, 2).line('  VOID  ').size(1, 1).invert(false);
   }
@@ -225,19 +234,28 @@ export async function receiptBytes(
   e.bold(true).line(tableRow(e.cols, 'ITEM', 'QTY', 'RATE', 'AMT')).bold(false);
   e.divider();
 
+  const nameWidth = e.cols - COLS_W;
   txn.items.forEach((it) => {
     const qty = Number(it.quantity);
     const disc = Number(it.discount);
+    const name = it.productNameSnapshot;
+    const unit = Number(it.unitPrice).toFixed(2);
+    // A short Latin name shares the line with its figures; a long one (or a
+    // Gujarati one, which prints as a bitmap and so can't share a text line)
+    // takes the full width and the figures drop underneath.
+    const oneLine = isAscii(name) && name.length <= nameWidth;
+
     // Product name may be Gujarati → printed as an image when it is. Printed
     // taller than body text so item names stand out on the paper.
-    smartLine(e, s, it.productNameSnapshot, { bold: true, tall: true });
+    if (!oneLine) smartLine(e, s, name, { bold: true, tall: true });
+
     // Qty/Rate/Amt as three fixed columns lined up under the header above —
-    // not free-flowing text, so they actually read as a table. Qty prints at
-    // double height — size() with width fixed at 1 only affects vertical size,
-    // so the column math (all done in plain character counts) still lines up.
-    const unit = Number(it.unitPrice).toFixed(2);
+    // not free-flowing text, so they actually read as a table. Name and qty
+    // print at double height — size() with width fixed at 1 only affects
+    // vertical size, so the column math (plain character counts) still lines up.
     e.bold(true);
-    e.text(tableRowPrefix(e.cols, ''));
+    if (oneLine) e.size(1, 2).text(name.padEnd(nameWidth)).size(1, 1);
+    else e.text(tableRowPrefix(e.cols, ''));
     e.size(1, 2).text(String(qty).padStart(QTY_W)).size(1, 1);
     e.text(unit.padStart(RATE_W) + inr(it.lineTotal).padStart(AMT_W));
     e.raw([0x0a]);

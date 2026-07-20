@@ -39,6 +39,21 @@ export function setAutoPrint(on: boolean): void {
 
 const inr = (v: string | number) => `Rs ${Number(v).toFixed(2)}`;
 
+/**
+ * Can this item name share a line with the Qty/Rate/Amt figures, or does it
+ * need the full width to itself (figures dropping to the line below)?
+ *
+ * 72mm of printable paper is 257px at 96dpi; the fixed-width figure columns
+ * below (.q/.r/.a) eat 160px of it, leaving ~97px for the name. Courier New
+ * is monospace at 0.6em per character, so at the 20px name size that is eight
+ * characters. Non-Latin names (Gujarati) fall back to a proportional font
+ * whose width we cannot predict, so they always keep the safe two-line form.
+ */
+const NAME_CHARS_BESIDE_NUMBERS = 8;
+function fitsBesideNumbers(name: string): boolean {
+  return /^[\x20-\x7E]+$/.test(name) && name.length <= NAME_CHARS_BESIDE_NUMBERS;
+}
+
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -130,19 +145,19 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   const store = opts.store ?? DEFAULT_STORE;
   const itemsRows = txn.items
     .map((it) => {
-      const qty = Number(it.quantity);
+      const name = it.productNameSnapshot;
+      const qty = String(Number(it.quantity));
+      const rate = Number(it.unitPrice).toFixed(2);
+      const amt = inr(it.lineTotal);
       const disc = Number(it.discount);
-      return `
-        <tr>
-          <td class="name" colspan="4">${esc(it.productNameSnapshot)}</td>
-        </tr>
-        <tr class="sub">
-          <td></td>
-          <td class="num qty">${qty}</td>
-          <td class="num rate">${Number(it.unitPrice).toFixed(2)}</td>
-          <td class="num amt">${inr(it.lineTotal)}</td>
-        </tr>
-        ${disc > 0 ? `<tr class="sub"><td colspan="4" class="disc-note">Discount −${inr(disc)}</td></tr>` : ''}`;
+      const nums =
+        `<span class="nums"><span class="q">${qty}</span><span class="r">${rate}</span><span class="a">${amt}</span></span>`;
+      // Short name → everything on one line; long name → name gets the full
+      // width and the figures drop underneath it (see fitsBesideNumbers).
+      const body = fitsBesideNumbers(name)
+        ? `<div class="line"><span class="nm">${esc(name)}</span>${nums}</div>`
+        : `<div class="line"><span class="nm">${esc(name)}</span></div><div class="line">${nums}</div>`;
+      return body + (disc > 0 ? `<div class="disc-note">Discount −${inr(disc)}</div>` : '');
     })
     .join('');
 
@@ -170,22 +185,20 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
   .token-num { margin: 2px 0; font-size: 20px; font-weight: 800; line-height: 1; }
   hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
   .meta { font-size: 11px; }
-  /* Items table — header and data rows share one colgroup/table-layout so QTY,
-     RATE and AMT genuinely sit under their own header label instead of two
-     loose text blobs. Item name keeps its own full width, unclamped; qty stays
-     at its existing size, rate/amt are the only ones sized down to make three
-     real columns fit on 72mm paper alongside a readable name. */
-  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  col.qty { width: 46px; }
-  col.rate { width: 60px; }
-  col.amt { width: 84px; }
-  td, th { padding: 1px 0; vertical-align: top; }
-  th { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; text-align: left; border-bottom: 1px dashed #000; padding-bottom: 3px; }
-  td.name { font-size: 20px; font-weight: 700; padding-top: 4px; line-height: 1.25; }
-  tr.sub td.qty { font-size: 24px; font-weight: 700; padding-top: 0; }
-  tr.sub td.rate, tr.sub td.amt { font-size: 13px; font-weight: 700; padding-top: 4px; }
-  td.disc-note { font-size: 10px; color: #444; }
-  .num, th.num { text-align: right; white-space: nowrap; }
+  /* Items — each line decides for itself whether the name sits beside the
+     figures or above them (see fitsBesideNumbers). The figure columns keep
+     fixed widths in BOTH layouts, so Qty/Rate/Amt still line up vertically
+     down the whole receipt no matter which form each item took. */
+  .items-head { display: flex; align-items: baseline; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px dashed #000; padding-bottom: 3px; margin-bottom: 2px; }
+  .line { display: flex; align-items: baseline; padding: 1px 0; }
+  .nm { flex: 1 1 auto; min-width: 0; font-size: 20px; font-weight: 700; line-height: 1.25; word-break: break-word; }
+  .nums { flex: 0 0 auto; margin-left: auto; display: flex; align-items: baseline; }
+  .nums > span { text-align: right; white-space: nowrap; font-weight: 700; }
+  .q { width: 30px; font-size: 24px; }
+  .r { width: 52px; font-size: 13px; }
+  .a { width: 78px; font-size: 13px; }
+  .items-head .nums > span { font-size: 11px; }
+  .disc-note { font-size: 10px; color: #444; }
   .row { display: flex; justify-content: space-between; padding: 1px 0; }
   .total { font-size: 15px; font-weight: 800; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 3px 0; margin: 4px 0; }
   .foot { margin-top: 4px; font-size: 11px; }
@@ -222,11 +235,11 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
     ${txn.customerName ? `<div class="row"><span>Customer</span><span>${esc(txn.customerName)}</span></div>` : ''}
   </div>
   <hr />
-  <table>
-    <colgroup><col /><col class="qty" /><col class="rate" /><col class="amt" /></colgroup>
-    <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amt</th></tr></thead>
-    <tbody>${itemsRows}</tbody>
-  </table>
+  <div class="items-head">
+    <span style="flex:1 1 auto">Item</span>
+    <span class="nums"><span class="q">Qty</span><span class="r">Rate</span><span class="a">Amt</span></span>
+  </div>
+  ${itemsRows}
   <hr />
   <div class="row"><span>Sub-total</span><span>${inr(txn.subTotal)}</span></div>
   ${discountTotal > 0 ? `<div class="row"><span>Discount</span><span>−${inr(discountTotal)}</span></div>` : ''}

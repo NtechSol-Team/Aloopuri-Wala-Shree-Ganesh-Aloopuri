@@ -11,7 +11,7 @@ import { getSocket } from '@/lib/socket';
 import {
   Search, Plus, Minus, Trash2, Pause, Play, ArrowLeft, Wifi, WifiOff, Receipt,
   ChefHat, ReceiptText, Power, Star, Keyboard, X, ShoppingCart, Printer,
-  ShoppingBag, LogOut, Banknote, QrCode, SplitSquareHorizontal,
+  ShoppingBag, LogOut, Banknote, QrCode, SplitSquareHorizontal, Move, Check,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -125,11 +125,26 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totals.grandTotal]);
 
-  // Drag-to-arrange: a normal tap adds to cart; press-and-hold 2s (or a
-  // mouse drag) lifts the card so it can be dropped into a new position.
+  /**
+   * Arranging is an explicit mode, not something armed during normal selling.
+   *
+   * It used to be press-and-hold: every card was a dnd-kit sortable, so every
+   * touch anywhere on the grid was intercepted by a drag sensor holding a 2s
+   * timer. On the shop's Android tablet that swallowed taps outright — a real
+   * finger drifts a few pixels while tapping, and once it passed the sensor's
+   * 8px tolerance the touch was cancelled and never became a click, so the item
+   * silently didn't get added. (A mouse never drifts, which is why it only
+   * showed up on the tablet.) The non-passive touch listeners it attached on
+   * every press also made the grid feel laggy.
+   *
+   * Now the selling path has no drag machinery at all — a tap is just a tap —
+   * and dnd-kit is only mounted while the Arrange toggle is on.
+   */
+  const [arranging, setArranging] = useState(false);
   const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 2000, tolerance: 8 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    // Short hold, so a quick swipe still scrolls the grid while arranging.
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
   );
 
   const [search, setSearch] = useState('');
@@ -231,6 +246,10 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   // Arranging only makes sense on a stable list — not the dynamic ★ Popular
   // view, and not a search result subset.
   const canReorder = activeCat !== 'popular' && search.trim() === '';
+  // Leaving that stable list (searching, or switching to ★ Popular) drops us
+  // back to selling rather than stranding the terminal in arrange mode.
+  useEffect(() => { if (!canReorder) setArranging(false); }, [canReorder]);
+  const isArranging = arranging && canReorder;
 
   const handleDragEnd = (e: DragEndEvent) => {
     const { active, over } = e;
@@ -265,6 +284,8 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const addProductRef = useRef(addProduct);
   addProductRef.current = addProduct;
   const onCardAdd = useCallback((p: PosProduct) => addProductRef.current(p), []);
+  // While arranging, a tap is a drag handle — not an "add to bill".
+  const noopAdd = useCallback(() => {}, []);
 
   /** Barcode/SKU fast path: Enter in search adds the exact or only match. */
   const onSearchEnter = () => {
@@ -514,6 +535,19 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
             {online ? 'Online' : 'Offline'}
             {pendingSync > 0 && ` · ${pendingSync} queued`}
           </span>
+          {canReorder && (
+            <button
+              onClick={() => setArranging((v) => !v)}
+              title={arranging ? 'Finish arranging' : 'Rearrange the menu tiles'}
+              className={cn(
+                'shrink-0 rounded-md p-2.5 transition-colors',
+                arranging ? 'bg-warning text-white' : 'text-muted-foreground hover:bg-surface',
+              )}
+              aria-label={arranging ? 'Finish arranging' : 'Arrange items'}
+            >
+              <Move className="h-5 w-5" />
+            </button>
+          )}
           <button
             onClick={() => setCartSheetOpen(true)}
             className="relative shrink-0 rounded-md p-2.5 text-foreground hover:bg-surface lg:hidden"
@@ -544,8 +578,20 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
           ))}
         </div>
 
+        {/* Arrange mode — makes it obvious the grid isn't selling right now. */}
+        {isArranging && (
+          <div className="flex items-center justify-between gap-2 border-b border-warning/40 bg-warning/10 px-3 py-2">
+            <span className="text-body font-semibold text-warning">
+              Arrange mode — drag tiles to reorder. Tapping won&apos;t add to the bill.
+            </span>
+            <Button size="sm" variant="secondary" className="shrink-0" onClick={() => setArranging(false)}>
+              <Check className="h-4 w-4" /> Done
+            </Button>
+          </div>
+        )}
+
         {/* Quick picks */}
-        {popular.length > 0 && activeCat === 'all' && !search && (
+        {!isArranging && popular.length > 0 && activeCat === 'all' && !search && (
           <div className="flex gap-2 overflow-x-auto border-b border-border bg-surface/60 p-2 scrollbar-thin">
             {popular.map((p) => (
               <button
@@ -566,17 +612,18 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
             scrolling; images keep each item instantly recognisable. Cards sized
             up a step from before (one fewer column per breakpoint from sm up)
             so both the photo and the name read more comfortably.
-            Press-and-hold a card 2s (or mouse-drag) to rearrange the order. */}
-        <div className="grid flex-1 auto-rows-min grid-cols-3 gap-2 overflow-y-auto p-2.5 pb-24 scrollbar-thin sm:grid-cols-3 lg:grid-cols-4 lg:pb-2.5 xl:grid-cols-5">
+            Selling renders plain cards (no drag sensors — see `arranging`);
+            the sortable grid is only mounted while Arrange mode is on. */}
+        <div data-pos-scroller className="grid flex-1 auto-rows-min grid-cols-3 gap-2 overflow-y-auto p-2.5 pb-24 scrollbar-thin sm:grid-cols-3 lg:grid-cols-4 lg:pb-2.5 xl:grid-cols-5">
           {isLoading ? (
             Array.from({ length: 18 }).map((_, i) => <Skeleton key={i} className="aspect-[4/5] h-auto" />)
           ) : filtered.length === 0 ? (
             <p className="col-span-full py-16 text-center text-body text-muted-foreground">No products match &ldquo;{search}&rdquo;</p>
-          ) : canReorder ? (
+          ) : isArranging ? (
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <SortableContext items={filtered.map((p) => p.id)} strategy={rectSortingStrategy}>
                 {filtered.map((p) => (
-                  <SortableProductCard key={p.id} product={p} flashing={flashId === p.id} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={onCardAdd} />
+                  <SortableProductCard key={p.id} product={p} flashing={false} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={noopAdd} />
                 ))}
               </SortableContext>
             </DndContext>
@@ -689,6 +736,72 @@ const SortableProductCard = memo(function SortableProductCard(props: { product: 
 });
 
 /**
+ * Finger travel we still forgive as a tap *provided the list never moved*.
+ * Generous on purpose: a fat-finger press on a tablet easily wanders this far.
+ */
+const TAP_SLOP_PX = 40;
+/** A press that lingers longer than this was a hold, not a quick tap. */
+const TAP_MAX_MS = 700;
+
+/**
+ * Tap handling that survives a slightly sloppy finger.
+ *
+ * Chrome hands a touch to the scroller as soon as it drifts ~10px and then
+ * never fires `click` — so on the shop's tablet a cashier tapping quickly
+ * would see the item silently not get added, while a mouse (which never
+ * drifts) worked every time. `touchend` still fires in that case, so we
+ * decide "was that a tap?" ourselves and fall back to `click` for mouse and
+ * keyboard.
+ *
+ * The real question isn't how far the finger moved, it's *did the menu move
+ * under it*: if the grid didn't scroll, the finger merely wobbled and the
+ * cashier meant to tap; if it did scroll, they were scrolling and must not
+ * get a surprise item on the bill. Distance is kept only as a sanity bound,
+ * measured as the furthest the finger ever got from where it started (not
+ * start-to-end), so a scroll finishing back near its origin can't sneak past.
+ */
+function useTapToAdd(add: () => void, dragging: boolean) {
+  const start = useRef<{ x: number; y: number; t: number; scroller: Element | null; scrollTop: number } | null>(null);
+  const maxDist = useRef(0);
+  const handledTouch = useRef(false);
+
+  return {
+    onTouchStart: (e: React.TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      const scroller = (e.currentTarget as HTMLElement).closest('[data-pos-scroller]');
+      start.current = {
+        x: t.clientX, y: t.clientY, t: Date.now(),
+        scroller, scrollTop: scroller?.scrollTop ?? 0,
+      };
+      maxDist.current = 0;
+      handledTouch.current = false;
+    },
+    onTouchMove: (e: React.TouchEvent) => {
+      const s = start.current;
+      const t = e.touches[0];
+      if (!s || !t) return;
+      maxDist.current = Math.max(maxDist.current, Math.hypot(t.clientX - s.x, t.clientY - s.y));
+    },
+    onTouchEnd: () => {
+      const s = start.current;
+      start.current = null;
+      // While arranging, dnd-kit owns the gesture — don't also add to the bill.
+      if (!s || dragging) return;
+      const scrolled = (s.scroller?.scrollTop ?? 0) !== s.scrollTop;
+      if (!scrolled && maxDist.current <= TAP_SLOP_PX && Date.now() - s.t <= TAP_MAX_MS) {
+        handledTouch.current = true; // suppress the click Chrome may still send
+        add();
+      }
+    },
+    onClick: () => {
+      if (handledTouch.current) { handledTouch.current = false; return; }
+      add();
+    },
+  };
+}
+
+/**
  * Image-first product tile — the fastest way for a cashier to recognise an item.
  * A food photo fills the top square; price sits on a high-contrast chip over it;
  * the availability/qty state is a corner badge. Items with no photo (uploaded or
@@ -700,20 +813,25 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
   const inCart = cartQty > 0;
   const [imgFailed, setImgFailed] = useState(false);
   const imgSrc = imgFailed ? null : productImageSrc(product);
+  const tap = useTapToAdd(() => onAdd(product), !!drag);
 
   return (
     <button
       ref={drag?.setNodeRef}
-      style={drag?.style}
       {...(drag?.attributes ?? {})}
       {...(drag?.listeners ?? {})}
-      onClick={() => onAdd(product)}
+      {...tap}
       disabled={out}
+      // manipulation opts out of double-tap-to-zoom, which is what makes a
+      // WebView sit on a tap for ~300ms before delivering the click.
+      style={{ ...drag?.style, touchAction: drag ? undefined : 'manipulation' }}
       className={cn(
         // self-start: full (unclamped) names can make some cards taller than
         // their row-mates — this keeps each card its own height instead of
         // every card in the row stretching to match the tallest one.
-        'group relative flex flex-col self-start overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-all hover:shadow-md active:scale-[0.98] disabled:opacity-45',
+        // transition-transform (not transition-all): on a low-end tablet
+        // animating every property is a needless per-frame style recalc.
+        'group relative flex flex-col self-start overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-transform hover:shadow-md active:scale-[0.98] disabled:opacity-45',
         // In the bill → green frame so it's obvious at a glance what's added.
         inCart ? 'border-success ring-[1.5px] ring-success' : 'border-border',
         flashing && !inCart && 'ring-2 ring-primary',
