@@ -47,6 +47,11 @@ export const updateOutletSchema = createOutletSchema.partial().extend({
   isActive: z.boolean().optional(),
 });
 
+/** Assign a POS menu to the outlet. Null clears it (→ default menu). */
+export const assignMenuSchema = z.object({
+  assignedMenuId: z.string().uuid().nullable(),
+});
+
 export const setOutletPricesSchema = z.object({
   items: z
     .array(z.object({ productId: z.string().uuid(), price: z.coerce.number().nonnegative() }))

@@ -10,6 +10,7 @@ import { billingRouter } from '../modules/billing/billing.routes';
 import { paymentsRouter, paymentsWebhookRouter } from '../modules/payments/payments.routes';
 import { expensesRouter } from '../modules/expenses/expenses.routes';
 import { posRouter } from '../modules/pos/pos.routes';
+import { menusRouter } from '../modules/menus/menus.routes';
 import { outletsRouter } from '../modules/outlets/outlets.routes';
 import { inventoryRouter } from '../modules/inventory/inventory.routes';
 import { accountingRouter } from '../modules/accounting/accounting.routes';
@@ -38,6 +39,7 @@ export function buildApiRouter(): Router {
   router.use('/payments', paymentsRouter);
   router.use('/expenses', expensesRouter);
   router.use('/pos', posRouter);
+  router.use('/menus', menusRouter);
   router.use('/outlets', outletsRouter);
   router.use('/inventory', inventoryRouter);
   router.use('/accounting', accountingRouter);

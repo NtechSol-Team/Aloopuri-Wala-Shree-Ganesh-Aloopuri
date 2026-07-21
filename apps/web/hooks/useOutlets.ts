@@ -28,6 +28,9 @@ export interface Outlet {
   fssaiNumber: string | null;
   email: string | null;
   receiptFooter: string | null;
+  // The POS menu this outlet sells from (assigned by the main owner).
+  assignedMenuId: string | null;
+  assignedMenu: { id: string; name: string } | null;
 }
 
 /** Business details the main owner maintains (creating outlets stays developer-only). */
@@ -168,6 +171,16 @@ export function useStoreProfile(): StoreProfile | undefined {
 }
 
 /** Business details — editable by the main owner (no developer passphrase needed). */
+/** Assign (or clear) an outlet's POS menu — main-owner control. */
+export function useAssignMenu() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ outletId, assignedMenuId }: { outletId: string; assignedMenuId: string | null }) =>
+      (await api.patch<ApiSuccess<Outlet>>(`/outlets/${outletId}/menu`, { assignedMenuId })).data.data,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['outlets'] }); qc.invalidateQueries({ queryKey: ['menus'] }); },
+  });
+}
+
 export function useSaveOutletProfile(outletId: string) {
   const qc = useQueryClient();
   return useMutation({

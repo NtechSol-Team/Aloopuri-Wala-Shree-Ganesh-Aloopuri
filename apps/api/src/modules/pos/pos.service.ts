@@ -33,6 +33,25 @@ function resolveOutlet(user: AuthUser, requested?: string): string | null {
   return user.outletId;
 }
 
+/**
+ * The menu a POS location sells from: the outlet's assigned menu, else the
+ * default menu (which the main-branch till also uses). Returns null only when
+ * no menu exists at all. Guards against an assigned menu having been deleted.
+ */
+async function resolveMenuId(outletId: string | null): Promise<string | null> {
+  if (outletId) {
+    const outlet = await prisma.outlet.findUnique({ where: { id: outletId }, select: { assignedMenuId: true } });
+    if (outlet?.assignedMenuId) {
+      const assigned = await prisma.menu.findFirst({ where: { id: outlet.assignedMenuId, isDeleted: false }, select: { id: true } });
+      if (assigned) return assigned.id;
+    }
+  }
+  const def = await prisma.menu.findFirst({ where: { isDefault: true, isDeleted: false }, select: { id: true } });
+  if (def) return def.id;
+  const fallback = await prisma.menu.findFirst({ where: { isDeleted: false }, orderBy: { createdAt: 'asc' }, select: { id: true } });
+  return fallback?.id ?? null;
+}
+
 export async function openSession(user: AuthUser, input: OpenSessionInput) {
   const outletId = resolveOutlet(user, input.outletId);
   const existing = await prisma.posSession.findFirst({
@@ -141,36 +160,41 @@ export async function createTransaction(user: AuthUser, input: CreateTransaction
   if (session.status !== PosSessionStatus.OPEN) throw AppError.invalidState('POS session is closed');
   if (user.role !== UserRole.SUPER_ADMIN && session.outletId !== user.outletId) throw AppError.forbidden();
 
-  const productIds = input.items.map((i) => i.productId);
-  const products = await prisma.product.findMany({ where: { id: { in: productIds }, isDeleted: false } });
-  const productMap = new Map(products.map((p) => [p.id, p]));
-  if (productMap.size !== new Set(productIds).size) throw AppError.badRequest('One or more products are invalid');
+  // Items come from the outlet's assigned menu (main branch → default menu). We
+  // validate every line belongs to that exact menu, so an outlet can only ever
+  // sell what the Main Owner put on its menu.
+  const menuId = await resolveMenuId(session.outletId);
+  if (!menuId) throw AppError.badRequest('No menu is assigned to this outlet yet');
+  const menuItemIds = input.items.map((i) => i.menuItemId);
+  const menuItems = await prisma.menuItem.findMany({ where: { id: { in: menuItemIds }, menuId, isDeleted: false } });
+  const itemMap = new Map(menuItems.map((m) => [m.id, m]));
+  if (itemMap.size !== new Set(menuItemIds).size) throw AppError.badRequest('One or more items are not on this outlet’s menu');
 
   // Compute money server-side.
   let subTotal = new Prisma.Decimal(0);
   let itemDiscountTotal = new Prisma.Decimal(0);
   let taxTotal = new Prisma.Decimal(0);
   const lineData = input.items.map((it) => {
-    const p = productMap.get(it.productId)!;
-    const unitPrice = new Prisma.Decimal(p.mrp);
+    const m = itemMap.get(it.menuItemId)!;
+    const unitPrice = new Prisma.Decimal(m.price);
     const qty = new Prisma.Decimal(it.quantity);
     const discount = new Prisma.Decimal(it.discount);
     const gross = unitPrice.mul(qty);
     const taxable = gross.sub(discount);
-    if (taxable.lessThan(0)) throw AppError.badRequest(`Discount exceeds line total for ${p.name}`);
-    // Counter (B2C) prices are GST-INCLUSIVE: the MRP is what the customer pays, and
-    // the GST is extracted from within it — tax = amount × rate / (100 + rate) — not
-    // added on top. So the line total equals the inclusive price. (The wholesale
-    // order→bill path is a proper GST invoice and stays tax-exclusive; that lives in
-    // billing.service, not here.)
-    const taxPct = new Prisma.Decimal(p.taxPercent);
+    if (taxable.lessThan(0)) throw AppError.badRequest(`Discount exceeds line total for ${m.name}`);
+    // Counter (B2C) prices are GST-INCLUSIVE: the price is what the customer pays,
+    // and the GST is extracted from within it — tax = amount × rate / (100 + rate)
+    // — not added on top. So the line total equals the inclusive price.
+    const taxPct = new Prisma.Decimal(m.taxPercent);
     const taxAmount = taxPct.greaterThan(0)
       ? taxable.mul(taxPct).div(new Prisma.Decimal(100).add(taxPct))
       : new Prisma.Decimal(0);
     subTotal = subTotal.add(gross);
     itemDiscountTotal = itemDiscountTotal.add(discount);
     taxTotal = taxTotal.add(taxAmount);
-    return { productId: p.id, productNameSnapshot: p.name, quantity: qty, unitPrice, discount, taxPercent: taxPct, taxAmount, lineTotal: taxable };
+    // menuItemId links the sale to its menu item; the snapshot fields keep the
+    // line self-contained if that item is later edited or removed.
+    return { menuItemId: m.id, productNameSnapshot: m.name, quantity: qty, unitPrice, discount, taxPercent: taxPct, taxAmount, lineTotal: taxable };
   });
 
   const billDiscount = new Prisma.Decimal(input.billDiscount);
@@ -181,22 +205,9 @@ export async function createTransaction(user: AuthUser, input: CreateTransaction
   // Resolve payment split.
   const { cashAmount, cardAmount, upiAmount, cashReceived, changeGiven } = resolvePayment(input, grandTotal);
 
-  const model = stockModel(session.outletId);
-
-  // Untracked products (e.g. made-to-order / resold-as-is counter items) skip the
-  // stock check entirely — POS can sell them regardless of any ledger quantity.
-  const trackedLines = lineData.filter((line) => productMap.get(line.productId)!.trackInventory);
-
+  // Menu items are counter items with no stock ledger, so a sale touches no
+  // inventory — matching how the shop already runs.
   const txn = await prisma.$transaction(async (tx) => {
-    // Validate + decrement stock — tracked products only.
-    for (const line of trackedLines) {
-      const stock = await model.find(tx, line.productId);
-      if (!stock || new Prisma.Decimal(stock.quantity).lessThan(line.quantity)) {
-        throw AppError.insufficientStock(`Not enough stock for ${line.productNameSnapshot}`);
-      }
-    }
-    for (const line of trackedLines) await model.dec(tx, line.productId, line.quantity);
-
     const receiptNumber = await nextDocNumber(tx, 'POS_RECEIPT');
     const tokenNumber = await nextTokenNumber(tx, session.outletId);
     const created = await tx.posTransaction.create({
@@ -257,13 +268,17 @@ export async function voidTransaction(user: AuthUser, id: string, input: VoidTra
   if (user.role !== UserRole.SUPER_ADMIN && txn.outletId !== user.outletId) throw AppError.forbidden();
 
   const model = stockModel(txn.outletId);
-  const trackedProductIds = new Set(
-    (await prisma.product.findMany({ where: { id: { in: txn.items.map((i) => i.productId) }, trackInventory: true }, select: { id: true } })).map((p) => p.id),
-  );
+  // Menu-item sales never touch stock, so there's nothing to restock for them.
+  // Only legacy product-linked lines (pre-menu sales) with a tracked product
+  // ever decremented inventory, so restore just those.
+  const legacyProductIds = txn.items.map((i) => i.productId).filter((v): v is string => v != null);
+  const trackedProductIds = legacyProductIds.length
+    ? new Set((await prisma.product.findMany({ where: { id: { in: legacyProductIds }, trackInventory: true }, select: { id: true } })).map((p) => p.id))
+    : new Set<string>();
   const updated = await prisma.$transaction(async (tx) => {
-    // Restock only items that are actually tracked (nothing was decremented for untracked ones).
+    // Restock only legacy tracked lines (nothing was decremented for menu items).
     for (const item of txn.items) {
-      if (trackedProductIds.has(item.productId)) await model.inc(tx, item.productId, new Prisma.Decimal(item.quantity));
+      if (item.productId && trackedProductIds.has(item.productId)) await model.inc(tx, item.productId, new Prisma.Decimal(item.quantity));
     }
     await tx.posSession.update({
       where: { id: txn.sessionId },
@@ -333,43 +348,54 @@ export async function updateKotStatus(user: AuthUser, id: string, input: UpdateK
 /** Products with the POS location's current stock, for the product grid. */
 export async function posProducts(user: AuthUser) {
   const outletId = resolveOutlet(user, undefined);
-  const products = await prisma.product.findMany({
-    where: { isDeleted: false, isActive: true, isPosEnabled: true },
-    orderBy: [{ displayOrder: 'asc' }, { sku: 'asc' }],
-    select: { id: true, name: true, sku: true, unit: true, mrp: true, taxPercent: true, photoUrl: true, trackInventory: true, displayOrder: true, category: { select: { id: true, name: true } } },
-  });
-  const stocks = outletId
-    ? await prisma.outletStock.findMany({ where: { outletId }, select: { productId: true, quantity: true } })
-    : await prisma.mainBranchStock.findMany({ select: { productId: true, quantity: true } });
-  const stockMap = new Map(stocks.map((s) => [s.productId, Number(s.quantity)]));
+  const menuId = await resolveMenuId(outletId);
+  if (!menuId) return []; // no menu configured yet → empty counter grid
 
-  // Units sold per product at this location in the last 30 days — used both to
-  // order the grid (best-sellers first) and to flag the quick-pick row.
+  const [items, categories] = await Promise.all([
+    prisma.menuItem.findMany({
+      where: { menuId, isDeleted: false, isAvailable: true },
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true, code: true, unit: true, price: true, taxPercent: true, photoUrl: true, displayOrder: true, categoryId: true },
+    }),
+    prisma.menuCategory.findMany({ where: { menuId, isDeleted: false }, select: { id: true, name: true } }),
+  ]);
+  const catName = new Map(categories.map((c) => [c.id, c.name]));
+
+  // Units sold per menu item at this location in the last 30 days — drives the
+  // "★ Popular" quick-pick row (the grid order itself is the owner's arrangement).
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const sold = await prisma.posTransactionItem.groupBy({
-    by: ['productId'],
+    by: ['menuItemId'],
     where: {
       isDeleted: false,
+      menuItemId: { not: null },
       transaction: { outletId: outletId ?? null, status: PosTransactionStatus.COMPLETED, isDeleted: false, soldAt: { gte: since } },
     },
     _sum: { quantity: true },
     orderBy: { _sum: { quantity: 'desc' } },
   });
-  const soldMap = new Map(sold.map((t) => [t.productId, Number(t._sum.quantity ?? 0)]));
-  const popular = new Set(sold.slice(0, 8).map((t) => t.productId));
+  const soldMap = new Map(sold.map((t) => [t.menuItemId, Number(t._sum.quantity ?? 0)]));
+  const popular = new Set(sold.slice(0, 8).map((t) => t.menuItemId));
 
-  return products
-    .map((p) => ({
-      ...p,
-      stock: p.trackInventory ? stockMap.get(p.id) ?? 0 : null,
-      popular: popular.has(p.id),
-      soldCount: soldMap.get(p.id) ?? 0,
-    }))
-    // Manual menu-board order — cashiers drag cards to arrange the grid, saved
-    // as displayOrder. Ties (and anything not yet arranged) fall back to SKU so
-    // items keep a stable position. The soldCount/popular flags above still
-    // drive the "★ Popular" quick-pick row.
-    .sort((a, b) => a.displayOrder - b.displayOrder || a.sku.localeCompare(b.sku, undefined, { numeric: true }));
+  // Shaped to match the old product payload so the POS UI is unchanged. Menu
+  // items are counter items with no stock ledger, so stock is always null and
+  // trackInventory false. Uncategorised items fall under a synthetic "Other".
+  const UNCAT = { id: 'uncategorised', name: 'Other' };
+  return items.map((it) => ({
+    id: it.id,
+    name: it.name,
+    sku: it.code ?? '',
+    unit: it.unit,
+    mrp: it.price,
+    taxPercent: it.taxPercent,
+    photoUrl: it.photoUrl,
+    trackInventory: false,
+    displayOrder: it.displayOrder,
+    category: it.categoryId ? { id: it.categoryId, name: catName.get(it.categoryId) ?? 'Other' } : UNCAT,
+    stock: null as number | null,
+    popular: popular.has(it.id),
+    soldCount: soldMap.get(it.id) ?? 0,
+  }));
 }
 
 /**
@@ -378,9 +404,13 @@ export async function posProducts(user: AuthUser) {
  * left untouched. Applied in one transaction so the grid can't half-reorder.
  */
 export async function reorderProducts(items: Array<{ id: string; displayOrder: number }>) {
+  // Grid cards are now menu items; the dragged order is saved as their
+  // displayOrder. updateMany (not update) so an id that isn't a menu item is a
+  // no-op rather than an error.
   await prisma.$transaction(
-    items.map((it) => prisma.product.update({ where: { id: it.id }, data: { displayOrder: it.displayOrder } })),
+    items.map((it) => prisma.menuItem.updateMany({ where: { id: it.id }, data: { displayOrder: it.displayOrder } })),
   );
+  cache.invalidateTags(CacheTag.POS);
   return { updated: items.length };
 }
 

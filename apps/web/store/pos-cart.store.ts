@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 export interface CartItem {
-  productId: string;
+  menuItemId: string;
   name: string;
   unit: string;
   mrp: number;
@@ -28,10 +28,10 @@ interface CartState {
   customerPhone: string;
   orderType: OrderType;
   held: HeldBill[];
-  addItem: (p: { productId: string; name: string; unit: string; mrp: number; taxPercent: number }) => void;
-  setQty: (productId: string, qty: number) => void;
-  setItemDiscount: (productId: string, discount: number) => void;
-  removeItem: (productId: string) => void;
+  addItem: (p: { menuItemId: string; name: string; unit: string; mrp: number; taxPercent: number }) => void;
+  setQty: (menuItemId: string, qty: number) => void;
+  setItemDiscount: (menuItemId: string, discount: number) => void;
+  removeItem: (menuItemId: string) => void;
   setBillDiscount: (v: number) => void;
   setCustomer: (name: string, phone: string) => void;
   setOrderType: (t: OrderType) => void;
@@ -49,14 +49,14 @@ export const usePosCart = create<CartState>((set, get) => ({
   held: [],
   addItem: (p) =>
     set((s) => {
-      const existing = s.items.find((i) => i.productId === p.productId);
-      if (existing) return { items: s.items.map((i) => (i.productId === p.productId ? { ...i, quantity: i.quantity + 1 } : i)) };
+      const existing = s.items.find((i) => i.menuItemId === p.menuItemId);
+      if (existing) return { items: s.items.map((i) => (i.menuItemId === p.menuItemId ? { ...i, quantity: i.quantity + 1 } : i)) };
       return { items: [...s.items, { ...p, quantity: 1, discount: 0 }] };
     }),
-  setQty: (productId, qty) =>
-    set((s) => ({ items: qty <= 0 ? s.items.filter((i) => i.productId !== productId) : s.items.map((i) => (i.productId === productId ? { ...i, quantity: qty } : i)) })),
-  setItemDiscount: (productId, discount) => set((s) => ({ items: s.items.map((i) => (i.productId === productId ? { ...i, discount: Math.max(0, discount) } : i)) })),
-  removeItem: (productId) => set((s) => ({ items: s.items.filter((i) => i.productId !== productId) })),
+  setQty: (menuItemId, qty) =>
+    set((s) => ({ items: qty <= 0 ? s.items.filter((i) => i.menuItemId !== menuItemId) : s.items.map((i) => (i.menuItemId === menuItemId ? { ...i, quantity: qty } : i)) })),
+  setItemDiscount: (menuItemId, discount) => set((s) => ({ items: s.items.map((i) => (i.menuItemId === menuItemId ? { ...i, discount: Math.max(0, discount) } : i)) })),
+  removeItem: (menuItemId) => set((s) => ({ items: s.items.filter((i) => i.menuItemId !== menuItemId) })),
   setBillDiscount: (v) => set({ billDiscount: Math.max(0, v) }),
   setCustomer: (customerName, customerPhone) => set({ customerName, customerPhone }),
   setOrderType: (orderType) => set({ orderType }),

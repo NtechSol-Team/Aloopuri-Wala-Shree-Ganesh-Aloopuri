@@ -12,7 +12,7 @@ import { created, ok } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import { documentUpload } from '../../shared/middleware/upload';
 import {
-  createOutletSchema, outletProfileSchema, setOutletPricesSchema, updateOutletSchema, uploadDocumentSchema,
+  assignMenuSchema, createOutletSchema, outletProfileSchema, setOutletPricesSchema, updateOutletSchema, uploadDocumentSchema,
   type CreateOutletInput, type OutletProfileInput, type SetOutletPricesInput, type UpdateOutletInput,
   type UploadDocumentInput,
 } from './outlets.schema';
@@ -68,6 +68,16 @@ router.put(
   requireDeveloperKey,
   validate({ params: idParam, body: setOutletPricesSchema }),
   asyncHandler(async (req: Request, res: Response) => ok(res, await outletsService.setOutletPrices(req.params.id, req.body as SetOutletPricesInput), 'Special prices saved')),
+);
+
+// Assign the outlet's POS menu — main-owner control, not developer-gated.
+router.patch(
+  '/:id/menu',
+  requireRole(UserRole.SUPER_ADMIN),
+  validate({ params: idParam, body: assignMenuSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await outletsService.assignMenu(req.params.id, (req.body as { assignedMenuId: string | null }).assignedMenuId), 'Menu assigned'),
+  ),
 );
 
 // ── Outlet business identity (main owner) ────────────────────────────────────

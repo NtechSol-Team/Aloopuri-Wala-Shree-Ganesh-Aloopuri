@@ -238,46 +238,54 @@ enum PricingMode {
 }
 
 model Outlet {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name             String
-  code             String   @unique
+  code             String      @unique
   address          String?
   phone            String?
-  ownerUserId      String?  @map("owner_user_id") @db.Uuid // app-enforced ref to users.id
-  creditPeriodDays Int      @default(15) @map("credit_period_days")
+  ownerUserId      String?     @map("owner_user_id") @db.Uuid // app-enforced ref to users.id
+  creditPeriodDays Int         @default(15) @map("credit_period_days")
   pricingMode      PricingMode @default(GENERIC) @map("pricing_mode")
   // Whether this outlet is billed with GST. Decided when the outlet is created,
   // because their orders are priced (and paid for) before anyone reviews them.
-  gstBilling       Boolean  @default(true) @map("gst_billing")
+  gstBilling       Boolean     @default(true) @map("gst_billing")
+
+  // Which POS menu this outlet sells from. The Main Owner assigns it; the outlet
+  // only ever loads its assigned menu at the counter. Null = fall back to the
+  // default menu (also what the main-branch till uses). SetNull on menu delete
+  // so removing a menu never orphans an outlet row.
+  assignedMenuId String? @map("assigned_menu_id") @db.Uuid
 
   // ── Outlet's own business identity ───────────────────────────────────────
   // Each outlet is its own shop: it sells to walk-in customers under its own
   // registration, so its POS receipts must carry ITS address and GSTIN, not the
   // parent company's. These also appear as the buyer's details on the invoices
   // the main branch raises against the outlet.
-  legalName     String? @map("legal_name")   // registered name, if it differs from the display name
-  gstin         String?                       // 15-char GSTIN, validated on save
-  fssaiNumber   String? @map("fssai_number")  // food licence — legally required on food receipts
+  legalName     String?  @map("legal_name") // registered name, if it differs from the display name
+  gstin         String? // 15-char GSTIN, validated on save
+  fssaiNumber   String?  @map("fssai_number") // food licence — legally required on food receipts
   email         String?
-  receiptFooter String? @map("receipt_footer") // optional closing line on the outlet's receipts
-  isActive         Boolean  @default(true) @map("is_active")
-  isDeleted        Boolean  @default(false) @map("is_deleted")
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdById      String?  @map("created_by") @db.Uuid
+  receiptFooter String?  @map("receipt_footer") // optional closing line on the outlet's receipts
+  isActive      Boolean  @default(true) @map("is_active")
+  isDeleted     Boolean  @default(false) @map("is_deleted")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById   String?  @map("created_by") @db.Uuid
 
-  members         User[]                @relation("OutletMembers")
+  members         User[]               @relation("OutletMembers")
   orders          OutletOrder[]
   bills           Bill[]
   payments        Payment[]
   outletStock     OutletStock[]
   posSessions     PosSession[]
-  directTransfers StockTransfer[]       @relation("OutletDirectTransfers")
+  directTransfers StockTransfer[]      @relation("OutletDirectTransfers")
   specialPrices   OutletProductPrice[]
   documents       OutletDocument[]
+  assignedMenu    Menu?                @relation(fields: [assignedMenuId], references: [id], onDelete: SetNull)
 
   @@index([isActive])
   @@index([isDeleted])
+  @@index([assignedMenuId])
   @@map("outlets")
 }
 
@@ -407,6 +415,86 @@ model Product {
   @@map("products")
 }
 
+// ─────────────────────────────── MENUS ──────────────────────────────────────
+//
+// A Menu is an outlet-assignable, self-contained POS menu: its categories and
+// items are its OWN copies, NOT references to the shared Product catalog. This
+// is deliberate — the Main Owner can clone a menu and then edit one outlet's
+// prices/categories without touching any other menu (Vesu ₹280 vs Adajan ₹240
+// for the "same" item are just two independent MenuItem rows). Only the Main
+// Owner (SUPER_ADMIN) manages menus; outlets only ever load their assigned one.
+//
+// Menu items are counter items sold as-is (no stock ledger), which is why POS
+// sales of them don't touch inventory — matching how the shop already runs.
+
+model Menu {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  description String?
+  // The menu used when an outlet has no assignment, and by the main-branch till.
+  // Soft invariant (enforced in the service): at most one default at a time.
+  isDefault   Boolean  @default(false) @map("is_default")
+  isActive    Boolean  @default(true) @map("is_active")
+  isDeleted   Boolean  @default(false) @map("is_deleted")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?  @map("created_by") @db.Uuid
+
+  categories MenuCategory[]
+  items      MenuItem[]
+  outlets    Outlet[]
+
+  @@index([isDeleted])
+  @@map("menus")
+}
+
+model MenuCategory {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  menuId       String   @map("menu_id") @db.Uuid
+  name         String
+  displayOrder Int      @default(0) @map("display_order")
+  isDeleted    Boolean  @default(false) @map("is_deleted")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  menu  Menu       @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  items MenuItem[]
+
+  @@index([menuId])
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  menuId       String          @map("menu_id") @db.Uuid
+  categoryId   String?         @map("category_id") @db.Uuid
+  name         String
+  // Optional short code for barcode/quick search (not unique — the same item can
+  // exist in several menus).
+  code         String?
+  unit         MeasurementUnit @default(PIECE)
+  // GST-inclusive counter price (same convention as the current POS mrp).
+  price        Decimal         @db.Decimal(12, 2)
+  taxPercent   Decimal         @default(0) @map("tax_percent") @db.Decimal(5, 2)
+  photoUrl     String?         @map("photo_url")
+  displayOrder Int             @default(0) @map("display_order")
+  // Availability toggle — an unavailable item stays on the menu but is hidden
+  // from (or greyed out on) the counter grid.
+  isAvailable  Boolean         @default(true) @map("is_available")
+  isDeleted    Boolean         @default(false) @map("is_deleted")
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  menu     Menu                 @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  category MenuCategory?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  posItems PosTransactionItem[]
+
+  @@index([menuId])
+  @@index([categoryId])
+  @@index([isDeleted])
+  @@map("menu_items")
+}
+
 model RawMaterial {
   id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name         String
@@ -519,14 +607,14 @@ model ProductionOverhead {
 }
 
 model RawMaterialIntake {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  rawMaterialId String   @map("raw_material_id") @db.Uuid
-  quantity      Decimal  @db.Decimal(12, 2)
-  costPerUnit   Decimal  @map("cost_per_unit") @db.Decimal(12, 2)
-  totalCost     Decimal  @map("total_cost") @db.Decimal(12, 2)
-  supplierName  String?  @map("supplier_name")
-  invoiceNumber String?  @map("invoice_number")
-  intakeDate    DateTime @map("intake_date") @db.Timestamptz(6)
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  rawMaterialId  String   @map("raw_material_id") @db.Uuid
+  quantity       Decimal  @db.Decimal(12, 2)
+  costPerUnit    Decimal  @map("cost_per_unit") @db.Decimal(12, 2)
+  totalCost      Decimal  @map("total_cost") @db.Decimal(12, 2)
+  supplierName   String?  @map("supplier_name")
+  invoiceNumber  String?  @map("invoice_number")
+  intakeDate     DateTime @map("intake_date") @db.Timestamptz(6)
   notes          String?
   hsnCode        String?  @map("hsn_code")
   taxRate        Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 2)
@@ -609,8 +697,8 @@ model StockTransfer {
   updatedAt           DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById         String?             @map("created_by") @db.Uuid
 
-  items            StockTransferItem[]
-  destinationOutlet Outlet?            @relation("OutletDirectTransfers", fields: [destinationOutletId], references: [id])
+  items             StockTransferItem[]
+  destinationOutlet Outlet?             @relation("OutletDirectTransfers", fields: [destinationOutletId], references: [id])
 
   @@index([status, transferDate])
   @@index([destinationOutletId])
@@ -637,35 +725,35 @@ model StockTransferItem {
 // ─────────────────────────────── OUTLET ORDERS ──────────────────────────────
 
 model OutletOrder {
-  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  orderNumber  String            @unique @map("order_number")
-  outletId     String            @map("outlet_id") @db.Uuid
-  status       OutletOrderStatus @default(PAYMENT_PENDING)
-  orderDate    DateTime          @default(now()) @map("order_date") @db.Timestamptz(6)
-  confirmedAt  DateTime?         @map("confirmed_at") @db.Timestamptz(6)
-  dispatchedAt DateTime?         @map("dispatched_at") @db.Timestamptz(6)
-  deliveredAt  DateTime?         @map("delivered_at") @db.Timestamptz(6)
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderNumber        String             @unique @map("order_number")
+  outletId           String             @map("outlet_id") @db.Uuid
+  status             OutletOrderStatus  @default(PAYMENT_PENDING)
+  orderDate          DateTime           @default(now()) @map("order_date") @db.Timestamptz(6)
+  confirmedAt        DateTime?          @map("confirmed_at") @db.Timestamptz(6)
+  dispatchedAt       DateTime?          @map("dispatched_at") @db.Timestamptz(6)
+  deliveredAt        DateTime?          @map("delivered_at") @db.Timestamptz(6)
   // How the outlet chose to settle this order — picked right after placing it.
-  paymentMode  OrderPaymentMode? @map("payment_mode")
+  paymentMode        OrderPaymentMode?  @map("payment_mode")
   // Razorpay order id of the in-flight/last checkout attempt (online orders only).
-  razorpayOrderId String?        @map("razorpay_order_id")
+  razorpayOrderId    String?            @map("razorpay_order_id")
   // Set at dispatch: which location the stock was pulled from.
-  fulfillmentSource FulfillmentSource? @map("fulfillment_source")
+  fulfillmentSource  FulfillmentSource? @map("fulfillment_source")
   // Whether the resulting bill carries GST — seeded from the outlet's billing
   // preference at placement (the price the outlet pays depends on it), and still
   // adjustable by the main owner while approving a credit order.
-  isGstBill    Boolean           @default(true) @map("is_gst_bill")
+  isGstBill          Boolean            @default(true) @map("is_gst_bill")
   // Credit approval / rejection trail.
-  approvedAt         DateTime? @map("approved_at") @db.Timestamptz(6)
-  approvedById       String?   @map("approved_by") @db.Uuid
-  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
-  cancelledById      String?   @map("cancelled_by") @db.Uuid
-  cancellationReason String?   @map("cancellation_reason")
-  notes        String?
-  isDeleted    Boolean           @default(false) @map("is_deleted")
-  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdById  String?           @map("created_by") @db.Uuid
+  approvedAt         DateTime?          @map("approved_at") @db.Timestamptz(6)
+  approvedById       String?            @map("approved_by") @db.Uuid
+  cancelledAt        DateTime?          @map("cancelled_at") @db.Timestamptz(6)
+  cancelledById      String?            @map("cancelled_by") @db.Uuid
+  cancellationReason String?            @map("cancellation_reason")
+  notes              String?
+  isDeleted          Boolean            @default(false) @map("is_deleted")
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById        String?            @map("created_by") @db.Uuid
 
   outlet Outlet            @relation(fields: [outletId], references: [id])
   items  OutletOrderItem[]
@@ -963,7 +1051,12 @@ model PosTransaction {
 model PosTransactionItem {
   id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   transactionId       String   @map("transaction_id") @db.Uuid
-  productId           String   @map("product_id") @db.Uuid
+  // Exactly one source is set: menuItemId for menu-based sales (the current
+  // model), productId for historical catalog-based sales made before menus
+  // existed. Both are nullable and the line is self-contained via the snapshot
+  // fields below, so a sale survives even if its source item is later deleted.
+  productId           String?  @map("product_id") @db.Uuid
+  menuItemId          String?  @map("menu_item_id") @db.Uuid
   productNameSnapshot String   @map("product_name_snapshot")
   quantity            Decimal  @db.Decimal(12, 2)
   unitPrice           Decimal  @map("unit_price") @db.Decimal(12, 2)
@@ -976,10 +1069,12 @@ model PosTransactionItem {
   updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   transaction PosTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  product     Product        @relation(fields: [productId], references: [id])
+  product     Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  menuItem    MenuItem?      @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
 
   @@index([transactionId])
   @@index([productId])
+  @@index([menuItemId])
   @@map("pos_transaction_items")
 }
 
@@ -1108,28 +1203,28 @@ enum ContactType {
 }
 
 model Contact {
-  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  type        ContactType @default(CUSTOMER)
-  name        String
-  gstin       String?
-  legalName   String?     @map("legal_name")
-  tradeName   String?     @map("trade_name")
-  stateCode   String?     @map("state_code")
-  stateName   String?     @map("state_name")
-  address     String?
-  phone       String?
-  whatsapp    String?
-  email       String?
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type              ContactType @default(CUSTOMER)
+  name              String
+  gstin             String?
+  legalName         String?     @map("legal_name")
+  tradeName         String?     @map("trade_name")
+  stateCode         String?     @map("state_code")
+  stateName         String?     @map("state_name")
+  address           String?
+  phone             String?
+  whatsapp          String?
+  email             String?
   // Bank details — all optional, mainly useful for suppliers/other paid by transfer.
-  bankAccountHolder String? @map("bank_account_holder")
-  bankName          String? @map("bank_name")
-  bankAccountNumber String? @map("bank_account_number")
-  bankIfsc          String? @map("bank_ifsc")
-  isActive    Boolean     @default(true) @map("is_active")
-  isDeleted   Boolean     @default(false) @map("is_deleted")
-  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdById String?     @map("created_by") @db.Uuid
+  bankAccountHolder String?     @map("bank_account_holder")
+  bankName          String?     @map("bank_name")
+  bankAccountNumber String?     @map("bank_account_number")
+  bankIfsc          String?     @map("bank_ifsc")
+  isActive          Boolean     @default(true) @map("is_active")
+  isDeleted         Boolean     @default(false) @map("is_deleted")
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById       String?     @map("created_by") @db.Uuid
 
   @@index([type])
   @@index([gstin])

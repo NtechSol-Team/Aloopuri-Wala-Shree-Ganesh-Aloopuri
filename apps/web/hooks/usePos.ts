@@ -34,7 +34,7 @@ export interface PosSession {
 export type KotStatus = 'PREPARING' | 'READY' | 'DELIVERED';
 export type PosOrderType = 'DINE_IN' | 'PARCEL';
 
-export interface PosTxnItem { productId: string; quantity: number; discount: number }
+export interface PosTxnItem { menuItemId: string; quantity: number; discount: number }
 
 export interface PosTxnItemDetail {
   id: string;

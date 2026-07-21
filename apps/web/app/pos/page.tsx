@@ -107,6 +107,9 @@ function OpenSessionScreen() {
 function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionNumber: string }) {
   const { data: products, isLoading } = usePosProducts();
   const cashierName = useAuthStore((s) => s.user?.name);
+  // Only the Main Owner arranges the menu grid — an outlet's menu is owner-managed
+  // and may be shared, so outlet tills are read-only (no Arrange mode).
+  const isOwner = useAuthStore((s) => s.user?.role) === 'SUPER_ADMIN';
   const logout = useLogout();
   const qc = useQueryClient();
   const cart = usePosCart();
@@ -239,13 +242,13 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   // with the count so the cashier sees at a glance what's already been added.
   const cartQtyById = useMemo(() => {
     const m = new Map<string, number>();
-    for (const i of cart.items) m.set(i.productId, (m.get(i.productId) ?? 0) + i.quantity);
+    for (const i of cart.items) m.set(i.menuItemId, (m.get(i.menuItemId) ?? 0) + i.quantity);
     return m;
   }, [cart.items]);
 
   // Arranging only makes sense on a stable list — not the dynamic ★ Popular
   // view, and not a search result subset.
-  const canReorder = activeCat !== 'popular' && search.trim() === '';
+  const canReorder = isOwner && activeCat !== 'popular' && search.trim() === '';
   // Leaving that stable list (searching, or switching to ★ Popular) drops us
   // back to selling rather than stranding the terminal in arrange mode.
   useEffect(() => { if (!canReorder) setArranging(false); }, [canReorder]);
@@ -270,8 +273,8 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const addProduct = (p: PosProduct) => {
     if (p.trackInventory && p.stock !== null && p.stock <= 0) { beepError(); toast.error(`${p.name} is out of stock`); return; }
     const buffered = parseFloat(qtyBuffer);
-    const existing = cart.items.find((i) => i.productId === p.id);
-    cart.addItem({ productId: p.id, name: p.name, unit: p.unit, mrp: Number(p.mrp), taxPercent: Number(p.taxPercent) });
+    const existing = cart.items.find((i) => i.menuItemId === p.id);
+    cart.addItem({ menuItemId: p.id, name: p.name, unit: p.unit, mrp: Number(p.mrp), taxPercent: Number(p.taxPercent) });
     if (!Number.isNaN(buffered) && buffered > 0) cart.setQty(p.id, (existing?.quantity ?? 0) + buffered);
     setQtyBuffer('');
     beepAdd();
@@ -302,7 +305,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
       clientUuid: crypto.randomUUID(),
       orderType: cart.orderType,
       billDiscount: cart.billDiscount,
-      items: cart.items.map((i) => ({ productId: i.productId, quantity: i.quantity, discount: i.discount })),
+      items: cart.items.map((i) => ({ menuItemId: i.menuItemId, quantity: i.quantity, discount: i.discount })),
       ...payload,
     };
     if (!navigator.onLine) {
@@ -406,7 +409,7 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         ) : (
           <div className="space-y-2">
             {cart.items.map((i) => (
-              <SwipeToDeleteRow key={i.productId} onDelete={() => cart.removeItem(i.productId)}>
+              <SwipeToDeleteRow key={i.menuItemId} onDelete={() => cart.removeItem(i.menuItemId)}>
                 <div className="border border-border">
                   <button className="flex w-full items-center justify-between p-2.5 text-left" onClick={() => setEditingLine(i)}>
                     <div className="min-w-0">
@@ -420,11 +423,11 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
                   </button>
                   <div className="flex items-center justify-between border-t border-border px-2.5 py-1.5">
                     <div className="flex items-center gap-1.5">
-                      <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => cart.setQty(i.productId, i.quantity - 1)}><Minus className="h-4 w-4" /></Button>
+                      <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => cart.setQty(i.menuItemId, i.quantity - 1)}><Minus className="h-4 w-4" /></Button>
                       <span className="w-10 text-center font-bold">{i.quantity}</span>
-                      <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => cart.setQty(i.productId, i.quantity + 1)}><Plus className="h-4 w-4" /></Button>
+                      <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => cart.setQty(i.menuItemId, i.quantity + 1)}><Plus className="h-4 w-4" /></Button>
                     </div>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => cart.removeItem(i.productId)}><Trash2 className="h-4 w-4 text-danger" /></Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => cart.removeItem(i.menuItemId)}><Trash2 className="h-4 w-4 text-danger" /></Button>
                   </div>
                 </div>
               </SwipeToDeleteRow>

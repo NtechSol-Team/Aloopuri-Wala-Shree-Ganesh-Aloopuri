@@ -25,9 +25,9 @@ const user = (req: Request) => {
 };
 
 router.get('/products', asyncHandler(async (req: Request, res: Response) => ok(res, await posService.posProducts(user(req)))));
-// Save a dragged grid order. Any POS user may rearrange their counter; the
-// order is a shared presentation setting on the product catalog.
-router.patch('/products/order', validate({ body: reorderProductsSchema }), asyncHandler(async (req: Request, res: Response) => ok(res, await posService.reorderProducts((req.body as ReorderProductsInput).items), 'Order saved')));
+// Save a dragged grid order. Owner-only: the grid is a menu the Main Owner owns,
+// and it may be shared by several outlets — an outlet must not reorder it.
+router.patch('/products/order', requireRole(UserRole.SUPER_ADMIN), validate({ body: reorderProductsSchema }), asyncHandler(async (req: Request, res: Response) => ok(res, await posService.reorderProducts((req.body as ReorderProductsInput).items), 'Order saved')));
 
 router.get('/sessions/current', asyncHandler(async (req: Request, res: Response) => ok(res, await posService.getCurrentSession(user(req)))));
 router.post('/sessions', validate({ body: openSessionSchema }), asyncHandler(async (req: Request, res: Response) => created(res, await posService.openSession(user(req), req.body as OpenSessionInput), 'Session opened')));

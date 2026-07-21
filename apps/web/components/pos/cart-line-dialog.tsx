@@ -40,7 +40,7 @@ export function CartLineDialog({
 
   useEffect(() => {
     if (item) { setField('QTY'); setBuf(''); }
-  }, [item?.productId]);
+  }, [item?.menuItemId]);
 
   if (!item) return null;
 
@@ -58,9 +58,9 @@ export function CartLineDialog({
   const commit = () => {
     const v = buf === '' ? current[field] : parseFloat(buf);
     if (Number.isNaN(v) || v < 0) { onClose(); return; }
-    if (field === 'QTY') onQty(item.productId, v);
-    else if (field === 'DISCOUNT') onDiscount(item.productId, v);
-    else onDiscount(item.productId, Math.max(0, item.mrp * item.quantity - v));
+    if (field === 'QTY') onQty(item.menuItemId, v);
+    else if (field === 'DISCOUNT') onDiscount(item.menuItemId, v);
+    else onDiscount(item.menuItemId, Math.max(0, item.mrp * item.quantity - v));
     onClose();
   };
 

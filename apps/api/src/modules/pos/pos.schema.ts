@@ -24,7 +24,7 @@ export const createTransactionSchema = z.object({
   items: z
     .array(
       z.object({
-        productId: z.string().uuid(),
+        menuItemId: z.string().uuid(),
         quantity: z.coerce.number().positive(),
         discount: z.coerce.number().nonnegative().default(0),
       }),

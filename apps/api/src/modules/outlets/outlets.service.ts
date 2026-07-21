@@ -1,4 +1,5 @@
 import { prisma } from '../../config/prisma';
+import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import type {
   CreateOutletInput, OutletProfileInput, SetOutletPricesInput, UpdateOutletInput,
@@ -10,6 +11,8 @@ const outletSelect = {
   // The outlet's own business identity — printed on its receipts and shown as the
   // buyer's details on the invoices the main branch raises against it.
   legalName: true, gstin: true, fssaiNumber: true, email: true, receiptFooter: true,
+  // Which POS menu this outlet sells from (assigned by the main owner).
+  assignedMenuId: true, assignedMenu: { select: { id: true, name: true } },
 } as const;
 
 export async function listOutlets() {
@@ -35,6 +38,23 @@ export async function updateOutlet(id: string, input: UpdateOutletInput) {
     if (clash) throw AppError.conflict('An outlet with this code already exists', 'code');
   }
   return prisma.outlet.update({ where: { id }, data: input, select: outletSelect });
+}
+
+/**
+ * Assign (or clear) the outlet's POS menu. Main-owner control — not behind the
+ * developer window, since it's a routine day-to-day decision. `null` clears the
+ * assignment, so the outlet falls back to the default menu at the counter.
+ * Busts POS cache so the counter reloads the new menu on its next fetch.
+ */
+export async function assignMenu(id: string, assignedMenuId: string | null) {
+  await getOutlet(id);
+  if (assignedMenuId) {
+    const menu = await prisma.menu.findFirst({ where: { id: assignedMenuId, isDeleted: false }, select: { id: true } });
+    if (!menu) throw AppError.badRequest('That menu does not exist', undefined, 'assignedMenuId');
+  }
+  const outlet = await prisma.outlet.update({ where: { id }, data: { assignedMenuId }, select: outletSelect });
+  cache.invalidateTags(CacheTag.POS, CacheTag.outlet(id));
+  return outlet;
 }
 
 /**
@@ -79,5 +99,5 @@ export async function setOutletPrices(outletId: string, input: SetOutletPricesIn
 }
 
 export const outletsService = {
-  listOutlets, getOutlet, createOutlet, updateOutlet, updateOutletProfile, getOutletPrices, setOutletPrices,
+  listOutlets, getOutlet, createOutlet, updateOutlet, assignMenu, updateOutletProfile, getOutletPrices, setOutletPrices,
 };
