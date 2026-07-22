@@ -59,6 +59,17 @@
   }
 }
 
+/* POS grid cards: let the browser skip rendering off-screen cards. On the
+   shop's low-end tablet this is the biggest paint win — only visible cards
+   cost anything. contain-intrinsic-size reserves a ~190px slot for a not-yet-
+   painted card so scroll position and the scrollbar stay stable. */
+@layer utilities {
+  .pos-card-cv {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 190px;
+  }
+}
+
 /* Thin, unobtrusive scrollbars for data-dense screens; momentum scroll on iOS. */
 @layer utilities {
   .scrollbar-thin {

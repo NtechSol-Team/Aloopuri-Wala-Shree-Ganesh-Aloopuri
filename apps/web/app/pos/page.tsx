@@ -38,25 +38,18 @@ import { PrinterSettingsDialog } from '@/components/printer-settings-dialog';
 /**
  * Vibrant per-item colour, hashed off the product id, so the grid reads like a
  * colourful menu board (the client's old POS look) instead of a wall of look-
- * alike tiles. Each entry is a gradient background that fills a no-photo tile
- * AND tints the name bar, giving every item one consistent identity colour.
- * All shades are dark enough that bold white text sits legibly on top.
+ * alike tiles. It fills a no-photo tile AND tints the name bar, giving every
+ * item one consistent identity colour.
+ *
+ * Solid (not gradient) on purpose: a gradient background-image repaints far more
+ * expensively than a flat colour on the shop's low-end tablet GPU, and the old
+ * menu board these mimic was solid colour anyway. All shades read with white text.
  */
 const CARD_COLORS = [
-  'from-rose-500 to-rose-700',
-  'from-orange-500 to-orange-700',
-  'from-amber-500 to-amber-700',
-  'from-lime-500 to-lime-700',
-  'from-emerald-500 to-emerald-700',
-  'from-teal-500 to-teal-700',
-  'from-cyan-500 to-cyan-700',
-  'from-sky-500 to-sky-700',
-  'from-blue-500 to-blue-700',
-  'from-indigo-500 to-indigo-700',
-  'from-violet-500 to-violet-700',
-  'from-fuchsia-500 to-fuchsia-700',
-  'from-pink-500 to-pink-700',
-  'from-red-500 to-red-700',
+  'bg-rose-500', 'bg-orange-500', 'bg-amber-600', 'bg-lime-600',
+  'bg-emerald-600', 'bg-teal-600', 'bg-cyan-600', 'bg-sky-600',
+  'bg-blue-600', 'bg-indigo-500', 'bg-violet-600', 'bg-fuchsia-600',
+  'bg-pink-600', 'bg-red-500',
 ];
 function cardColor(id: string): string {
   let h = 0;
@@ -843,6 +836,11 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
         // transition-transform (not transition-all): on a low-end tablet
         // animating every property is a needless per-frame style recalc.
         'group relative flex flex-col self-start overflow-hidden rounded-xl border bg-card text-left shadow-sm transition-transform hover:shadow-md active:scale-[0.98] disabled:opacity-45',
+        // Skip layout+paint for cards scrolled off-screen — a real win on the
+        // shop's low-end tablet GPU. Not while arranging (dnd-kit must measure
+        // every card). The intrinsic size reserves a slot so the scrollbar and
+        // scroll position stay stable before an off-screen card paints.
+        !drag && 'pos-card-cv',
         // In the bill → green frame so it's obvious at a glance what's added.
         inCart ? 'border-success ring-[1.5px] ring-success' : 'border-border',
         flashing && !inCart && 'ring-2 ring-primary',
@@ -859,11 +857,15 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
             src={imgSrc}
             alt={product.name}
             loading="lazy"
+            decoding="async"
             onError={() => setImgFailed(true)}
-            className={cn('h-full w-full object-cover transition-transform duration-200 group-hover:scale-105', out && 'grayscale')}
+            // No hover-scale/transition: it forced a composited layer + repaint
+            // per photo card, which the low-end tablet GPU can't spare — and
+            // there's no hover on a touch till anyway.
+            className={cn('h-full w-full object-cover', out && 'grayscale')}
           />
         ) : (
-          <div className={cn('relative flex h-full w-full items-center justify-center overflow-hidden bg-gradient-to-br', color)}>
+          <div className={cn('relative flex h-full w-full items-center justify-center overflow-hidden', color)}>
             {/* Big translucent initial as a watermark, so a photo-less tile still
                 has some texture and isn't a flat block of colour. */}
             <span className="absolute -right-2 -top-3 select-none text-7xl font-black leading-none text-white/15">
@@ -902,7 +904,7 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
       {/* Name — the item's identity colour so every card reads distinctly (not a
           uniform black bar). No fixed height, so a long name grows the bar
           instead of being clipped. */}
-      <div className={cn('bg-gradient-to-r px-1.5 py-1.5', color)}>
+      <div className={cn('px-1.5 py-1.5', color)}>
         <p className="whitespace-normal break-words text-[16px] font-extrabold leading-tight text-white drop-shadow-sm">{product.name}</p>
       </div>
     </button>
