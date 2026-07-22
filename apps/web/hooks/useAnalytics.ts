@@ -54,8 +54,20 @@ export function useOutletPerformance() {
 export function useInventoryAnalytics() {
   return useQuery({ queryKey: ['analytics', 'inventory'], queryFn: async () => (await api.get<ApiSuccess<InventoryAnalytics>>('/analytics/inventory')).data.data });
 }
-export function usePosAnalytics() {
-  return useQuery({ queryKey: ['analytics', 'pos'], queryFn: async () => (await api.get<ApiSuccess<PosAnalytics>>('/analytics/pos')).data.data });
+/**
+ * POS counter analytics. Pass an outletId to drill into one outlet (Main Owner
+ * only — the server pins franchise owners to their own outlet regardless).
+ * Omit / pass 'main' for the main-branch till. `enabled` lets the admin picker
+ * hold off until an outlet is chosen.
+ */
+export function usePosAnalytics(outletId?: string | 'main' | null, enabled = true) {
+  const scoped = outletId && outletId !== 'main' ? outletId : undefined;
+  return useQuery({
+    queryKey: ['analytics', 'pos', outletId ?? 'self'],
+    enabled,
+    queryFn: async () =>
+      (await api.get<ApiSuccess<PosAnalytics>>('/analytics/pos', { params: scoped ? { outletId: scoped } : {} })).data.data,
+  });
 }
 
 export interface OutletDetail {

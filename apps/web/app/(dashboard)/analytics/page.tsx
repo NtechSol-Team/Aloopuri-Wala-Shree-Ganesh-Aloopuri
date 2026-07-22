@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { AlertTriangle, ChevronRight, Receipt, Ban, ReceiptText, Clock, Search, Printer, ArrowUpDown } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Receipt, Ban, ReceiptText, Clock, Search, Printer, ArrowUpDown, Store, ArrowLeft } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +13,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { cn, formatINR } from '@/lib/utils';
 import { useRevenueTrend, useTopProducts, useFinancial, useOutletPerformance, useInventoryAnalytics, usePosAnalytics, type TrendPeriod } from '@/hooks/useAnalytics';
+import { useOutlets } from '@/hooks/useOutlets';
 import { TrendingUp, Wallet, BadgeIndianRupee } from 'lucide-react';
 import { OutletDetailDialog } from '@/components/analytics/outlet-detail-dialog';
 import { useAuthStore } from '@/store/auth.store';
@@ -34,7 +35,7 @@ export default function AnalyticsPage() {
     return (
       <div className="space-y-5">
         <p className="text-caption text-muted-foreground">Your outlet&apos;s POS collections.</p>
-        <PosTab />
+        <PosDetail />
       </div>
     );
   }
@@ -116,8 +117,65 @@ function TopChart({ title, data, money }: { title: string; data: Array<{ name: s
   );
 }
 
+/**
+ * Admin POS tab: pick an outlet (or the main-branch till), then drill into its
+ * full analytics. A franchise owner never reaches here — they get PosDetail for
+ * their own outlet directly.
+ */
 function PosTab() {
-  const { data, isLoading } = usePosAnalytics();
+  const { data: outlets } = useOutlets();
+  const [scope, setScope] = useState<{ id: string | 'main'; name: string } | null>(null);
+
+  if (scope) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setScope(null)}><ArrowLeft className="h-4 w-4" /> All outlets</Button>
+          <div>
+            <p className="text-body font-semibold">{scope.name}</p>
+            <p className="text-caption text-muted-foreground">POS analytics</p>
+          </div>
+        </div>
+        <PosDetail outletId={scope.id} />
+      </div>
+    );
+  }
+
+  const active = (outlets ?? []).filter((o) => o.isActive);
+  return (
+    <div className="space-y-3">
+      <p className="text-caption text-muted-foreground">Choose a till to see its full POS analytics — sales trend, peak hours, top-selling items, payment mix and cashier performance.</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Main-branch till (SUPER_ADMIN sells here directly). */}
+        <PosOutletCard name="Main Branch" sub="Head-office till" onClick={() => setScope({ id: 'main', name: 'Main Branch' })} />
+        {active.map((o) => (
+          <PosOutletCard key={o.id} name={o.name} sub={o.code} onClick={() => setScope({ id: o.id, name: o.name })} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PosOutletCard({ name, sub, onClick }: { name: string; sub: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="group flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-all hover:border-primary/50 hover:shadow-md active:scale-[0.99]"
+    >
+      <span className="flex items-center gap-3 min-w-0">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Store className="h-5 w-5" /></span>
+        <span className="min-w-0">
+          <span className="block truncate font-semibold">{name}</span>
+          <span className="block truncate text-caption text-muted-foreground">{sub}</span>
+        </span>
+      </span>
+      <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+    </button>
+  );
+}
+
+function PosDetail({ outletId }: { outletId?: string | 'main' }) {
+  const { data, isLoading } = usePosAnalytics(outletId);
   if (isLoading || !data) return <Skeleton className="h-72" />;
   const { summary } = data;
   const peakHour = data.byHour.reduce((best, h) => (h.revenue > best.revenue ? h : best), data.byHour[0]);
