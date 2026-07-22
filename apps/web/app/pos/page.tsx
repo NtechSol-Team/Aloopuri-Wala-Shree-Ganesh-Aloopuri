@@ -35,27 +35,33 @@ import { EodDialog } from '@/components/pos/eod-dialog';
 import { TxnsDrawer } from '@/components/pos/txns-drawer';
 import { PrinterSettingsDialog } from '@/components/printer-settings-dialog';
 
-/** Stable-but-varied light accent color per product (no-image fallback tiles) —
- *  hashed off the product id so neighbouring items in the same category don't
- *  all land on the same color, matching the client's old POS menu board look. */
-const TILE_COLORS = [
-  'bg-orange-500/15 text-orange-600',
-  'bg-emerald-500/15 text-emerald-600',
-  'bg-sky-500/15 text-sky-600',
-  'bg-violet-500/15 text-violet-600',
-  'bg-rose-500/15 text-rose-600',
-  'bg-amber-500/15 text-amber-700',
-  'bg-pink-500/15 text-pink-600',
-  'bg-cyan-500/15 text-cyan-600',
-  'bg-lime-500/15 text-lime-700',
-  'bg-fuchsia-500/15 text-fuchsia-600',
-  'bg-indigo-500/15 text-indigo-600',
-  'bg-teal-500/15 text-teal-600',
+/**
+ * Vibrant per-item colour, hashed off the product id, so the grid reads like a
+ * colourful menu board (the client's old POS look) instead of a wall of look-
+ * alike tiles. Each entry is a gradient background that fills a no-photo tile
+ * AND tints the name bar, giving every item one consistent identity colour.
+ * All shades are dark enough that bold white text sits legibly on top.
+ */
+const CARD_COLORS = [
+  'from-rose-500 to-rose-700',
+  'from-orange-500 to-orange-700',
+  'from-amber-500 to-amber-700',
+  'from-lime-500 to-lime-700',
+  'from-emerald-500 to-emerald-700',
+  'from-teal-500 to-teal-700',
+  'from-cyan-500 to-cyan-700',
+  'from-sky-500 to-sky-700',
+  'from-blue-500 to-blue-700',
+  'from-indigo-500 to-indigo-700',
+  'from-violet-500 to-violet-700',
+  'from-fuchsia-500 to-fuchsia-700',
+  'from-pink-500 to-pink-700',
+  'from-red-500 to-red-700',
 ];
-function tileColor(id: string): string {
+function cardColor(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
-  return TILE_COLORS[Math.abs(h) % TILE_COLORS.length];
+  return CARD_COLORS[Math.abs(h) % CARD_COLORS.length];
 }
 
 type PayMode = 'CASH' | 'UPI' | 'SPLIT';
@@ -817,6 +823,8 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
   const [imgFailed, setImgFailed] = useState(false);
   const imgSrc = imgFailed ? null : productImageSrc(product);
   const tap = useTapToAdd(() => onAdd(product), !!drag);
+  // This item's identity colour — fills the no-photo tile and tints the name bar.
+  const color = cardColor(product.id);
 
   return (
     <button
@@ -855,8 +863,15 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
             className={cn('h-full w-full object-cover transition-transform duration-200 group-hover:scale-105', out && 'grayscale')}
           />
         ) : (
-          <div className={cn('flex h-full w-full items-center justify-center text-3xl font-black', tileColor(product.id))}>
-            {product.name.replace(/[^\p{L}\p{N}]/u, '').charAt(0) || '•'}
+          <div className={cn('relative flex h-full w-full items-center justify-center overflow-hidden bg-gradient-to-br', color)}>
+            {/* Big translucent initial as a watermark, so a photo-less tile still
+                has some texture and isn't a flat block of colour. */}
+            <span className="absolute -right-2 -top-3 select-none text-7xl font-black leading-none text-white/15">
+              {product.name.replace(/[^\p{L}\p{N}]/u, '').charAt(0) || '•'}
+            </span>
+            <span className="text-4xl font-black text-white drop-shadow">
+              {product.name.replace(/[^\p{L}\p{N}]/u, '').charAt(0) || '•'}
+            </span>
           </div>
         )}
 
@@ -884,10 +899,11 @@ function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product
         </span>
       </div>
 
-      {/* Name — dark translucent bar (not clipped like the image above: no
-          fixed height here, so a long name just grows the bar, never cuts off). */}
-      <div className="bg-black/80 px-1.5 py-1.5">
-        <p className="whitespace-normal break-words text-[16px] font-extrabold leading-tight text-white">{product.name}</p>
+      {/* Name — the item's identity colour so every card reads distinctly (not a
+          uniform black bar). No fixed height, so a long name grows the bar
+          instead of being clipped. */}
+      <div className={cn('bg-gradient-to-r px-1.5 py-1.5', color)}>
+        <p className="whitespace-normal break-words text-[16px] font-extrabold leading-tight text-white drop-shadow-sm">{product.name}</p>
       </div>
     </button>
   );
