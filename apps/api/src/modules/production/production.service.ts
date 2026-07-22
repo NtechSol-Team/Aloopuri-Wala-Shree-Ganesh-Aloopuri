@@ -390,12 +390,15 @@ export async function logPurchase(input: PurchaseInput, userId: string) {
 /**
  * Reverses every side effect of an existing purchase bill's line items (stock, weighted-avg
  * cost, expenses) and removes its itemized rows — leaving only the bill header behind, ready
- * for either a fresh set of lines (edit) or a final soft-delete.
+ * for either a fresh set of lines (edit) or a final soft-delete. Any payments recorded on the
+ * bill are removed by the callers (updatePurchase re-creates the at-entry one; deletePurchase
+ * drops them) — the owner is warned in the UI first, since deleting a paid bill also erases
+ * that supplier-payment record.
  *
- * Refuses (throws, touching nothing) if: the bill has any payment recorded against it — once
- * money has moved, undoing the bill would desync real payment history — or if reversing a
- * raw-material/finished-good line would drive stock negative, meaning some of it has already
- * been consumed/moved elsewhere and can no longer be cleanly un-received.
+ * Still refuses (throws, touching nothing) if reversing a raw-material/finished-good line would
+ * drive stock negative — meaning some of it has already been consumed/moved elsewhere and can
+ * no longer be cleanly un-received. That stock guard is a hard data-integrity limit, not a
+ * policy choice.
  *
  * The weighted-average-cost reversal is mathematically exact as long as that stock guard
  * holds: consumption only ever decrements currentStock (never costPerUnit), so subtracting
@@ -407,13 +410,9 @@ async function reversePurchaseEffects(tx: Prisma.TransactionClient, billId: stri
     where: { id: billId, isDeleted: false },
     include: {
       items: { where: { isDeleted: false } },
-      payments: { where: { isDeleted: false } },
     },
   });
   if (!bill) throw AppError.notFound('Purchase bill not found');
-  if (bill.payments.length > 0) {
-    throw AppError.conflict('This bill has a payment recorded against it — it can no longer be edited or deleted.');
-  }
 
   // Validate every reversal is safe BEFORE mutating anything.
   for (const item of bill.items) {
@@ -514,12 +513,39 @@ export async function updatePurchase(id: string, input: PurchaseInput, userId: s
   };
 }
 
-/** Delete a purchase bill: reverse its effects, then soft-delete the header. */
+/**
+ * Delete a purchase bill: reverse its stock/cost/expense effects and remove its
+ * payments, then remove the header.
+ *
+ * Numbering ("reuse only if it's the last one"): if this bill holds the most
+ * recently issued number, it is HARD-deleted and the shared counter rolls back
+ * one, so the next purchase takes that number again with no gap. (Soft-deleting
+ * it wouldn't free the number — `billNumber` is unique across every row,
+ * including deleted ones — so the reuse would collide.) Deleting any older bill
+ * instead SOFT-deletes it: its number is retired (a gap remains) and no other
+ * bill's number is ever rewritten, keeping the audit trail intact.
+ */
 export async function deletePurchase(id: string) {
   await prisma.$transaction(async (tx) => {
+    const bill = await tx.supplierBill.findFirst({ where: { id, isDeleted: false }, select: { billNumber: true } });
+    if (!bill) throw AppError.notFound('Purchase bill not found');
     await reversePurchaseEffects(tx, id);
     await tx.supplierPayment.deleteMany({ where: { supplierBillId: id } });
-    await tx.supplierBill.update({ where: { id }, data: { isDeleted: true } });
+
+    const seq = Number.parseInt(bill.billNumber.split('-').pop() ?? '', 10);
+    const counter = Number.isFinite(seq)
+      ? await tx.documentCounter.findUnique({ where: { key: 'SUPPLIER_BILL' }, select: { value: true } })
+      : null;
+    const isLatest = !!counter && Number(counter.value) === seq;
+
+    if (isLatest) {
+      // Free the number and hand it back: hard-delete (its child rows are all
+      // gone now) and roll the counter back one.
+      await tx.supplierBill.delete({ where: { id } });
+      await tx.documentCounter.update({ where: { key: 'SUPPLIER_BILL' }, data: { value: { decrement: 1 } } });
+    } else {
+      await tx.supplierBill.update({ where: { id }, data: { isDeleted: true } });
+    }
   });
   cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
   return { deleted: true };

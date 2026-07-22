@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { format, differenceInCalendarDays } from 'date-fns';
-import { Plus, Search, Eye, ShoppingBag, Boxes, Package, Tag, IndianRupee, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Search, ShoppingBag, Boxes, Package, Tag, IndianRupee, Pencil, Trash2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,8 +44,11 @@ export default function PurchasesPage() {
   const [recordOpen, setRecordOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [payTarget, setPayTarget] = useState<SupplierBillRef | null>(null);
-  const [editBill, setEditBill] = useState<PurchaseBillDetail | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<PurchaseBillDetail | null>(null);
+  // Edit is driven by a bill id (fetched on demand) so it works straight from a
+  // row, not just from inside the detail dialog.
+  const [editId, setEditId] = useState<string | null>(null);
+  const { data: editDetail } = usePurchaseDetail(editId);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteRef | null>(null);
 
   return (
     <div className="space-y-5">
@@ -100,7 +103,12 @@ export default function PurchasesPage() {
                           <IndianRupee className="h-3.5 w-3.5" /> Pay
                         </Button>
                       )}
-                      <Eye className="h-4 w-4 text-muted-foreground" />
+                      <Button variant="ghost" size="icon" className="h-8 w-8" title="Edit bill" onClick={(e) => { e.stopPropagation(); setEditId(b.id); }}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" title="Delete bill" onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: b.id, billNumber: b.billNumber, amountPaid: b.amountPaid }); }}>
+                        <Trash2 className="h-4 w-4 text-danger" />
+                      </Button>
                     </div>
                   </TD>
                 </TR>
@@ -111,16 +119,16 @@ export default function PurchasesPage() {
       </Card>
 
       <PurchaseDialog
-        open={recordOpen || !!editBill}
-        onOpenChange={(v) => { if (!v) { setRecordOpen(false); setEditBill(null); } }}
-        editBill={editBill}
+        open={recordOpen || (!!editId && !!editDetail)}
+        onOpenChange={(v) => { if (!v) { setRecordOpen(false); setEditId(null); } }}
+        editBill={editId ? editDetail ?? null : null}
       />
       <PurchaseDetailDialog
         id={detailId}
         onClose={() => setDetailId(null)}
         onPay={(b) => { setDetailId(null); setPayTarget(b); }}
-        onEdit={(b) => { setDetailId(null); setEditBill(b); }}
-        onDelete={(b) => { setDetailId(null); setDeleteTarget(b); }}
+        onEdit={(b) => { setDetailId(null); setEditId(b.id); }}
+        onDelete={(b) => { setDetailId(null); setDeleteTarget({ id: b.id, billNumber: b.billNumber, amountPaid: b.amountPaid }); }}
       />
       <PaySupplierDialog bill={payTarget} onClose={() => setPayTarget(null)} />
       <DeletePurchaseDialog bill={deleteTarget} onClose={() => setDeleteTarget(null)} />
@@ -136,7 +144,6 @@ function PurchaseDetailDialog({ id, onClose, onPay, onEdit, onDelete }: {
   onDelete: (b: PurchaseBillDetail) => void;
 }) {
   const { data: bill, isLoading } = usePurchaseDetail(id);
-  const canModify = !!bill && bill.payments.length === 0;
   return (
     <Dialog open={!!id} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-3xl">
@@ -146,7 +153,7 @@ function PurchaseDetailDialog({ id, onClose, onPay, onEdit, onDelete }: {
               {bill ? `Purchase ${bill.billNumber}` : 'Purchase'}
               {bill && <Badge variant={bill.isGstBill ? 'info' : 'neutral'}>{bill.isGstBill ? 'GST' : 'No GST'}</Badge>}
             </DialogTitle>
-            {canModify && (
+            {bill && (
               <div className="flex gap-1">
                 <Button variant="ghost" size="icon" className="h-8 w-8" title="Edit" onClick={() => onEdit(bill)}><Pencil className="h-4 w-4" /></Button>
                 <Button variant="ghost" size="icon" className="h-8 w-8" title="Delete" onClick={() => onDelete(bill)}><Trash2 className="h-4 w-4 text-danger" /></Button>
@@ -154,9 +161,6 @@ function PurchaseDetailDialog({ id, onClose, onPay, onEdit, onDelete }: {
             )}
           </div>
           <DialogDescription>{bill ? `${bill.supplierName ?? 'Supplier'}${bill.supplierGstin ? ` · ${bill.supplierGstin}` : ''}${bill.invoiceNumber ? ` · Inv ${bill.invoiceNumber}` : ''}` : 'Loading…'}</DialogDescription>
-          {bill && !canModify && (
-            <p className="text-caption text-muted-foreground">This bill has a payment recorded against it, so it can no longer be edited or deleted.</p>
-          )}
         </DialogHeader>
 
         {isLoading || !bill ? (
@@ -232,15 +236,21 @@ function Row({ label, value, bold, muted, className }: { label: string; value: R
   return <div className={cn('flex justify-between', bold && 'border-t border-border pt-1 font-semibold', muted && 'text-muted-foreground', className)}><span>{label}</span><span>{value}</span></div>;
 }
 
-function DeletePurchaseDialog({ bill, onClose }: { bill: PurchaseBillDetail | null; onClose: () => void }) {
+/** Light ref for the delete flow — a row summary is enough (no line items needed). */
+type DeleteRef = { id: string; billNumber: string; amountPaid: string };
+
+function DeletePurchaseDialog({ bill, onClose }: { bill: DeleteRef | null; onClose: () => void }) {
   const del = useDeletePurchase();
+  const paid = Number(bill?.amountPaid ?? 0);
   return (
     <Dialog open={!!bill} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Delete {bill?.billNumber}?</DialogTitle>
           <DialogDescription>
-            This reverses the stock and cost it added — refused automatically if any of that stock has already been used elsewhere. This cannot be undone.
+            This reverses the stock and cost it added — refused automatically if any of that stock has already been used elsewhere.
+            {paid > 0 && <> It also removes the <b className="text-foreground">{formatINR(paid)}</b> recorded as paid on this bill.</>}
+            {' '}This cannot be undone.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
