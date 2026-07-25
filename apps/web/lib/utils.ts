@@ -6,13 +6,16 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
 }
 
+// Cached formatters: toLocaleString with options builds a fresh Intl.NumberFormat
+// per call, and the POS renders 100+ prices per interaction — profiling showed it
+// as the single hottest app function on slow tills.
+const INR_2DP = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const INR_0DP = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
 /** Format a number as Indian Rupees. */
 export function formatINR(value: number | string, opts: { decimals?: boolean } = {}): string {
   const n = typeof value === 'string' ? Number(value) : value;
-  return `₹${(Number.isFinite(n) ? n : 0).toLocaleString('en-IN', {
-    minimumFractionDigits: opts.decimals === false ? 0 : 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return `₹${(opts.decimals === false ? INR_0DP : INR_2DP).format(Number.isFinite(n) ? n : 0)}`;
 }
 
 /** Compact number (1.2k, 3.4L). */

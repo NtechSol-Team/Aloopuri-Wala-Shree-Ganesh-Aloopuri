@@ -57,6 +57,21 @@ function cardColor(id: string): string {
   return CARD_COLORS[Math.abs(h) % CARD_COLORS.length];
 }
 
+/** Reactive CSS media-query match (PosTerminal never renders on the server —
+ *  it's gated behind a client-side session query — so reading window in the
+ *  initializer is safe). */
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState<boolean>(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const onChange = () => setMatches(mql.matches);
+    onChange();
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
+
 type PayMode = 'CASH' | 'UPI' | 'SPLIT';
 
 const PAY_MODES: Array<{ key: PayMode; label: string; icon: typeof Banknote }> = [
@@ -116,16 +131,17 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const sale = useCreateSale();
   const reorder = useReorderPosProducts();
   const [payMode, setPayMode] = useState<PayMode>('CASH');
-  const [split, setSplit] = useState({ cash: 0, card: 0, upi: 0 });
+  // Split amounts are DERIVED from the live total (default: everything on UPI)
+  // unless the cashier has edited them for exactly this total. Adding an item
+  // changes the total, which naturally invalidates the edit back to the default.
+  // Derived instead of a sync-effect on purpose: the old effect re-rendered the
+  // whole terminal a second time after every single add — pure waste on slow tills.
+  const [splitEdit, setSplitEdit] = useState<{ cash: number; card: number; upi: number; forTotal: number } | null>(null);
+  const split = splitEdit && splitEdit.forTotal === totals.grandTotal
+    ? splitEdit
+    : { cash: 0, card: 0, upi: totals.grandTotal };
+  const setSplit = (v: { cash: number; card: number; upi: number }) => setSplitEdit({ ...v, forTotal: totals.grandTotal });
   const splitTotal = split.cash + split.card + split.upi;
-
-  // Keep the default even split (all-UPI) in sync with the live total — as
-  // items are added it should track the bill, not the amount from before
-  // the last item was scanned.
-  useEffect(() => {
-    setSplit({ cash: 0, card: 0, upi: totals.grandTotal });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totals.grandTotal]);
 
   /**
    * Arranging is an explicit mode, not something armed during normal selling.
@@ -160,10 +176,11 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [successTxn, setSuccessTxn] = useState<PosTxn | null>(null);
   const [qtyBuffer, setQtyBuffer] = useState('');
-  const [flashId, setFlashId] = useState<string | null>(null);
   const [editingLine, setEditingLine] = useState<CartItem | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // lg breakpoint — decides which cart-panel slot (desktop panel vs bottom
+  // sheet) actually mounts, so the panel isn't rendered twice per interaction.
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
 
   /**
    * Focus the search box only where a physical keyboard is likely (a device with
@@ -268,18 +285,17 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
     reorder.mutate(updates, { onError: () => toast.error('Could not save the new order') });
   };
 
-  /** Add a product honoring the typed-ahead quantity buffer, with feedback. */
+  /** Add a product honoring the typed-ahead quantity buffer, with feedback.
+   *  Visual tap feedback (the flash ring) lives inside each card now — keeping
+   *  it here meant two extra renders of the entire terminal per tap. */
   const addProduct = (p: PosProduct) => {
     if (p.trackInventory && p.stock !== null && p.stock <= 0) { beepError(); toast.error(`${p.name} is out of stock`); return; }
     const buffered = parseFloat(qtyBuffer);
     const existing = cart.items.find((i) => i.menuItemId === p.id);
     cart.addItem({ menuItemId: p.id, name: p.name, unit: p.unit, mrp: Number(p.mrp), taxPercent: Number(p.taxPercent) });
     if (!Number.isNaN(buffered) && buffered > 0) cart.setQty(p.id, (existing?.quantity ?? 0) + buffered);
-    setQtyBuffer('');
+    if (qtyBuffer) setQtyBuffer('');
     beepAdd();
-    setFlashId(p.id);
-    if (flashTimer.current) clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => setFlashId(null), 350);
   };
   // Identity-stable handler for the memoized cards: without it every render
   // hands each of the ~30 cards a fresh closure and the memo never skips work.
@@ -625,12 +641,12 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <SortableContext items={filtered.map((p) => p.id)} strategy={rectSortingStrategy}>
                 {filtered.map((p) => (
-                  <SortableProductCard key={p.id} product={p} flashing={false} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={noopAdd} />
+                  <SortableProductCard key={p.id} product={p} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={noopAdd} />
                 ))}
               </SortableContext>
             </DndContext>
           ) : (
-            filtered.map((p) => <ProductCard key={p.id} product={p} flashing={flashId === p.id} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={onCardAdd} />)
+            filtered.map((p) => <ProductCard key={p.id} product={p} cartQty={cartQtyById.get(p.id) ?? 0} onAdd={onCardAdd} />)
           )}
         </div>
 
@@ -645,13 +661,17 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
         </div>
       </div>
 
-      {/* RIGHT: cart — static panel on desktop */}
-      <div className="hidden h-full min-h-0 flex-col overflow-hidden bg-card lg:flex">
-        {cartPanelBody}
-      </div>
+      {/* RIGHT: cart — static panel on desktop. Mounted only at lg+ (the sheet
+          below covers smaller screens): rendering the full panel into BOTH
+          slots on every cart change doubled per-tap work for no visible gain. */}
+      {isDesktop && (
+        <div className="hidden h-full min-h-0 flex-col overflow-hidden bg-card lg:flex">
+          {cartPanelBody}
+        </div>
+      )}
 
       {/* Mobile: floating "view cart / charge" bar, shown once something's in the bill */}
-      {cart.items.length > 0 && !cartSheetOpen && (
+      {!isDesktop && cart.items.length > 0 && !cartSheetOpen && (
         <button
           onClick={() => setCartSheetOpen(true)}
           className="fixed inset-x-3 z-30 flex items-center justify-between rounded-xl bg-primary px-4 py-3.5 text-primary-foreground shadow-nav lg:hidden"
@@ -663,34 +683,38 @@ function PosTerminal({ sessionId, sessionNumber }: { sessionId: string; sessionN
       )}
 
       {/* Mobile: cart bottom sheet */}
-      <div className={cn('fixed inset-0 z-40 lg:hidden', cartSheetOpen ? 'pointer-events-auto' : 'pointer-events-none')}>
-        <div
-          className={cn('absolute inset-0 bg-black/40 transition-opacity duration-200 ease-smooth', cartSheetOpen ? 'opacity-100' : 'opacity-0')}
-          onClick={() => setCartSheetOpen(false)}
-          aria-hidden="true"
-        />
-        <div
-          className={cn(
-            'absolute inset-x-0 bottom-0 flex max-h-[88vh] supports-[height:100dvh]:max-h-[88dvh] flex-col rounded-t-2xl bg-card shadow-nav transition-transform duration-200 ease-smooth',
-            cartSheetOpen ? 'translate-y-0' : 'translate-y-full',
-          )}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="flex items-center justify-between border-b border-border px-3 pt-2">
-            <div className="mx-auto h-1 w-10 rounded-full bg-border" />
-          </div>
-          <div className="flex items-center justify-between px-3 pt-1">
-            <p className="text-label font-semibold">Current Bill</p>
-            <button onClick={() => setCartSheetOpen(false)} className="rounded-md p-1.5 text-muted-foreground hover:bg-surface" aria-label="Close cart">
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-          <div className="flex flex-1 flex-col overflow-hidden">
-            {cartPanelBody}
+      {!isDesktop && (
+        <div className={cn('fixed inset-0 z-40 lg:hidden', cartSheetOpen ? 'pointer-events-auto' : 'pointer-events-none')}>
+          <div
+            className={cn('absolute inset-0 bg-black/40 transition-opacity duration-200 ease-smooth', cartSheetOpen ? 'opacity-100' : 'opacity-0')}
+            onClick={() => setCartSheetOpen(false)}
+            aria-hidden="true"
+          />
+          <div
+            className={cn(
+              'absolute inset-x-0 bottom-0 flex max-h-[88vh] supports-[height:100dvh]:max-h-[88dvh] flex-col rounded-t-2xl bg-card shadow-nav transition-transform duration-200 ease-smooth',
+              cartSheetOpen ? 'translate-y-0' : 'translate-y-full',
+            )}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between border-b border-border px-3 pt-2">
+              <div className="mx-auto h-1 w-10 rounded-full bg-border" />
+            </div>
+            <div className="flex items-center justify-between px-3 pt-1">
+              <p className="text-label font-semibold">Current Bill</p>
+              <button onClick={() => setCartSheetOpen(false)} className="rounded-md p-1.5 text-muted-foreground hover:bg-surface" aria-label="Close cart">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {/* Sheet contents only exist while the sheet is open — a closed
+                sheet used to re-render the whole panel offscreen on every tap. */}
+            <div className="flex flex-1 flex-col overflow-hidden">
+              {cartSheetOpen && cartPanelBody}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <CartLineDialog item={editingLine} onClose={() => setEditingLine(null)} onQty={cart.setQty} onDiscount={cart.setItemDiscount} />
       <EodDialog open={eodOpen} onOpenChange={setEodOpen} sessionId={sessionId} />
@@ -731,7 +755,7 @@ type DragBindings = {
 
 /** Wraps ProductCard with drag-to-reorder behavior (press-hold 2s / mouse-drag).
  *  memo'd so cart typing / other cards' changes don't re-render the whole grid. */
-const SortableProductCard = memo(function SortableProductCard(props: { product: PosProduct; flashing: boolean; cartQty: number; onAdd: (p: PosProduct) => void }) {
+const SortableProductCard = memo(function SortableProductCard(props: { product: PosProduct; cartQty: number; onAdd: (p: PosProduct) => void }) {
   const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id: props.product.id });
   const style: CSSProperties = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 20 : undefined };
   return <ProductCardInner {...props} drag={{ setNodeRef, attributes, listeners, style, isDragging }} />;
@@ -809,13 +833,23 @@ function useTapToAdd(add: () => void, dragging: boolean) {
  * the availability/qty state is a corner badge. Items with no photo (uploaded or
  * matched) fall back to a coloured initial tile so the grid still reads cleanly.
  */
-function ProductCardInner({ product, flashing, cartQty, onAdd, drag }: { product: PosProduct; flashing: boolean; cartQty: number; onAdd: (p: PosProduct) => void; drag?: DragBindings }) {
+function ProductCardInner({ product, cartQty, onAdd, drag }: { product: PosProduct; cartQty: number; onAdd: (p: PosProduct) => void; drag?: DragBindings }) {
   const out = product.trackInventory && product.stock !== null && product.stock <= 0;
   const low = product.trackInventory && product.stock !== null && !out && product.stock <= 5;
   const inCart = cartQty > 0;
   const [imgFailed, setImgFailed] = useState(false);
+  // "Just tapped" flash ring — card-local so only THIS card re-renders for it,
+  // not the whole terminal (which is what a parent-owned flashId caused).
+  const [flashing, setFlashing] = useState(false);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
   const imgSrc = imgFailed ? null : productImageSrc(product);
-  const tap = useTapToAdd(() => onAdd(product), !!drag);
+  const tap = useTapToAdd(() => {
+    onAdd(product);
+    setFlashing(true);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashing(false), 350);
+  }, !!drag);
   // This item's identity colour — fills the no-photo tile and tints the name bar.
   const color = cardColor(product.id);
 

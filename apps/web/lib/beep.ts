@@ -4,35 +4,54 @@
  * Tiny synthesized UI sounds via WebAudio — no audio assets needed.
  * Safe to call anywhere; silently no-ops if the AudioContext is unavailable
  * (e.g. before any user gesture on iOS).
+ *
+ * Two guarantees matter on shop hardware:
+ *  1. Sound must never delay the UI. A till PC with a flaky/absent audio
+ *     device can stall for whole seconds inside AudioContext calls, so every
+ *     beep is deferred off the tap's critical path — the cart updates first,
+ *     the sound follows.
+ *  2. A failed AudioContext stays failed. Retrying the (blocking) constructor
+ *     on every tap turned each add-to-cart into a driver stall on speakerless
+ *     tills; one failure now disables sound for the session.
  */
 
 let ctx: AudioContext | null = null;
+let audioBroken = false;
 
 function audioCtx(): AudioContext | null {
-  if (typeof window === 'undefined') return null;
+  if (audioBroken || typeof window === 'undefined') return null;
   try {
     ctx ??= new AudioContext();
-    if (ctx.state === 'suspended') void ctx.resume();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
     return ctx;
   } catch {
+    audioBroken = true;
     return null;
   }
 }
 
 function tone(freq: number, durationMs: number, startMs = 0, volume = 0.08): void {
-  const ac = audioCtx();
-  if (!ac) return;
-  const osc = ac.createOscillator();
-  const gain = ac.createGain();
-  osc.type = 'sine';
-  osc.frequency.value = freq;
-  const t0 = ac.currentTime + startMs / 1000;
-  const t1 = t0 + durationMs / 1000;
-  gain.gain.setValueAtTime(volume, t0);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t1);
-  osc.connect(gain).connect(ac.destination);
-  osc.start(t0);
-  osc.stop(t1);
+  // setTimeout(0) pushes the audio work behind the pending React render/paint,
+  // so even a slow audio stack can't make the tap feel late.
+  setTimeout(() => {
+    try {
+      const ac = audioCtx();
+      if (!ac) return;
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const t0 = ac.currentTime + startMs / 1000;
+      const t1 = t0 + durationMs / 1000;
+      gain.gain.setValueAtTime(volume, t0);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t1);
+      osc.connect(gain).connect(ac.destination);
+      osc.start(t0);
+      osc.stop(t1);
+    } catch {
+      audioBroken = true; // a context that dies mid-use stays off too
+    }
+  }, 0);
 }
 
 /** Short blip — item added to cart. */
