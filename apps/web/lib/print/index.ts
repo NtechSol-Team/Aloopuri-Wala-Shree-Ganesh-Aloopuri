@@ -12,7 +12,7 @@ import {
 } from '@/lib/receipt-print';
 import { getPrinterSettings } from './printer-settings';
 import { resolveRawTransport, printRaw, type PrintResult } from './print-manager';
-import { receiptBytes, pickListBytes, sessionPaymentModeReportBytes } from './receipt-escpos';
+import { receiptBytes, pickListBytes, sessionPaymentModeReportBytes, openDrawerBytes } from './receipt-escpos';
 
 /**
  * Smart print entry points — same signatures the UI always used, but now
@@ -43,6 +43,18 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
     const res = await printRaw(bytes);
     if (!res.ok) notifyFailure(res);
   })();
+}
+
+/**
+ * Manual "no-sale" cash-drawer open — a raw-transport-only action (there is
+ * no HTML/browser-print equivalent of a drawer kick, so unlike the other
+ * entry points here this never falls back to the system print dialog).
+ */
+export async function printOpenDrawer(): Promise<PrintResult> {
+  if (!resolveRawTransport()) {
+    return { ok: false, code: 'unsupported', error: 'Connect a Bluetooth printer to open the drawer from here' };
+  }
+  return printRaw(openDrawerBytes());
 }
 
 export function printOrderPickList(

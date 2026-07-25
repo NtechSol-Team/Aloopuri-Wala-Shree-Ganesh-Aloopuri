@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Bluetooth, Printer, RefreshCw, Unplug } from 'lucide-react';
+import { Banknote, Bluetooth, Printer, RefreshCw, Unplug } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
@@ -17,6 +17,7 @@ import { androidPrinter, hasAndroidBridge, type BridgePrinter, type BridgeStatus
 import { webBluetoothSupported, webBtPrinter } from '@/lib/print/web-bluetooth';
 import { resolveRawTransport, printRaw } from '@/lib/print/print-manager';
 import { testSlipBytes } from '@/lib/print/receipt-escpos';
+import { printOpenDrawer } from '@/lib/print';
 
 /**
  * Receipt-printer setup for this till. Windows tills can ignore it (system
@@ -89,6 +90,17 @@ export function PrinterSettingsDialog({ open, onOpenChange }: { open: boolean; o
       const res = await printRaw(await testSlipBytes(settings), { statusCheck: false });
       if (res.ok) toast.success('Test page sent to printer');
       else toast.error(res.error ?? 'Test print failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openDrawer = async () => {
+    setBusy('drawer');
+    try {
+      const res = await printOpenDrawer();
+      if (res.ok) toast.success('Drawer-open signal sent');
+      else toast.error(res.error ?? 'Could not open the drawer');
     } finally {
       setBusy(null);
     }
@@ -224,8 +236,21 @@ export function PrinterSettingsDialog({ open, onOpenChange }: { open: boolean; o
           </div>
         )}
 
+        {active && (
+          <p className="text-caption text-muted-foreground">
+            Drawer not opening on sale? Try <span className="font-medium">Open Drawer</span> below first — if that
+            doesn&apos;t pop it either, the drawer cable isn&apos;t plugged into the printer (or this printer has no
+            drawer port). If it does open, the cashier only needs it after a cash-taking sale.
+          </p>
+        )}
+
         <DialogFooter>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>Close</Button>
+          <Button variant="secondary" loading={busy === 'drawer'} disabled={!active}
+            title={active ? undefined : 'Connect a Bluetooth printer first'}
+            onClick={() => void openDrawer()}>
+            <Banknote className="h-4 w-4" /> Open Drawer
+          </Button>
           <Button loading={busy === 'test'} disabled={!active} title={active ? undefined : 'Connect a Bluetooth printer first'}
             onClick={() => void testPrint()}>
             <Printer className="h-4 w-4" /> Test print

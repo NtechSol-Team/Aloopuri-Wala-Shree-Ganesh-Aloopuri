@@ -22,7 +22,12 @@ const envSchema = z.object({
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL: z.string().default('30d'),
 
-  WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
+  // Comma-separated allow-list (e.g. Mac localhost + a LAN IP for tablets on
+  // the same network) — a single value still works exactly as before.
+  WEB_ORIGIN: z
+    .string()
+    .default('http://localhost:3000')
+    .transform((s) => s.split(',').map((o) => o.trim()).filter(Boolean)),
 
   RAZORPAY_KEY_ID: z.string().default('rzp_test_placeholder'),
   RAZORPAY_KEY_SECRET: z.string().default('placeholder_secret'),

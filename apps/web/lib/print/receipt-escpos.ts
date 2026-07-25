@@ -401,3 +401,8 @@ export async function testSlipBytes(s: PrinterSettings): Promise<Uint8Array> {
   e.feed(4).cut();
   return e.encode();
 }
+
+/** Standalone cash-drawer kick for a manual "no-sale" open — no receipt involved. */
+export function openDrawerBytes(): Uint8Array {
+  return new EscPosEncoder().drawer().encode();
+}

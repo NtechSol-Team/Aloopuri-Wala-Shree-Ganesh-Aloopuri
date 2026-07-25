@@ -128,8 +128,18 @@ export class EscPosEncoder {
    */
   cut(): this { return this.raw([0x1d, 0x56, 0x42, 0x03]); }
 
-  /** ESC p — cash-drawer kick pulse on pin 2 (standard RJ11 drawer). */
-  drawer(): this { return this.raw([0x1b, 0x70, 0x00, 0x19, 0xfa]); }
+  /**
+   * ESC p — cash-drawer kick pulse. Fires both connector pins (m=0 → pin 2,
+   * m=1 → pin 5): drawers are wired to either depending on the cable/printer,
+   * and pulsing the unwired one is a complete no-op, so sending both covers
+   * both conventions without needing to know which one a given till uses.
+   * t1=120 (~240ms on-time) is well above the textbook t1=25 (~50ms) some
+   * drawer solenoids don't reliably trip on — this is strictly a longer,
+   * stronger pulse, so it can't break a drawer the shorter one already opened.
+   */
+  drawer(): this {
+    return this.raw([0x1b, 0x70, 0x00, 0x78, 0xfa, 0x1b, 0x70, 0x01, 0x78, 0xfa]);
+  }
 
   /**
    * GS ( k — model 2 QR code. `size` is the module dot width (1–16),
