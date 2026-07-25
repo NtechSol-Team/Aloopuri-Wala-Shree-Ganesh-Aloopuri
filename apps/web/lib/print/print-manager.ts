@@ -1,6 +1,7 @@
 'use client';
 
-import { androidPrinter, hasAndroidBridge, type BridgeStatus } from './android-bridge';
+import toast from 'react-hot-toast';
+import { androidPrinter, hasAndroidBridge } from './android-bridge';
 import { webBluetoothSupported, webBtPrinter } from './web-bluetooth';
 import { getPrinterSettings, type PrinterSettings } from './printer-settings';
 
@@ -47,13 +48,23 @@ export async function printRaw(bytes: Uint8Array, opts: { statusCheck?: boolean 
 
   if (transport === 'android') {
     try {
-      if (opts.statusCheck !== false) {
-        // Non-fatal: unknown status (older firmware, no DLE EOT support) still prints.
-        const st = await androidPrinter.getStatus().catch(() => null as BridgeStatus | null);
-        if (st?.paperOut) return { ok: false, code: 'paper-out', error: 'Printer is out of paper' };
-        if (st?.coverOpen) return { ok: false, code: 'cover-open', error: 'Printer cover is open' };
-      }
+      // Bytes go out FIRST. The paper/cover status query is two Bluetooth
+      // round-trips into the vendor SDK (easily 0.5–1s each) — running it
+      // before the write was the visible gap between tapping Charge and the
+      // printer starting. It now runs in the background after dispatch: a
+      // healthy printer is already printing by the time it answers, and a
+      // paper-out printer (which prints nothing) still gets its toast a
+      // moment later.
       await androidPrinter.write(bytes);
+      if (opts.statusCheck !== false) {
+        void androidPrinter
+          .getStatus()
+          .then((st) => {
+            if (st?.paperOut) toast.error('Printer is out of paper', { id: 'print-error' });
+            else if (st?.coverOpen) toast.error('Printer cover is open', { id: 'print-error' });
+          })
+          .catch(() => { /* unknown status (older firmware) — the print already went out */ });
+      }
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

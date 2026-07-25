@@ -135,14 +135,15 @@ export class EscPosEncoder {
    * both conventions without needing to know which one a given till uses.
    *
    * Pulse length matters for PRINT speed, not just the drawer: the mech stalls
-   * for the on+off time of every pulse before printing the next line. 100ms
-   * on / 100ms off (t=0x32, ×2ms) is double the textbook 50ms solenoid pulse —
-   * ample to trip a standard RJ11 drawer — while keeping the whole two-pin
-   * kick to ~0.4s. (An earlier 240ms/500ms ×2 version paused the receipt for
-   * ~1.5s mid-print, which read as "the printer takes a push to continue".)
+   * for the on+off time of every pulse before printing the next line, so the
+   * kick at the head of a receipt delays the first line by exactly this much.
+   * 50ms on / 50ms off (t=0x19, ×2ms) is the textbook solenoid pulse every
+   * RJ11 drawer is built for, keeping the whole two-pin kick to ~0.2s — short
+   * enough that the drawer and the printing read as simultaneous. (Earlier,
+   * longer versions made the drawer visibly open FIRST, then print.)
    */
   drawer(): this {
-    return this.raw([0x1b, 0x70, 0x00, 0x32, 0x32, 0x1b, 0x70, 0x01, 0x32, 0x32]);
+    return this.raw([0x1b, 0x70, 0x00, 0x19, 0x19, 0x1b, 0x70, 0x01, 0x19, 0x19]);
   }
 
   /**
