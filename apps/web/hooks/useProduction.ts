@@ -93,6 +93,7 @@ export interface PurchaseBill {
   billDate: string;
   taxableAmount: string;
   taxAmount: string;
+  roundOff: string;
   totalAmount: string;
   amountPaid: string;
   balanceDue: string;
@@ -144,7 +145,7 @@ export function usePurchaseDetail(id: string | null) {
 
 export interface PurchaseInput {
   supplierName?: string; supplierGstin?: string; invoiceNumber?: string; notes?: string; paymentMethod?: string; amountPaidNow?: number;
-  intakeDate?: string; creditDays?: number; isGstBill?: boolean;
+  intakeDate?: string; creditDays?: number; isGstBill?: boolean; roundOff?: number;
   items: PurchaseItemInput[];
 }
 type PurchaseResult = { billNumber: string; totalCost: string; amountPaid: string; balanceDue: string; status: string; lineCount: number };

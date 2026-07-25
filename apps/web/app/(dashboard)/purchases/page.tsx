@@ -198,6 +198,9 @@ function PurchaseDetailDialog({ id, onClose, onPay, onEdit, onDelete }: {
                   <Row label="SGST" value={formatINR(bill.sgst)} muted />
                 </>
               )}
+              {Number(bill.roundOff) !== 0 && (
+                <Row label="Round off" value={`${Number(bill.roundOff) > 0 ? '+' : ''}${formatINR(bill.roundOff)}`} muted />
+              )}
               <Row label="Grand total" value={formatINR(bill.totalAmount)} bold />
               <Row label="Paid" value={formatINR(bill.amountPaid)} className="text-success" />
               <Row label="Balance" value={formatINR(bill.balanceDue)} className="text-danger" bold />

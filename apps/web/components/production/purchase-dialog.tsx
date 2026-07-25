@@ -56,6 +56,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
   const [payMode, setPayMode] = useState<'full' | 'credit' | 'partial'>('full');
   const [customPaid, setCustomPaid] = useState(0);
   const [creditDays, setCreditDays] = useState(30);
+  const [roundOff, setRoundOff] = useState(0);
   const [lines, setLines] = useState<Line[]>([]);
   const supplierBoxRef = useRef<HTMLDivElement>(null);
 
@@ -80,6 +81,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
       setPayMode(paid <= 0 ? 'credit' : paid >= total ? 'full' : 'partial');
       setCustomPaid(paid);
       setCreditDays(editBill.creditDays ?? 30);
+      setRoundOff(Number(editBill.roundOff ?? 0));
       setLines(
         editBill.items.map((it): Line => {
           if (it.kind === 'RAW_MATERIAL') return { kind: 'RAW_MATERIAL', rawMaterialId: it.refId ?? '', quantity: Number(it.quantity ?? 0), costPerUnit: Number(it.unitCost ?? 0), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '' };
@@ -90,7 +92,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
     } else {
       setIsGstBill(true);
       setSupplier(''); setGstin(''); setSupplierState(''); setShowSuggestions(false);
-      setInvoice(''); setBillDate(today()); setMethod('CASH'); setPayMode('full'); setCustomPaid(0); setCreditDays(30);
+      setInvoice(''); setBillDate(today()); setMethod('CASH'); setPayMode('full'); setCustomPaid(0); setCreditDays(30); setRoundOff(0);
       setLines(rmList.length ? [newRawLine()] : catList.length ? [newOtherLine()] : []);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,7 +115,8 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
   const lineTax = (l: Line) => (isGstBill ? Math.round(lineBase(l) * l.taxRate) / 100 : 0);
   const taxable = lines.reduce((s, l) => s + lineBase(l), 0);
   const taxTotal = lines.reduce((s, l) => s + lineTax(l), 0);
-  const grand = taxable + taxTotal;
+  const subtotal = taxable + taxTotal;
+  const grand = Math.max(0, subtotal + roundOff);
   const intraState = !supplierGstin || supplierGstin.slice(0, 2) === HOME_STATE;
   const cgst = intraState ? taxTotal / 2 : 0;
   const igst = intraState ? 0 : taxTotal;
@@ -165,7 +168,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
     );
     const payload = {
       supplierName: supplierName || undefined, supplierGstin: supplierGstin || undefined, invoiceNumber: invoiceNumber || undefined,
-      intakeDate: billDate, paymentMethod, amountPaidNow: paidNow, isGstBill,
+      intakeDate: billDate, paymentMethod, amountPaidNow: paidNow, isGstBill, roundOff,
       creditDays: balance > 0 ? creditDays : undefined,
       items,
     };
@@ -254,8 +257,8 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
                 <TH className="w-[104px]">Type</TH>
                 <TH className="min-w-[180px]">Item</TH>
                 <TH className="w-[90px]">HSN</TH>
-                <TH className="w-[70px] text-right">Qty</TH>
-                <TH className="w-[100px] text-right">Rate / Amount</TH>
+                <TH className="w-[96px] text-right">Qty</TH>
+                <TH className="w-[128px] text-right">Rate / Amount</TH>
                 <TH className="w-[100px] text-right">Taxable</TH>
                 <TH className="w-[110px] text-right">GST</TH>
                 <TH className="w-[100px] text-right">Total</TH>
@@ -356,7 +359,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
           <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newOtherLine()])} disabled={catList.length === 0}><Plus className="h-4 w-4" /> Other item</Button>
         </div>
 
-        {/* GST summary */}
+        {/* GST + round-off summary */}
         <div className="space-y-1 rounded-md border border-border bg-surface p-3 text-body">
           {isGstBill ? (
             <>
@@ -369,11 +372,33 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
               ) : (
                 <Row label="IGST" value={formatINR(igst)} muted />
               )}
-              <Row label="Grand total" value={formatINR(grand)} bold />
             </>
           ) : (
-            <Row label="Grand total (no GST)" value={formatINR(grand)} bold />
+            <Row label="Subtotal (no GST)" value={formatINR(taxable)} muted />
           )}
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">Round off (+/-)</span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                title="Round the total to the nearest rupee"
+                onClick={() => setRoundOff(Math.round((Math.round(subtotal) - subtotal) * 100) / 100)}
+                className="rounded-md border border-border px-2 py-1 text-caption font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                Auto
+              </button>
+              <Input
+                type="number"
+                step="0.01"
+                className="h-8 w-24 text-right"
+                value={roundOff}
+                onChange={(e) => setRoundOff(Number(e.target.value))}
+              />
+            </div>
+          </div>
+
+          <Row label={isGstBill ? 'Grand total' : 'Grand total (no GST)'} value={formatINR(grand)} bold />
         </div>
 
         {/* Payment */}

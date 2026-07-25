@@ -79,6 +79,9 @@ export const recordPurchaseSchema = z.object({
   paymentMethod: z.nativeEnum(PaymentMethod).default(PaymentMethod.CASH),
   // How much is paid to the supplier at entry: 0 = full credit, < total = partial.
   amountPaidNow: z.coerce.number().min(0).default(0),
+  // Manual +/- adjustment folded into the grand total (e.g. rounding a cash
+  // bill to the nearest rupee).
+  roundOff: z.coerce.number().min(-9999).max(9999).default(0),
   // Credit terms — due date = intakeDate + creditDays. Only meaningful when a balance remains.
   creditDays: z.coerce.number().int().positive().max(365).optional(),
   notes: z.string().max(500).optional(),

@@ -251,12 +251,15 @@ async function preparePurchase(input: PurchaseInput) {
   });
   const taxableTotal = lineCalc.reduce((s, l) => s.add(l.base), new Prisma.Decimal(0));
   const taxTotal = lineCalc.reduce((s, l) => s.add(l.tax), new Prisma.Decimal(0));
-  const billTotal = taxableTotal.add(taxTotal);
+  const roundOff = new Prisma.Decimal(input.roundOff ?? 0);
+  // Never let a negative round-off (or a stale amountPaidNow) push the bill total
+  // below zero — that would make paidNow/balance math nonsensical.
+  const billTotal = Prisma.Decimal.max(taxableTotal.add(taxTotal).add(roundOff), new Prisma.Decimal(0));
   const paidNow = Prisma.Decimal.min(new Prisma.Decimal(input.amountPaidNow), billTotal);
   const supplierStateCode = input.supplierGstin ? gstinStateCode(input.supplierGstin) : null;
   const { cgst, sgst, igst } = splitGst(Number(taxTotal), supplierStateCode, env.HOME_STATE_CODE);
 
-  return { items, productName, categoryName, lineCalc, taxableTotal, taxTotal, billTotal, paidNow, cgst, sgst, igst };
+  return { items, productName, categoryName, lineCalc, taxableTotal, taxTotal, roundOff, billTotal, paidNow, cgst, sgst, igst };
 }
 
 /** Shared by create + update: write each line's itemized row and apply its stock/expense side effect. */
@@ -324,7 +327,7 @@ async function applyPurchaseLines(
 
 export async function logPurchase(input: PurchaseInput, userId: string) {
   const prepared = await preparePurchase(input);
-  const { billTotal, paidNow, taxableTotal, taxTotal, cgst, sgst, igst } = prepared;
+  const { billTotal, paidNow, taxableTotal, taxTotal, roundOff, cgst, sgst, igst } = prepared;
 
   const result = await prisma.$transaction(async (tx) => {
     // 1) The payable bill (header) with GST breakup.
@@ -343,6 +346,7 @@ export async function logPurchase(input: PurchaseInput, userId: string) {
         taxableAmount: taxableTotal,
         cgst, sgst, igst,
         taxAmount: taxTotal,
+        roundOff,
         totalAmount: billTotal,
         amountPaid: paidNow,
         balanceDue: balance,
@@ -455,7 +459,7 @@ async function reversePurchaseEffects(tx: Prisma.TransactionClient, billId: stri
 /** Edit a purchase bill: reverse its old effects, then re-apply fresh ones under the same bill number. */
 export async function updatePurchase(id: string, input: PurchaseInput, userId: string) {
   const prepared = await preparePurchase(input);
-  const { billTotal, paidNow, taxableTotal, taxTotal, cgst, sgst, igst } = prepared;
+  const { billTotal, paidNow, taxableTotal, taxTotal, roundOff, cgst, sgst, igst } = prepared;
 
   const result = await prisma.$transaction(async (tx) => {
     await reversePurchaseEffects(tx, id);
@@ -475,6 +479,7 @@ export async function updatePurchase(id: string, input: PurchaseInput, userId: s
         taxableAmount: taxableTotal,
         cgst, sgst, igst,
         taxAmount: taxTotal,
+        roundOff,
         totalAmount: billTotal,
         amountPaid: paidNow,
         balanceDue: balance,
@@ -566,7 +571,7 @@ export async function listPurchases(query: ListPurchasesQuery = {}) {
     where, orderBy: { billDate: 'desc' }, take: 200,
     select: {
       id: true, billNumber: true, supplierName: true, supplierGstin: true, invoiceNumber: true, billDate: true,
-      taxableAmount: true, taxAmount: true, totalAmount: true, amountPaid: true, balanceDue: true, status: true,
+      taxableAmount: true, taxAmount: true, roundOff: true, totalAmount: true, amountPaid: true, balanceDue: true, status: true,
       creditDays: true, dueDate: true, isGstBill: true,
       _count: { select: { items: true } },
     },
