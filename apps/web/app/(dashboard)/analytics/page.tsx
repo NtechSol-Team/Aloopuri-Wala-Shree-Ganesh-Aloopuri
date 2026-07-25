@@ -242,24 +242,41 @@ function PosDetail({ outletId, header }: { outletId?: string | 'main'; header?: 
         </CardContent>
       </Card>
 
-      <Card className="w-fit overflow-hidden">
-        <CardHeader className="py-3"><CardTitle className="text-body">Monthly POS Sales (last 12 months)</CardTitle></CardHeader>
-        <Table className="w-auto min-w-[260px] text-caption">
-          <THead><TR><TH className="h-7 px-3 py-1">Month</TH><TH className="h-7 px-3 py-1 text-right">Sale</TH></TR></THead>
-          <TBody>
-            {data.monthly.map((m) => (
-              <TR key={m.month}>
-                <TD className="px-3 py-1 font-medium">{m.month}</TD>
-                <TD className="px-3 py-1 text-right">{formatINR(m.revenue, { decimals: false })}</TD>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,320px)_1fr]">
+        <Card className="overflow-hidden">
+          <CardHeader className="py-3"><CardTitle className="text-body">Monthly POS Sales (last 12 months)</CardTitle></CardHeader>
+          <Table className="text-caption">
+            <THead><TR><TH className="h-7 px-3 py-1">Month</TH><TH className="h-7 px-3 py-1 text-right">Sale</TH></TR></THead>
+            <TBody>
+              {data.monthly.map((m) => (
+                <TR key={m.month}>
+                  <TD className="px-3 py-1 font-medium">{m.month}</TD>
+                  <TD className="px-3 py-1 text-right">{formatINR(m.revenue, { decimals: false })}</TD>
+                </TR>
+              ))}
+              <TR className="bg-surface font-bold">
+                <TD className="px-3 py-1">Total</TD>
+                <TD className="px-3 py-1 text-right">{formatINR(monthlyTotal, { decimals: false })}</TD>
               </TR>
-            ))}
-            <TR className="bg-surface font-bold">
-              <TD className="px-3 py-1">Total</TD>
-              <TD className="px-3 py-1 text-right">{formatINR(monthlyTotal, { decimals: false })}</TD>
-            </TR>
-          </TBody>
-        </Table>
-      </Card>
+            </TBody>
+          </Table>
+        </Card>
+
+        <Card>
+          <CardHeader className="py-3"><CardTitle className="text-body">Monthly POS Sales — Trend</CardTitle></CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={340}>
+              <BarChart data={data.monthly} margin={{ top: 8, right: 12, bottom: 8, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#6B7280' }} tickFormatter={(m: string) => m.split(' ')[0]} />
+                <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} />
+                <Tooltip formatter={(v: number) => formatINR(v)} labelFormatter={(m: string) => m} />
+                <Bar dataKey="revenue" name="Revenue" fill="#3730A3" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <TopChart title="Top 10 POS Items by Revenue" data={data.topByRevenue.map((d) => ({ name: d.name, value: d.revenue }))} money />
@@ -331,10 +348,10 @@ function DateRangeFilter({ range, onChange }: { range: PosAnalyticsRange; onChan
   return (
     <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5">
       <span className="text-caption font-medium text-muted-foreground">Date filter</span>
-      <Input type="date" className="h-7 w-[126px] px-1.5 text-caption" value={range.from ?? ''} max={range.to} onChange={(e) => onChange({ ...range, from: e.target.value || undefined })} />
+      <Input type="date" className="h-8 w-[142px] pl-2 pr-1 text-caption" value={range.from ?? ''} max={range.to} onChange={(e) => onChange({ ...range, from: e.target.value || undefined })} />
       <span className="text-caption text-muted-foreground">–</span>
-      <Input type="date" className="h-7 w-[126px] px-1.5 text-caption" value={range.to ?? ''} min={range.from} onChange={(e) => onChange({ ...range, to: e.target.value || undefined })} />
-      {active && <Button variant="secondary" size="sm" className="h-7 px-2 text-caption" onClick={() => onChange({})}>Clear</Button>}
+      <Input type="date" className="h-8 w-[142px] pl-2 pr-1 text-caption" value={range.to ?? ''} min={range.from} onChange={(e) => onChange({ ...range, to: e.target.value || undefined })} />
+      {active && <Button variant="secondary" size="sm" className="h-8 px-2 text-caption" onClick={() => onChange({})}>Clear</Button>}
     </div>
   );
 }
