@@ -934,7 +934,7 @@ function ProductCardInner({ product, cartQty, onAdd, drag }: { product: PosProdu
             distinctly. Solid fill (not translucent) keeps it a cheap flat-
             colour paint over the photo, same as the old bottom bar. */}
         <div className={cn('absolute inset-x-0 top-1/2 -translate-y-1/2 px-1.5 py-1.5', color)}>
-          <p className="whitespace-normal break-words text-center text-[15px] font-extrabold leading-tight text-white drop-shadow-sm">{product.name}</p>
+          <p className="whitespace-normal break-words text-center text-[17px] font-black leading-tight text-white drop-shadow-sm">{product.name}</p>
         </div>
 
         {/* Price chip — dark for contrast over any photo. */}
