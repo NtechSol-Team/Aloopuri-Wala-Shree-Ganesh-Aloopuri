@@ -28,16 +28,24 @@ export interface PosAnalytics {
   summary: {
     todayRevenue: number; todayTransactions: number; monthRevenue: number; monthTransactions: number;
     avgBillValue: number; monthVoids: number; monthVoidedAmount: number;
+    lastMonthRevenue: number; yearRevenue: number;
   };
   daily: Array<{ date: string; revenue: number; transactions: number; itemsSold: number; voided: number; voidedAmount: number }>;
+  // Trailing 12 calendar months — fixed, independent of the date filter below.
+  monthly: Array<{ month: string; revenue: number; transactions: number }>;
   byPaymentMode: Array<{ mode: string; revenue: number; transactions: number }>;
   byHour: Array<{ hour: number; revenue: number; transactions: number }>;
   topByQty: Array<{ name: string; revenue: number; qty: number }>;
   topByRevenue: Array<{ name: string; revenue: number; qty: number }>;
-  // Full item-wise report, last 30 days — every item sold, not just the top 10.
+  // Full item-wise report over the resolved range — every item sold, not just the top 10.
   itemsReport: Array<{ name: string; category: string; qty: number; revenue: number; avgPrice: number; revenueSharePct: number }>;
   byCashier: Array<{ cashier: string; revenue: number; transactions: number }>;
+  // Set only once a date filter is applied — every drill-down section above
+  // then shares exactly this range instead of its own default period.
+  appliedRange: { from: string; to: string } | null;
 }
+
+export interface PosAnalyticsRange { from?: string; to?: string }
 
 export function useRevenueTrend(period: TrendPeriod) {
   return useQuery({ queryKey: ['analytics', 'trend', period], queryFn: async () => (await api.get<ApiSuccess<TrendPoint[]>>('/analytics/sales/trend', { params: { period } })).data.data });
@@ -58,15 +66,19 @@ export function useInventoryAnalytics() {
  * POS counter analytics. Pass an outletId to drill into one outlet (Main Owner
  * only — the server pins franchise owners to their own outlet regardless).
  * Omit / pass 'main' for the main-branch till. `enabled` lets the admin picker
- * hold off until an outlet is chosen.
+ * hold off until an outlet is chosen. `range` is an optional date filter —
+ * when set, every drill-down section (daily chart, top items, payment mode,
+ * hourly, cashier leaderboard) is scoped to it instead of its own default.
  */
-export function usePosAnalytics(outletId?: string | 'main' | null, enabled = true) {
+export function usePosAnalytics(outletId?: string | 'main' | null, enabled = true, range?: PosAnalyticsRange) {
   const scoped = outletId && outletId !== 'main' ? outletId : undefined;
   return useQuery({
-    queryKey: ['analytics', 'pos', outletId ?? 'self'],
+    queryKey: ['analytics', 'pos', outletId ?? 'self', range?.from ?? null, range?.to ?? null],
     enabled,
     queryFn: async () =>
-      (await api.get<ApiSuccess<PosAnalytics>>('/analytics/pos', { params: scoped ? { outletId: scoped } : {} })).data.data,
+      (await api.get<ApiSuccess<PosAnalytics>>('/analytics/pos', {
+        params: { ...(scoped ? { outletId: scoped } : {}), ...(range?.from ? { from: range.from } : {}), ...(range?.to ? { to: range.to } : {}) },
+      })).data.data,
   });
 }
 

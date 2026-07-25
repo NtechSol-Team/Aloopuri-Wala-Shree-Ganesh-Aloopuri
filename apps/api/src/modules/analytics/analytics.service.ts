@@ -344,35 +344,75 @@ export async function getOutletDetail(outletId: string) {
  * items, cashier leaderboard. `outletId` scopes everything to one outlet (for
  * a franchise owner viewing only their own counter); omitted = store-wide.
  */
-export async function getPosAnalytics(outletId: string | null = null) {
+export async function getPosAnalytics(
+  outletId: string | null = null,
+  range?: { from?: string; to?: string },
+) {
   // Null-safe equality: a null $1 (SUPER_ADMIN / no outlet) matches only
   // main-branch rows (outlet_id IS NULL), never "every outlet combined" — POS
   // is never store-wide for anyone, unlike the wholesale bills/orders side.
   const outletFilter = '(outlet_id IS NOT DISTINCT FROM $1::uuid)';
   const outletFilterT = '(t.outlet_id IS NOT DISTINCT FROM $1::uuid)';
 
-  const [daily, summaryRows, byPaymentMode, byHourRaw, topItems, byCashier] = await Promise.all([
-    // Last 30 days, one row per calendar day (zero-filled).
+  // UTC calendar-day arithmetic throughout this range logic — matching
+  // Postgres's own current_date/now()/date_trunc, which run in UTC on both
+  // the managed prod DB and local dev's docker Postgres. Mixing that with
+  // Node's *local* timezone (via date-fns startOfDay/endOfDay, which follow
+  // the server process's zone) shifted `from`/`to` by a day whenever Node's
+  // zone wasn't UTC — reproduced locally (Node defaults to IST here) even
+  // though prod's Node process happens to run in UTC already.
+  const now = new Date();
+  const last30From = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 29));
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const parseDateOnly = (s: string) => {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+  };
+  const endOfDateOnly = (s: string) => {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+  };
+
+  // A date filter is "on" the moment either side is given — every section
+  // below then shares the exact same resolved range (the whole point of the
+  // filter), falling back to its own historical default (last 30 days for
+  // most sections, this-month for payment-mode/cashier) only when neither
+  // from nor to was supplied at all.
+  const hasFilter = !!(range?.from || range?.to);
+  const filterFrom = range?.from ? parseDateOnly(range.from) : null;
+  const filterTo = range?.to ? endOfDateOnly(range.to) : null;
+  const sharedFrom = filterFrom ?? last30From;
+  const sharedTo = filterTo ?? now;
+
+  const dailyFrom = sharedFrom, dailyTo = sharedTo;
+  const hourFrom = sharedFrom, hourTo = sharedTo;
+  const itemsFrom = sharedFrom, itemsTo = sharedTo;
+  const pmFrom = hasFilter ? sharedFrom : monthStart, pmTo = sharedTo;
+  const cashierFrom = hasFilter ? sharedFrom : monthStart, cashierTo = sharedTo;
+
+  const [daily, summaryRows, byPaymentMode, byHourRaw, topItems, byCashier, monthlyRaw] = await Promise.all([
+    // One row per calendar day across the resolved range (zero-filled) —
+    // last 30 days by default, or the picked date-filter range.
     prisma.$queryRawUnsafe<Array<{ date: string; revenue: number; transactions: number; items_sold: number; voided: number; voided_amount: number }>>(
       `WITH days AS (
-         SELECT generate_series(current_date - interval '29 days', current_date, interval '1 day')::date AS day
+         SELECT generate_series($2::date, $3::date, interval '1 day')::date AS day
        ),
        txn AS (
          SELECT date_trunc('day', sold_at)::date AS day, SUM(grand_total) AS revenue, count(*) AS txns
          FROM pos_transactions
-         WHERE status = 'COMPLETED' AND is_deleted = false AND sold_at >= current_date - interval '29 days' AND ${outletFilter}
+         WHERE status = 'COMPLETED' AND is_deleted = false AND sold_at >= $2 AND sold_at <= $3 AND ${outletFilter}
          GROUP BY 1
        ),
        items AS (
          SELECT date_trunc('day', t.sold_at)::date AS day, SUM(i.quantity) AS qty
          FROM pos_transaction_items i JOIN pos_transactions t ON t.id = i.transaction_id
-         WHERE t.status = 'COMPLETED' AND t.is_deleted = false AND i.is_deleted = false AND t.sold_at >= current_date - interval '29 days' AND ${outletFilterT}
+         WHERE t.status = 'COMPLETED' AND t.is_deleted = false AND i.is_deleted = false AND t.sold_at >= $2 AND t.sold_at <= $3 AND ${outletFilterT}
          GROUP BY 1
        ),
        voids AS (
          SELECT date_trunc('day', sold_at)::date AS day, count(*) AS voided, SUM(grand_total) AS voided_amount
          FROM pos_transactions
-         WHERE status = 'VOID' AND is_deleted = false AND sold_at >= current_date - interval '29 days' AND ${outletFilter}
+         WHERE status = 'VOID' AND is_deleted = false AND sold_at >= $2 AND sold_at <= $3 AND ${outletFilter}
          GROUP BY 1
        )
        SELECT to_char(days.day, 'YYYY-MM-DD') AS date,
@@ -386,12 +426,13 @@ export async function getPosAnalytics(outletId: string | null = null) {
        LEFT JOIN items ON items.day = days.day
        LEFT JOIN voids ON voids.day = days.day
        ORDER BY days.day`,
-      outletId,
+      outletId, dailyFrom, dailyTo,
     ),
-    // Headline KPIs: today + this month.
+    // Headline KPIs: fixed calendar periods (today / this month / last month /
+    // this year) — always these exact periods, never affected by the date filter.
     prisma.$queryRawUnsafe<Array<{
       today_revenue: number; today_txns: number; month_revenue: number; month_txns: number;
-      month_voids: number; month_voided_amount: number;
+      month_voids: number; month_voided_amount: number; last_month_revenue: number; year_revenue: number;
     }>>(
       `SELECT
          (SELECT COALESCE(SUM(grand_total),0) FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= current_date AND ${outletFilter})::float AS today_revenue,
@@ -399,27 +440,30 @@ export async function getPosAnalytics(outletId: string | null = null) {
          (SELECT COALESCE(SUM(grand_total),0) FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= date_trunc('month', now()) AND ${outletFilter})::float AS month_revenue,
          (SELECT count(*) FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= date_trunc('month', now()) AND ${outletFilter})::int AS month_txns,
          (SELECT count(*) FROM pos_transactions WHERE status='VOID' AND is_deleted=false AND sold_at >= date_trunc('month', now()) AND ${outletFilter})::int AS month_voids,
-         (SELECT COALESCE(SUM(grand_total),0) FROM pos_transactions WHERE status='VOID' AND is_deleted=false AND sold_at >= date_trunc('month', now()) AND ${outletFilter})::float AS month_voided_amount`,
+         (SELECT COALESCE(SUM(grand_total),0) FROM pos_transactions WHERE status='VOID' AND is_deleted=false AND sold_at >= date_trunc('month', now()) AND ${outletFilter})::float AS month_voided_amount,
+         (SELECT COALESCE(SUM(grand_total),0) FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= date_trunc('month', now() - interval '1 month') AND sold_at < date_trunc('month', now()) AND ${outletFilter})::float AS last_month_revenue,
+         (SELECT COALESCE(SUM(grand_total),0) FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= date_trunc('year', now()) AND ${outletFilter})::float AS year_revenue`,
       outletId,
     ),
-    // This month's payment-mode mix.
+    // Payment-mode mix — this month by default, or the picked date-filter range.
     prisma.$queryRawUnsafe<Array<{ payment_mode: string; revenue: number; txns: number }>>(
       `SELECT payment_mode, SUM(grand_total)::float AS revenue, count(*)::int AS txns
        FROM pos_transactions
-       WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= date_trunc('month', now()) AND ${outletFilter}
+       WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= $2 AND sold_at <= $3 AND ${outletFilter}
        GROUP BY 1 ORDER BY revenue DESC`,
-      outletId,
+      outletId, pmFrom, pmTo,
     ),
-    // Last 30 days, by hour of day (0-23) — peak hours.
+    // By hour of day (0-23) — peak hours, over the resolved range.
     prisma.$queryRawUnsafe<Array<{ hour: number; revenue: number; txns: number }>>(
       `SELECT EXTRACT(HOUR FROM sold_at)::int AS hour, SUM(grand_total)::float AS revenue, count(*)::int AS txns
        FROM pos_transactions
-       WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= now() - interval '30 days' AND ${outletFilter}
+       WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= $2 AND sold_at <= $3 AND ${outletFilter}
        GROUP BY 1 ORDER BY 1`,
-      outletId,
+      outletId, hourFrom, hourTo,
     ),
-    // All POS items sold, last 30 days (POS-only, not mixed with billing) — the
-    // full item-wise report; topByQty/topByRevenue below just slice the top 10 of it.
+    // All POS items sold over the resolved range (POS-only, not mixed with
+    // billing) — the full item-wise report; topByQty/topByRevenue below just
+    // slice the top 10 of it.
     prisma.$queryRawUnsafe<Array<{ name: string; category: string; qty: number; revenue: number }>>(
       `SELECT i.product_name_snapshot AS name, COALESCE(pc.name, 'Uncategorised') AS category,
               SUM(i.quantity)::float AS qty, SUM(i.line_total)::float AS revenue
@@ -427,16 +471,36 @@ export async function getPosAnalytics(outletId: string | null = null) {
        JOIN pos_transactions t ON t.id = i.transaction_id
        LEFT JOIN products p ON p.id = i.product_id
        LEFT JOIN product_categories pc ON pc.id = p.category_id
-       WHERE t.status='COMPLETED' AND t.is_deleted=false AND i.is_deleted=false AND t.sold_at >= now() - interval '30 days' AND ${outletFilterT}
+       WHERE t.status='COMPLETED' AND t.is_deleted=false AND i.is_deleted=false AND t.sold_at >= $2 AND t.sold_at <= $3 AND ${outletFilterT}
        GROUP BY 1, 2 ORDER BY revenue DESC`,
-      outletId,
+      outletId, itemsFrom, itemsTo,
     ),
-    // This month's cashier leaderboard.
+    // Cashier leaderboard — this month by default, or the picked date-filter range.
     prisma.$queryRawUnsafe<Array<{ cashier: string; revenue: number; txns: number }>>(
       `SELECT u.name AS cashier, SUM(t.grand_total)::float AS revenue, count(*)::int AS txns
        FROM pos_transactions t JOIN users u ON u.id = t.sold_by
-       WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at >= date_trunc('month', now()) AND ${outletFilterT}
+       WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at >= $2 AND t.sold_at <= $3 AND ${outletFilterT}
        GROUP BY 1 ORDER BY revenue DESC`,
+      outletId, cashierFrom, cashierTo,
+    ),
+    // Trailing 12 calendar months (always fixed — not affected by the date
+    // filter above, which is for the drill-down sections, not this table).
+    prisma.$queryRawUnsafe<Array<{ month: string; revenue: number; transactions: number }>>(
+      `WITH months AS (
+         SELECT generate_series(date_trunc('month', now()) - interval '11 months', date_trunc('month', now()), interval '1 month') AS m
+       ),
+       txn AS (
+         SELECT date_trunc('month', sold_at) AS m, SUM(grand_total) AS revenue, count(*) AS txns
+         FROM pos_transactions
+         WHERE status = 'COMPLETED' AND is_deleted = false
+           AND sold_at >= date_trunc('month', now()) - interval '11 months' AND ${outletFilter}
+         GROUP BY 1
+       )
+       SELECT to_char(months.m, 'Mon YYYY') AS month,
+              COALESCE(txn.revenue, 0)::float AS revenue,
+              COALESCE(txn.txns, 0)::int AS transactions
+       FROM months LEFT JOIN txn ON txn.m = months.m
+       ORDER BY months.m`,
       outletId,
     ),
   ]);
@@ -469,15 +533,22 @@ export async function getPosAnalytics(outletId: string | null = null) {
       avgBillValue: (s?.month_txns ?? 0) > 0 ? Math.round(((s?.month_revenue ?? 0) / s!.month_txns) * 100) / 100 : 0,
       monthVoids: s?.month_voids ?? 0,
       monthVoidedAmount: s?.month_voided_amount ?? 0,
+      lastMonthRevenue: s?.last_month_revenue ?? 0,
+      yearRevenue: s?.year_revenue ?? 0,
     },
     daily: daily.map((d) => ({ date: d.date, revenue: d.revenue, transactions: d.transactions, itemsSold: d.items_sold, voided: d.voided, voidedAmount: d.voided_amount })),
+    // Trailing 12 calendar months (fixed, independent of the date filter).
+    monthly: monthlyRaw.map((m) => ({ month: m.month, revenue: m.revenue, transactions: m.transactions })),
     byPaymentMode: byPaymentMode.map((p) => ({ mode: p.payment_mode, revenue: p.revenue, transactions: p.txns })),
     byHour,
     topByQty,
     topByRevenue,
-    // Full item-wise report (last 30 days), every item sold — not just the top 10.
+    // Full item-wise report over the resolved range, every item sold — not just the top 10.
     itemsReport,
     byCashier: byCashier.map((c) => ({ cashier: c.cashier, revenue: c.revenue, transactions: c.txns })),
+    // Non-null only once a date filter is actually applied — every drill-down
+    // section above then shares exactly this range (see hasFilter).
+    appliedRange: hasFilter ? { from: dailyFrom.toISOString().slice(0, 10), to: dailyTo.toISOString().slice(0, 10) } : null,
   };
 }
 

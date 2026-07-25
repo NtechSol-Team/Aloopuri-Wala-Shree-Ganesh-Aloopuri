@@ -41,12 +41,20 @@ router.get('/inventory', requireSuperAdmin, asyncHandler(async (_req: Request, r
 router.get(
   '/pos',
   requireOwnerOrAdmin,
-  validate({ query: z.object({ outletId: z.string().uuid().optional() }) }),
+  validate({
+    query: z.object({
+      outletId: z.string().uuid().optional(),
+      // Plain YYYY-MM-DD — this is a date filter, not a precise instant.
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    }),
+  }),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw AppError.unauthorized();
     const forced = scopeOutlet(req.user); // set only for franchise owners/cashiers
     const outletId = forced !== undefined ? forced : ((req.query.outletId as string | undefined) ?? null);
-    return ok(res, await analyticsService.getPosAnalytics(outletId));
+    const { from, to } = req.query as { from?: string; to?: string };
+    return ok(res, await analyticsService.getPosAnalytics(outletId, { from, to }));
   }),
 );
 

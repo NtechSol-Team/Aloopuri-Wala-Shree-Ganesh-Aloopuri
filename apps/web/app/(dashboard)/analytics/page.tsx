@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { cn, formatINR } from '@/lib/utils';
-import { useRevenueTrend, useTopProducts, useFinancial, useOutletPerformance, useInventoryAnalytics, usePosAnalytics, type TrendPeriod } from '@/hooks/useAnalytics';
+import { useRevenueTrend, useTopProducts, useFinancial, useOutletPerformance, useInventoryAnalytics, usePosAnalytics, type TrendPeriod, type PosAnalyticsRange } from '@/hooks/useAnalytics';
 import { useOutlets } from '@/hooks/useOutlets';
 import { TrendingUp, Wallet, BadgeIndianRupee } from 'lucide-react';
 import { OutletDetailDialog } from '@/components/analytics/outlet-detail-dialog';
@@ -175,24 +175,35 @@ function PosOutletCard({ name, sub, onClick }: { name: string; sub: string; onCl
 }
 
 function PosDetail({ outletId }: { outletId?: string | 'main' }) {
-  const { data, isLoading } = usePosAnalytics(outletId);
+  const [range, setRange] = useState<PosAnalyticsRange>({});
+  const { data, isLoading } = usePosAnalytics(outletId, true, range);
   if (isLoading || !data) return <Skeleton className="h-72" />;
   const { summary } = data;
   const peakHour = data.byHour.reduce((best, h) => (h.revenue > best.revenue ? h : best), data.byHour[0]);
   const fmtHour = (h: number) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? 'am' : 'pm'}`;
+  // Dynamic period labels: once a filter is applied every drill-down section
+  // below shares this exact range instead of its own historical default.
+  const applied = data.appliedRange;
+  const dailyLabel = applied ? `${applied.from} to ${applied.to}` : 'last 30 days';
+  const pmLabel = applied ? `${applied.from} to ${applied.to}` : 'this month';
+  const monthlyTotal = data.monthly.reduce((sum, m) => sum + m.revenue, 0);
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <DateRangeFilter range={range} onChange={setRange} />
+
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         <KpiCard label="Today's POS Sales" value={formatINR(summary.todayRevenue, { decimals: false })} icon={Receipt} accent="primary" />
         <KpiCard label="This Month" value={formatINR(summary.monthRevenue, { decimals: false })} icon={TrendingUp} accent="success" />
+        <KpiCard label="Last Month" value={formatINR(summary.lastMonthRevenue, { decimals: false })} icon={TrendingUp} accent="primary" />
+        <KpiCard label="This Year" value={formatINR(summary.yearRevenue, { decimals: false })} icon={BadgeIndianRupee} accent="success" />
         <KpiCard label="Transactions (mo)" value={String(summary.monthTransactions)} icon={ReceiptText} accent="primary" />
         <KpiCard label="Avg Bill Value" value={formatINR(summary.avgBillValue, { decimals: false })} icon={BadgeIndianRupee} accent="warning" />
         <KpiCard label="Voided (mo)" value={`${summary.monthVoids} · ${formatINR(summary.monthVoidedAmount, { decimals: false })}`} icon={Ban} accent="danger" />
       </div>
 
       <Card>
-        <CardHeader><CardTitle>Daily POS Sales — last 30 days</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Daily POS Sales — {dailyLabel}</CardTitle></CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={data.daily} margin={{ top: 8, right: 12, bottom: 8, left: 8 }}>
@@ -212,16 +223,35 @@ function PosDetail({ outletId }: { outletId?: string | 'main' }) {
         </CardContent>
       </Card>
 
+      <Card className="overflow-hidden">
+        <CardHeader className="py-3"><CardTitle className="text-body">Monthly POS Sales (last 12 months)</CardTitle></CardHeader>
+        <Table className="max-w-xs text-caption">
+          <THead><TR><TH className="h-7 px-3 py-1">Month</TH><TH className="h-7 px-3 py-1 text-right">Sale</TH></TR></THead>
+          <TBody>
+            {data.monthly.map((m) => (
+              <TR key={m.month}>
+                <TD className="px-3 py-1 font-medium">{m.month}</TD>
+                <TD className="px-3 py-1 text-right">{formatINR(m.revenue, { decimals: false })}</TD>
+              </TR>
+            ))}
+            <TR className="bg-surface font-bold">
+              <TD className="px-3 py-1">Total</TD>
+              <TD className="px-3 py-1 text-right">{formatINR(monthlyTotal, { decimals: false })}</TD>
+            </TR>
+          </TBody>
+        </Table>
+      </Card>
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <TopChart title="Top 10 POS Items by Revenue" data={data.topByRevenue.map((d) => ({ name: d.name, value: d.revenue }))} money />
         <TopChart title="Top 10 POS Items by Quantity Sold" data={data.topByQty.map((d) => ({ name: d.name, value: d.qty }))} />
       </div>
 
-      <ItemWiseReport rows={data.itemsReport} paymentModeRows={data.byPaymentMode} />
+      <ItemWiseReport rows={data.itemsReport} paymentModeRows={data.byPaymentMode} periodLabel={dailyLabel} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader><CardTitle>Payment Mode Mix (this month)</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Payment Mode Mix ({pmLabel})</CardTitle></CardHeader>
           <CardContent>
             {!data.byPaymentMode.length ? <p className="py-8 text-center text-muted-foreground">No data</p> : (
               <ResponsiveContainer width="100%" height={220}>
@@ -238,7 +268,7 @@ function PosDetail({ outletId }: { outletId?: string | 'main' }) {
 
         <Card>
           <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle>Sales by Hour of Day (last 30 days)</CardTitle>
+            <CardTitle>Sales by Hour of Day ({dailyLabel})</CardTitle>
             {peakHour?.revenue > 0 && <span className="flex items-center gap-1 text-caption text-muted-foreground"><Clock className="h-3.5 w-3.5" /> Peak: {fmtHour(peakHour.hour)}</span>}
           </CardHeader>
           <CardContent>
@@ -256,7 +286,7 @@ function PosDetail({ outletId }: { outletId?: string | 'main' }) {
 
       {data.byCashier.length > 0 && (
         <Card className="overflow-hidden">
-          <CardHeader><CardTitle>Cashier Leaderboard (this month)</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Cashier Leaderboard ({pmLabel})</CardTitle></CardHeader>
           <Table>
             <THead><TR><TH>Cashier</TH><TH className="text-right">Transactions</TH><TH className="text-right">Revenue</TH><TH className="text-right">Avg Bill</TH></TR></THead>
             <TBody>
@@ -276,12 +306,27 @@ function PosDetail({ outletId }: { outletId?: string | 'main' }) {
   );
 }
 
+/** From/To date-range filter driving every POS drill-down section at once. */
+function DateRangeFilter({ range, onChange }: { range: PosAnalyticsRange; onChange: (r: PosAnalyticsRange) => void }) {
+  const active = !!(range.from || range.to);
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5">
+      <span className="text-caption font-medium text-muted-foreground">Date filter</span>
+      <Input type="date" className="h-7 w-[126px] px-1.5 text-caption" value={range.from ?? ''} max={range.to} onChange={(e) => onChange({ ...range, from: e.target.value || undefined })} />
+      <span className="text-caption text-muted-foreground">–</span>
+      <Input type="date" className="h-7 w-[126px] px-1.5 text-caption" value={range.to ?? ''} min={range.from} onChange={(e) => onChange({ ...range, to: e.target.value || undefined })} />
+      {active && <Button variant="secondary" size="sm" className="h-7 px-2 text-caption" onClick={() => onChange({})}>Clear</Button>}
+    </div>
+  );
+}
+
 type ItemSortKey = 'revenue' | 'qty' | 'name';
 
-/** Full item-wise sales report (last 30 days) — every item sold, searchable, sortable. */
-function ItemWiseReport({ rows, paymentModeRows }: {
+/** Full item-wise sales report — every item sold over the resolved period, searchable, sortable. */
+function ItemWiseReport({ rows, paymentModeRows, periodLabel }: {
   rows: Array<{ name: string; category: string; qty: number; revenue: number; avgPrice: number; revenueSharePct: number }>;
   paymentModeRows: Array<{ mode: string; transactions: number; revenue: number }>;
+  periodLabel: string;
 }) {
   const userName = useAuthStore((s) => s.user?.name);
   const [search, setSearch] = useState('');
@@ -297,7 +342,7 @@ function ItemWiseReport({ rows, paymentModeRows }: {
   // total) rather than item-wise — the on-screen table below stays item-wise
   // for browsing, but that's not what goes to paper.
   const printReport = () => {
-    printAnalyticsPaymentModeReport(paymentModeRows, { periodLabel: 'This month (POS sales)', generatedBy: userName });
+    printAnalyticsPaymentModeReport(paymentModeRows, { periodLabel: `${periodLabel} (POS sales)`, generatedBy: userName });
     toast.success('Printing payment mode report…');
   };
 
@@ -306,7 +351,7 @@ function ItemWiseReport({ rows, paymentModeRows }: {
       <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <CardTitle>Item-wise Sales Report</CardTitle>
-          <p className="mt-1 text-caption text-muted-foreground">Every item sold in the last 30 days — {rows.length} distinct item{rows.length === 1 ? '' : 's'}</p>
+          <p className="mt-1 text-caption text-muted-foreground">Every item sold — {periodLabel} — {rows.length} distinct item{rows.length === 1 ? '' : 's'}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative w-full sm:w-56">
@@ -319,7 +364,7 @@ function ItemWiseReport({ rows, paymentModeRows }: {
         </div>
       </CardHeader>
       {!filtered.length ? (
-        <p className="py-10 text-center text-muted-foreground">{rows.length ? 'No items match your search.' : 'No POS sales in the last 30 days.'}</p>
+        <p className="py-10 text-center text-muted-foreground">{rows.length ? 'No items match your search.' : `No POS sales — ${periodLabel}.`}</p>
       ) : (
         <div className="max-h-[70vh] overflow-y-auto scrollbar-thin">
           <Table>
