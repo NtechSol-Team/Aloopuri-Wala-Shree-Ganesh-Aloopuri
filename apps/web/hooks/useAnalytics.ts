@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
 
@@ -75,6 +75,10 @@ export function usePosAnalytics(outletId?: string | 'main' | null, enabled = tru
   return useQuery({
     queryKey: ['analytics', 'pos', outletId ?? 'self', range?.from ?? null, range?.to ?? null],
     enabled,
+    // Keep showing the previous range/outlet's data while a new combination
+    // loads — without this, every filter tweak or outlet switch replaces the
+    // whole panel (header included) with a bare skeleton for a moment.
+    placeholderData: keepPreviousData,
     queryFn: async () =>
       (await api.get<ApiSuccess<PosAnalytics>>('/analytics/pos', {
         params: { ...(scoped ? { outletId: scoped } : {}), ...(range?.from ? { from: range.from } : {}), ...(range?.to ? { to: range.to } : {}) },

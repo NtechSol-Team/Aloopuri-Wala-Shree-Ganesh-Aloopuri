@@ -34,8 +34,7 @@ export default function AnalyticsPage() {
   if (isOwner) {
     return (
       <div className="space-y-5">
-        <p className="text-caption text-muted-foreground">Your outlet&apos;s POS collections.</p>
-        <PosDetail />
+        <PosDetail header={<p className="text-caption text-muted-foreground">Your outlet&apos;s POS collections.</p>} />
       </div>
     );
   }
@@ -128,16 +127,18 @@ function PosTab() {
 
   if (scope) {
     return (
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setScope(null)}><ArrowLeft className="h-4 w-4" /> All outlets</Button>
-          <div>
-            <p className="text-body font-semibold">{scope.name}</p>
-            <p className="text-caption text-muted-foreground">POS analytics</p>
+      <PosDetail
+        outletId={scope.id}
+        header={
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setScope(null)}><ArrowLeft className="h-4 w-4" /> All outlets</Button>
+            <div>
+              <p className="text-body font-semibold">{scope.name}</p>
+              <p className="text-caption text-muted-foreground">POS analytics</p>
+            </div>
           </div>
-        </div>
-        <PosDetail outletId={scope.id} />
-      </div>
+        }
+      />
     );
   }
 
@@ -174,10 +175,28 @@ function PosOutletCard({ name, sub, onClick }: { name: string; sub: string; onCl
   );
 }
 
-function PosDetail({ outletId }: { outletId?: string | 'main' }) {
+function PosDetail({ outletId, header }: { outletId?: string | 'main'; header?: React.ReactNode }) {
   const [range, setRange] = useState<PosAnalyticsRange>({});
   const { data, isLoading } = usePosAnalytics(outletId, true, range);
-  if (isLoading || !data) return <Skeleton className="h-72" />;
+
+  // Header (back button + outlet name) and the date filter share one row,
+  // right-aligned — and stay visible through loading/refetches instead of
+  // vanishing behind the skeleton below.
+  const topRow = (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      {header ?? <div />}
+      <DateRangeFilter range={range} onChange={setRange} />
+    </div>
+  );
+
+  if (isLoading || !data) {
+    return (
+      <div className="space-y-4">
+        {topRow}
+        <Skeleton className="h-72" />
+      </div>
+    );
+  }
   const { summary } = data;
   const peakHour = data.byHour.reduce((best, h) => (h.revenue > best.revenue ? h : best), data.byHour[0]);
   const fmtHour = (h: number) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? 'am' : 'pm'}`;
@@ -190,7 +209,7 @@ function PosDetail({ outletId }: { outletId?: string | 'main' }) {
 
   return (
     <div className="space-y-4">
-      <DateRangeFilter range={range} onChange={setRange} />
+      {topRow}
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         <KpiCard label="Today's POS Sales" value={formatINR(summary.todayRevenue, { decimals: false })} icon={Receipt} accent="primary" />
@@ -223,9 +242,9 @@ function PosDetail({ outletId }: { outletId?: string | 'main' }) {
         </CardContent>
       </Card>
 
-      <Card className="overflow-hidden">
+      <Card className="w-fit overflow-hidden">
         <CardHeader className="py-3"><CardTitle className="text-body">Monthly POS Sales (last 12 months)</CardTitle></CardHeader>
-        <Table className="max-w-xs text-caption">
+        <Table className="w-auto min-w-[260px] text-caption">
           <THead><TR><TH className="h-7 px-3 py-1">Month</TH><TH className="h-7 px-3 py-1 text-right">Sale</TH></TR></THead>
           <TBody>
             {data.monthly.map((m) => (
