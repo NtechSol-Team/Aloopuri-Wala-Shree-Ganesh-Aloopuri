@@ -133,12 +133,16 @@ export class EscPosEncoder {
    * m=1 → pin 5): drawers are wired to either depending on the cable/printer,
    * and pulsing the unwired one is a complete no-op, so sending both covers
    * both conventions without needing to know which one a given till uses.
-   * t1=120 (~240ms on-time) is well above the textbook t1=25 (~50ms) some
-   * drawer solenoids don't reliably trip on — this is strictly a longer,
-   * stronger pulse, so it can't break a drawer the shorter one already opened.
+   *
+   * Pulse length matters for PRINT speed, not just the drawer: the mech stalls
+   * for the on+off time of every pulse before printing the next line. 100ms
+   * on / 100ms off (t=0x32, ×2ms) is double the textbook 50ms solenoid pulse —
+   * ample to trip a standard RJ11 drawer — while keeping the whole two-pin
+   * kick to ~0.4s. (An earlier 240ms/500ms ×2 version paused the receipt for
+   * ~1.5s mid-print, which read as "the printer takes a push to continue".)
    */
   drawer(): this {
-    return this.raw([0x1b, 0x70, 0x00, 0x78, 0xfa, 0x1b, 0x70, 0x01, 0x78, 0xfa]);
+    return this.raw([0x1b, 0x70, 0x00, 0x32, 0x32, 0x1b, 0x70, 0x01, 0x32, 0x32]);
   }
 
   /**

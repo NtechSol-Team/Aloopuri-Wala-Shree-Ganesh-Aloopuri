@@ -139,7 +139,12 @@ async function header(
     if (logo) { e.imageRaster(logo); e.feed(1); }
   }
   // Shop name and address may be Gujarati, so route them through smartLine.
-  smartLine(e, s, store.name, { bold: true, center: true, big: true });
+  // The name should be ONE imposing line, not a broken two-line wrap: "big"
+  // doubles width and halves the columns, so a longer name (e.g. "SHREE
+  // GANESH LIVE ALOOPURI", 26 chars vs 24 at 80mm) drops to double-HEIGHT
+  // only — same height, full column count, fits on a single line.
+  const nameFitsBig = !isAscii(store.name) || store.name.length <= Math.floor(colsFor(s) / 2);
+  smartLine(e, s, store.name, { bold: true, center: true, big: nameFitsBig, tall: !nameFitsBig });
   if (subtitle) smartLine(e, s, subtitle, { center: true });
   else if (store.tagline) smartLine(e, s, store.tagline, { center: true });
 
@@ -192,17 +197,21 @@ export async function receiptBytes(
       });
   const firstHost = glyph ? contactLines.length - glyph.length : -1;
 
-  const headerGlyph = contactLines.map((_, i) => (glyph && i >= firstHost ? glyph[i - firstHost] : undefined));
-  await header(e, s, store, undefined, headerGlyph);
-
   // Kick the cash drawer on any sale that takes cash. The drawer is wired to
-  // the printer's RJ11 port, so this rides the receipt's own byte stream: it
-  // pops as the receipt prints, and on a till with no drawer (or no printer)
-  // the command is simply ignored — nothing to configure either way.
+  // the printer's RJ11 port, so this rides the receipt's own byte stream; on a
+  // till with no drawer (or no printer) the command is simply ignored.
+  // FIRST in the stream, before any text: the mech pauses for the pulse
+  // duration wherever this sits, and mid-receipt that pause looked like the
+  // printer jamming between the header and the token. Up front, the drawer is
+  // already opening as the paper starts — better for the cashier anyway.
   // Card/UPI-only sales deliberately leave it shut; there's no cash to handle.
+  e.init();
   if (txn.status !== 'VOID' && (txn.paymentMode === 'CASH' || Number(txn.cashAmount ?? 0) > 0)) {
     e.drawer();
   }
+
+  const headerGlyph = contactLines.map((_, i) => (glyph && i >= firstHost ? glyph[i - firstHost] : undefined));
+  await header(e, s, store, undefined, headerGlyph);
 
   if (txn.status === 'VOID') {
     e.feed(1).invert(true).size(2, 2).line('  VOID  ').size(1, 1).invert(false);
