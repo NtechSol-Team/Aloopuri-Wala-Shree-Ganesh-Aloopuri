@@ -289,7 +289,9 @@ export async function receiptBytes(
 
   // GST bifurcation — a breakdown of the tax already inside the total above, not
   // an addition to it (POS counter sales are intra-state: CGST+SGST, no IGST).
-  const gst = gstBreakup(Number(txn.grandTotal), Number(txn.taxTotal));
+  // Only shown when this branch actually has a GSTIN set in Settings — no GST
+  // registration means a plain total, no CGST/SGST lines.
+  const gst = store.gstin ? gstBreakup(Number(txn.grandTotal), Number(txn.taxTotal)) : null;
   if (gst) {
     e.leftRight('Taxable Value', inr(gst.base));
     e.leftRight(`CGST @${gst.halfRate.toFixed(2)}%`, inr(gst.cgst));

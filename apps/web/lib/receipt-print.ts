@@ -162,7 +162,9 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
     .join('');
 
   const discountTotal = Number(txn.itemDiscount) + Number(txn.billDiscount);
-  const gst = gstBreakup(Number(txn.grandTotal), Number(txn.taxTotal));
+  // No GST bifurcation on the receipt unless this branch actually has a GSTIN
+  // set in Settings — an outlet with no GST registration prints a plain total.
+  const gst = store.gstin ? gstBreakup(Number(txn.grandTotal), Number(txn.taxTotal)) : null;
 
   // Card/UPI amount only — the cash/cash-received/change breakdown is a
   // till-drawer detail, not something the customer's copy needs to show.
