@@ -1,6 +1,7 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, ContactType } from '@prisma/client';
 import { addDays } from 'date-fns';
 import { prisma } from '../../config/prisma';
+import { logger } from '../../config/logger';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { nextDocNumber } from '../../shared/utils/docNumber';
@@ -223,6 +224,53 @@ export async function logIntake(input: LogIntakeInput, userId: string) {
 type PurchaseInput = import('./production.schema').RecordPurchaseInput;
 type PurchaseItem = PurchaseInput['items'][number];
 
+/**
+ * Auto-save the bill's supplier into the shared Contacts directory so it's
+ * remembered — the cashier types a supplier once, and next time it shows up as
+ * a search suggestion in the purchase form. Best-effort: a directory hiccup
+ * must never block recording the purchase itself, so this runs after the bill's
+ * own transaction has committed and swallows its own errors.
+ *
+ * Matching (to avoid piling up duplicates): prefer the GSTIN (a business's real
+ * identity); fall back to a case-insensitive name match. An existing contact is
+ * only enriched with details it was missing — a user-curated name/GSTIN is
+ * never overwritten.
+ */
+async function upsertSupplierContact(input: PurchaseInput, userId: string): Promise<void> {
+  const name = input.supplierName?.trim();
+  if (!name) return; // Contact needs a name; nothing to remember without one.
+  const gstin = input.supplierGstin?.trim() || null;
+  const stateCode = gstin ? gstinStateCode(gstin) : null;
+  const stateName = input.supplierStateName?.trim() || null;
+
+  try {
+    const existing = await prisma.contact.findFirst({
+      where: {
+        type: ContactType.SUPPLIER,
+        isDeleted: false,
+        ...(gstin
+          ? { gstin: { equals: gstin, mode: 'insensitive' } }
+          : { name: { equals: name, mode: 'insensitive' } }),
+      },
+    });
+
+    if (existing) {
+      const data: Prisma.ContactUpdateInput = {};
+      if (gstin && !existing.gstin) data.gstin = gstin;
+      if (stateCode && !existing.stateCode) data.stateCode = stateCode;
+      if (stateName && !existing.stateName) data.stateName = stateName;
+      if (Object.keys(data).length) await prisma.contact.update({ where: { id: existing.id }, data });
+      return;
+    }
+
+    await prisma.contact.create({
+      data: { type: ContactType.SUPPLIER, name, gstin, stateCode, stateName, createdById: userId },
+    });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to auto-save supplier contact from purchase');
+  }
+}
+
 /** Shared by create + update: normalise GST, validate refs exist, and compute per-line + total money. */
 async function preparePurchase(input: PurchaseInput) {
   // Without-GST bills carry no tax at all, regardless of what the client sent per line.
@@ -377,6 +425,7 @@ export async function logPurchase(input: PurchaseInput, userId: string) {
     return { bill, ...counts };
   });
 
+  await upsertSupplierContact(input, userId);
   cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
   return {
     billNumber: result.bill.billNumber,
@@ -507,6 +556,7 @@ export async function updatePurchase(id: string, input: PurchaseInput, userId: s
     return { bill, ...counts };
   });
 
+  await upsertSupplierContact(input, userId);
   cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
   return {
     billNumber: result.bill.billNumber,

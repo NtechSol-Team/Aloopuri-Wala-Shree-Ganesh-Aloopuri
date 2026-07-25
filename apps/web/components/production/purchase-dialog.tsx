@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { addDays, format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { Plus, Trash2, Boxes, Tag, Sparkles, Package, Search, ReceiptText, FileX } from 'lucide-react';
+import { Plus, Trash2, Boxes, Tag, Sparkles, Package, Search, ReceiptText, FileX, Check, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,7 +13,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useRawMaterials, useProducts } from '@/hooks/useProducts';
-import { useExpenseCategories } from '@/hooks/useExpenses';
+import { useExpenseCategories, useCreateExpenseCategory } from '@/hooks/useExpenses';
 import { useRecordPurchase, useUpdatePurchase, type PurchaseItemInput, type PurchaseBillDetail } from '@/hooks/useProduction';
 import { useContacts } from '@/hooks/useContacts';
 import { useGstLookup } from '@/hooks/useGst';
@@ -39,6 +39,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
   const { data: materials } = useRawMaterials();
   const { data: productsData } = useProducts({ isPosEnabled: false });
   const { data: categories } = useExpenseCategories();
+  const createCategory = useCreateExpenseCategory();
   const { data: suppliers } = useContacts({ type: 'SUPPLIER' });
   const record = useRecordPurchase();
   const updateMutation = useUpdatePurchase();
@@ -58,6 +59,10 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
   const [creditDays, setCreditDays] = useState(30);
   const [roundOff, setRoundOff] = useState(0);
   const [lines, setLines] = useState<Line[]>([]);
+  // Which "Other" line (by index) is currently typing a brand-new category, and
+  // the name being typed. -1 = none.
+  const [newCatLine, setNewCatLine] = useState(-1);
+  const [newCatName, setNewCatName] = useState('');
   const supplierBoxRef = useRef<HTMLDivElement>(null);
 
   const rmList = materials?.rows ?? [];
@@ -68,9 +73,18 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
   const newFgLine = (): Line => { const f = prodList[0]; return { kind: 'FINISHED_GOOD', productId: f?.id ?? '', quantity: 1, costPerUnit: Number(f?.basePrice ?? 0), taxRate: Number(f?.taxPercent ?? 5), hsnCode: '' }; };
   const newOtherLine = (): Line => ({ kind: 'OTHER', categoryId: catList[0]?.id ?? '', description: '', amount: 0, taxRate: 18, hsnCode: '' });
 
+  // Initialise the form exactly ONCE per open, not on every reference-data
+  // change. Creating a category inline invalidates the categories query mid-
+  // edit; without this guard the effect below would re-fire on that change and
+  // wipe the in-progress bill. For a new bill we wait until the reference data
+  // has resolved so the seeded first line points at a real material/category.
+  const initedRef = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open) { initedRef.current = false; return; }
+    if (initedRef.current) return;
+
     if (editBill) {
+      initedRef.current = true;
       setIsGstBill(editBill.isGstBill);
       setSupplier(editBill.supplierName ?? ''); setGstin(editBill.supplierGstin ?? '');
       setSupplierState(''); setShowSuggestions(false);
@@ -82,6 +96,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
       setCustomPaid(paid);
       setCreditDays(editBill.creditDays ?? 30);
       setRoundOff(Number(editBill.roundOff ?? 0));
+      setNewCatLine(-1); setNewCatName('');
       setLines(
         editBill.items.map((it): Line => {
           if (it.kind === 'RAW_MATERIAL') return { kind: 'RAW_MATERIAL', rawMaterialId: it.refId ?? '', quantity: Number(it.quantity ?? 0), costPerUnit: Number(it.unitCost ?? 0), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '' };
@@ -89,12 +104,18 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
           return { kind: 'OTHER', categoryId: it.refId ?? '', description: '', amount: Number(it.taxableAmount), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '' };
         }),
       );
-    } else {
-      setIsGstBill(true);
-      setSupplier(''); setGstin(''); setSupplierState(''); setShowSuggestions(false);
-      setInvoice(''); setBillDate(today()); setMethod('CASH'); setPayMode('full'); setCustomPaid(0); setCreditDays(30); setRoundOff(0);
-      setLines(rmList.length ? [newRawLine()] : catList.length ? [newOtherLine()] : []);
+      return;
     }
+
+    // New bill: hold off until both reference queries have resolved (even to an
+    // empty list) so the first seeded line isn't stuck with a blank id.
+    if (materials === undefined || categories === undefined) return;
+    initedRef.current = true;
+    setIsGstBill(true);
+    setSupplier(''); setGstin(''); setSupplierState(''); setShowSuggestions(false);
+    setInvoice(''); setBillDate(today()); setMethod('CASH'); setPayMode('full'); setCustomPaid(0); setCreditDays(30); setRoundOff(0);
+    setNewCatLine(-1); setNewCatName('');
+    setLines(rmList.length ? [newRawLine()] : catList.length ? [newOtherLine()] : []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editBill, materials, categories]);
 
@@ -110,6 +131,17 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
   const onMaterial = (i: number, id: string) => { const m = rmList.find((r) => r.id === id); update(i, { rawMaterialId: id, costPerUnit: Number(m?.costPerUnit ?? 0) } as Partial<Line>); };
   const onProduct = (i: number, id: string) => { const p = prodList.find((x) => x.id === id); update(i, { productId: id, costPerUnit: Number(p?.basePrice ?? 0), taxRate: Number(p?.taxPercent ?? 5) } as Partial<Line>); };
   const remove = (i: number) => setLines((l) => l.filter((_, idx) => idx !== i));
+
+  const startNewCategory = (i: number) => { setNewCatLine(i); setNewCatName(''); };
+  const cancelNewCategory = () => { setNewCatLine(-1); setNewCatName(''); };
+  const saveNewCategory = (i: number) => {
+    const name = newCatName.trim();
+    if (name.length < 2) { toast.error('Enter a category name'); return; }
+    createCategory.mutate(name, {
+      onSuccess: (c) => { update(i, { categoryId: c.id } as Partial<Line>); cancelNewCategory(); toast.success(`Category "${c.name}" added`); },
+      onError: (e) => toast.error(apiErrorMessage(e)),
+    });
+  };
 
   const lineBase = (l: Line) => (l.kind === 'OTHER' ? l.amount : l.quantity * l.costPerUnit);
   const lineTax = (l: Line) => (isGstBill ? Math.round(lineBase(l) * l.taxRate) / 100 : 0);
@@ -167,7 +199,8 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
           : { kind: 'OTHER', categoryId: l.categoryId, description: l.description || undefined, amount: l.amount, taxRate: l.taxRate, hsnCode: l.hsnCode || undefined },
     );
     const payload = {
-      supplierName: supplierName || undefined, supplierGstin: supplierGstin || undefined, invoiceNumber: invoiceNumber || undefined,
+      supplierName: supplierName || undefined, supplierGstin: supplierGstin || undefined, supplierStateName: supplierState || undefined,
+      invoiceNumber: invoiceNumber || undefined,
       intakeDate: billDate, paymentMethod, amountPaidNow: paidNow, isGstBill, roundOff,
       creditDays: balance > 0 ? creditDays : undefined,
       items,
@@ -299,9 +332,27 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
                         </Select>
                       ) : (
                         <div className="space-y-1">
-                          <Select className="h-8" value={line.categoryId} onChange={(e) => update(i, { categoryId: e.target.value } as Partial<Line>)}>
-                            {catList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </Select>
+                          {newCatLine === i ? (
+                            <div className="flex gap-1">
+                              <Input
+                                autoFocus
+                                className="h-8 text-caption"
+                                placeholder="New category name"
+                                value={newCatName}
+                                onChange={(e) => setNewCatName(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveNewCategory(i); } if (e.key === 'Escape') cancelNewCategory(); }}
+                              />
+                              <Button type="button" size="icon" className="h-8 w-8 shrink-0" loading={createCategory.isPending} onClick={() => saveNewCategory(i)}><Check className="h-4 w-4" /></Button>
+                              <Button type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={cancelNewCategory}><X className="h-4 w-4" /></Button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-1">
+                              <Select className="h-8" value={line.categoryId} onChange={(e) => update(i, { categoryId: e.target.value } as Partial<Line>)}>
+                                {catList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </Select>
+                              <Button type="button" size="icon" variant="secondary" className="h-8 w-8 shrink-0" title="New category" onClick={() => startNewCategory(i)}><Plus className="h-4 w-4" /></Button>
+                            </div>
+                          )}
                           <Input className="h-7 text-caption" placeholder="Description (optional)" value={line.description} onChange={(e) => update(i, { description: e.target.value } as Partial<Line>)} />
                         </div>
                       )}

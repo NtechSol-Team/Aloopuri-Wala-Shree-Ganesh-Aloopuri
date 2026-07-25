@@ -19,6 +19,20 @@ export async function createCategory(name: string, createdById: string) {
   return prisma.expenseCategory.create({ data: { name, createdById } });
 }
 
+/**
+ * Rename a category. The name is renamed in place, so every expense already
+ * pointing at this category (by id) instantly reflects the new label — no data
+ * migration needed. System categories are protected from renaming.
+ */
+export async function updateCategory(id: string, name: string) {
+  const existing = await prisma.expenseCategory.findFirst({ where: { id, isDeleted: false } });
+  if (!existing) throw AppError.notFound('Category not found');
+  if (existing.isSystem) throw AppError.badRequest('System categories cannot be renamed');
+  const category = await prisma.expenseCategory.update({ where: { id }, data: { name } });
+  invalidate();
+  return category;
+}
+
 export async function listExpenses(query: ListExpensesQuery) {
   const where: Prisma.ExpenseWhereInput = {
     isDeleted: false,
@@ -101,6 +115,6 @@ export async function getSummary(query: ExpenseSummaryQuery) {
 }
 
 export const expensesService = {
-  listCategories, createCategory,
+  listCategories, createCategory, updateCategory,
   listExpenses, createExpense, updateExpense, deleteExpense, getSummary,
 };

@@ -39,6 +39,20 @@ export function useCreateExpenseCategory() {
   });
 }
 
+export function useUpdateExpenseCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) =>
+      (await api.patch<ApiSuccess<ExpenseCategory>>(`/expenses/categories/${id}`, { name })).data.data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['expense-categories'] });
+      // The category name shows on expense rows + the by-category summary chart.
+      qc.invalidateQueries({ queryKey: ['expenses'] });
+      qc.invalidateQueries({ queryKey: ['expense-summary'] });
+    },
+  });
+}
+
 export function useExpenses(params: { location?: ExpenseLocation; categoryId?: string } = {}) {
   return useQuery({
     queryKey: ['expenses', params],

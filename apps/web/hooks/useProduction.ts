@@ -144,7 +144,7 @@ export function usePurchaseDetail(id: string | null) {
 }
 
 export interface PurchaseInput {
-  supplierName?: string; supplierGstin?: string; invoiceNumber?: string; notes?: string; paymentMethod?: string; amountPaidNow?: number;
+  supplierName?: string; supplierGstin?: string; supplierStateName?: string; invoiceNumber?: string; notes?: string; paymentMethod?: string; amountPaidNow?: number;
   intakeDate?: string; creditDays?: number; isGstBill?: boolean; roundOff?: number;
   items: PurchaseItemInput[];
 }
@@ -155,7 +155,8 @@ export function useRecordPurchase() {
   return useMutation({
     mutationFn: async (input: PurchaseInput) => (await api.post<ApiSuccess<PurchaseResult>>('/production/purchases', input)).data.data,
     onSuccess: () => {
-      ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      // 'contacts' so an auto-saved supplier shows up in the form's suggestions next time.
+      ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard', 'contacts'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
     },
   });
 }
@@ -165,7 +166,7 @@ export function useUpdatePurchase() {
   return useMutation({
     mutationFn: async ({ id, ...input }: PurchaseInput & { id: string }) => (await api.patch<ApiSuccess<PurchaseResult>>(`/production/purchases/${id}`, input)).data.data,
     onSuccess: () => {
-      ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard', 'contacts'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
     },
   });
 }

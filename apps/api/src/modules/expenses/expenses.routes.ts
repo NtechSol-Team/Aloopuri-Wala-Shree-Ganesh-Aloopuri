@@ -10,7 +10,7 @@ import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { created, ok, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import {
-  createExpenseCategorySchema, createExpenseSchema, expenseSummaryQuerySchema, listExpensesQuerySchema, updateExpenseSchema,
+  createExpenseCategorySchema, updateExpenseCategorySchema, createExpenseSchema, expenseSummaryQuerySchema, listExpensesQuerySchema, updateExpenseSchema,
   type CreateExpenseInput, type ExpenseSummaryQuery, type ListExpensesQuery, type UpdateExpenseInput,
 } from './expenses.schema';
 import { expensesService } from './expenses.service';
@@ -30,6 +30,11 @@ router.post(
   writeRateLimiter,
   validate({ body: createExpenseCategorySchema }),
   asyncHandler(async (req: Request, res: Response) => created(res, await expensesService.createCategory((req.body as { name: string }).name, actor(req)), 'Category created')),
+);
+router.patch(
+  '/categories/:id',
+  validate({ params: idParam, body: updateExpenseCategorySchema }),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await expensesService.updateCategory(req.params.id, (req.body as { name: string }).name), 'Category renamed')),
 );
 
 router.get('/summary', validate({ query: expenseSummaryQuerySchema }), asyncHandler(async (req: Request, res: Response) => ok(res, await expensesService.getSummary(req.query as unknown as ExpenseSummaryQuery))));

@@ -72,6 +72,9 @@ const otherLine = z.object({
 export const recordPurchaseSchema = z.object({
   supplierName: z.string().max(120).optional(),
   supplierGstin: z.string().max(15).optional(),
+  // Supplier's state (from GSTIN lookup or a picked contact) — persisted onto
+  // the auto-saved supplier contact so it's remembered next time.
+  supplierStateName: z.string().max(60).optional(),
   invoiceNumber: z.string().max(80).optional(),
   intakeDate: z.coerce.date().default(() => new Date()),
   // Some suppliers (unregistered / composition scheme) don't charge GST at all.

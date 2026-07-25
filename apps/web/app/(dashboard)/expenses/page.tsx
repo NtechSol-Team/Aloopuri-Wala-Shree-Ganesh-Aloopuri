@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { Trash2, TrendingUp, Plus, Check, Pencil, X } from 'lucide-react';
+import { Trash2, TrendingUp, Plus, Check, Pencil, X, Lock, Tag } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { apiErrorMessage } from '@/lib/api';
 import { formatINR } from '@/lib/utils';
-import { useExpenseCategories, useCreateExpenseCategory, useExpenseSummary, useExpenses, useSaveExpense, useDeleteExpense, type ExpenseLocation } from '@/hooks/useExpenses';
+import { useExpenseCategories, useCreateExpenseCategory, useUpdateExpenseCategory, useExpenseSummary, useExpenses, useSaveExpense, useDeleteExpense, type ExpenseLocation, type ExpenseCategory } from '@/hooks/useExpenses';
 
 const LOCATIONS: ExpenseLocation[] = ['GODOWN', 'MAIN_BRANCH', 'GENERAL'];
 const METHODS = ['CASH', 'UPI', 'BANK_TRANSFER', 'CARD'];
@@ -68,24 +68,90 @@ export default function ExpensesPage() {
         </Table>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle>Expenses by Category</CardTitle></CardHeader>
-        <CardContent>
-          {sLoading || !summary?.byCategory.length ? (
-            <Skeleton className="h-64" />
-          ) : (
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={summary.byCategory} margin={{ top: 8, right: 8, bottom: 40, left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                <XAxis dataKey="category" angle={-30} textAnchor="end" interval={0} tick={{ fontSize: 11, fill: '#6B7280' }} height={60} />
-                <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} />
-                <Tooltip formatter={(v: number) => formatINR(v)} />
-                <Bar dataKey="total" fill="#3730A3" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
+        <Card>
+          <CardHeader><CardTitle>Expenses by Category</CardTitle></CardHeader>
+          <CardContent>
+            {sLoading || !summary?.byCategory.length ? (
+              <Skeleton className="h-64" />
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={summary.byCategory} margin={{ top: 8, right: 8, bottom: 40, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                  <XAxis dataKey="category" angle={-30} textAnchor="end" interval={0} tick={{ fontSize: 11, fill: '#6B7280' }} height={60} />
+                  <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} />
+                  <Tooltip formatter={(v: number) => formatINR(v)} />
+                  <Bar dataKey="total" fill="#3730A3" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+
+        <CategoryManager />
+      </div>
+    </div>
+  );
+}
+
+/** Manage expense categories: rename any user-created category in place. */
+function CategoryManager() {
+  const { data: categories } = useExpenseCategories();
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-body"><Tag className="h-4 w-4" /> Manage Categories</CardTitle>
+        <p className="text-caption text-muted-foreground">Rename a category — every expense filed under it updates automatically.</p>
+      </CardHeader>
+      <CardContent className="space-y-1.5">
+        {!categories?.length ? (
+          <p className="py-6 text-center text-caption text-muted-foreground">No categories yet. Add one from the entry row above.</p>
+        ) : (
+          categories.map((c) => <CategoryRow key={c.id} category={c} />)
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CategoryRow({ category }: { category: ExpenseCategory }) {
+  const rename = useUpdateExpenseCategory();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(category.name);
+
+  const save = () => {
+    const next = name.trim();
+    if (next.length < 2) { toast.error('Enter a category name'); return; }
+    if (next === category.name) { setEditing(false); return; }
+    rename.mutate({ id: category.id, name: next }, {
+      onSuccess: () => { setEditing(false); toast.success('Category renamed'); },
+      onError: (e) => { setName(category.name); toast.error(apiErrorMessage(e)); },
+    });
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1">
+        <Input
+          autoFocus className="h-8 text-body" value={name} onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } if (e.key === 'Escape') { setName(category.name); setEditing(false); } }}
+        />
+        <Button size="icon" className="h-8 w-8 shrink-0" loading={rename.isPending} onClick={save}><Check className="h-4 w-4" /></Button>
+        <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => { setName(category.name); setEditing(false); }}><X className="h-4 w-4" /></Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between rounded-md border border-border px-3 py-1.5">
+      <span className="font-medium">{category.name}</span>
+      {category.isSystem ? (
+        <span className="flex items-center gap-1 text-caption text-muted-foreground"><Lock className="h-3 w-3" /> System</span>
+      ) : (
+        <Button size="icon" variant="ghost" className="h-7 w-7" title="Rename" onClick={() => { setName(category.name); setEditing(true); }}>
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+      )}
     </div>
   );
 }

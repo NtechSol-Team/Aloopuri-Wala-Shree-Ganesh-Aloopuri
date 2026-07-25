@@ -28,6 +28,7 @@ export const expenseSummaryQuerySchema = z.object({
 });
 
 export const createExpenseCategorySchema = z.object({ name: z.string().min(2).max(80) });
+export const updateExpenseCategorySchema = z.object({ name: z.string().min(2).max(80) });
 
 export type CreateExpenseInput = z.infer<typeof createExpenseSchema>;
 export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
