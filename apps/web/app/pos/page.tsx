@@ -829,9 +829,11 @@ function useTapToAdd(add: () => void, dragging: boolean) {
 
 /**
  * Image-first product tile — the fastest way for a cashier to recognise an item.
- * A food photo fills the top square; price sits on a high-contrast chip over it;
- * the availability/qty state is a corner badge. Items with no photo (uploaded or
- * matched) fall back to a coloured initial tile so the grid still reads cleanly.
+ * A food photo fills the whole tile; the name sits mid-card as a coloured band
+ * (equal margin above and below, not a bottom strip) so it reads like a menu
+ * board label over the photo; price and availability/qty are corner badges.
+ * Items with no photo (uploaded or matched) fall back to a coloured tile so
+ * the grid still reads cleanly.
  */
 function ProductCardInner({ product, cartQty, onAdd, drag }: { product: PosProduct; cartQty: number; onAdd: (p: PosProduct) => void; drag?: DragBindings }) {
   const out = product.trackInventory && product.stock !== null && product.stock <= 0;
@@ -899,13 +901,11 @@ function ProductCardInner({ product, cartQty, onAdd, drag }: { product: PosProdu
             className={cn('h-full w-full object-cover', out && 'grayscale')}
           />
         ) : (
-          <div className={cn('relative flex h-full w-full items-center justify-center overflow-hidden', color)}>
-            {/* Big translucent initial as a watermark, so a photo-less tile still
-                has some texture and isn't a flat block of colour. */}
+          <div className={cn('relative h-full w-full overflow-hidden', color)}>
+            {/* Translucent initial as a watermark, so a photo-less tile still has
+                some texture and isn't a flat block of colour — the name band
+                below is now the tile's actual identity, not this letter. */}
             <span className="absolute -right-2 -top-3 select-none text-7xl font-black leading-none text-white/15">
-              {product.name.replace(/[^\p{L}\p{N}]/u, '').charAt(0) || '•'}
-            </span>
-            <span className="text-4xl font-black text-white drop-shadow">
               {product.name.replace(/[^\p{L}\p{N}]/u, '').charAt(0) || '•'}
             </span>
           </div>
@@ -929,17 +929,18 @@ function ProductCardInner({ product, cartQty, onAdd, drag }: { product: PosProdu
           </span>
         )}
 
+        {/* Name — sits mid-card (equal margin top and bottom), not a bottom
+            strip, in the item's identity colour so every card still reads
+            distinctly. Solid fill (not translucent) keeps it a cheap flat-
+            colour paint over the photo, same as the old bottom bar. */}
+        <div className={cn('absolute inset-x-0 top-1/2 -translate-y-1/2 px-1.5 py-1.5', color)}>
+          <p className="whitespace-normal break-words text-center text-[15px] font-extrabold leading-tight text-white drop-shadow-sm">{product.name}</p>
+        </div>
+
         {/* Price chip — dark for contrast over any photo. */}
         <span className="absolute bottom-1 left-1 rounded-md bg-black/75 px-1.5 py-px text-[12.5px] font-extrabold text-white">
           {formatINR(product.mrp)}
         </span>
-      </div>
-
-      {/* Name — the item's identity colour so every card reads distinctly (not a
-          uniform black bar). No fixed height, so a long name grows the bar
-          instead of being clipped. */}
-      <div className={cn('px-1.5 py-1.5', color)}>
-        <p className="whitespace-normal break-words text-[16px] font-extrabold leading-tight text-white drop-shadow-sm">{product.name}</p>
       </div>
     </button>
   );
