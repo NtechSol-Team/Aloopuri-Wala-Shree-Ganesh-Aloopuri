@@ -4,7 +4,7 @@ import { format } from 'date-fns';
 import type { PosTxn } from '@/hooks/usePos';
 import {
   DEFAULT_STORE, gstBreakup, PAYMENT_MODE_LABEL,
-  type OrderPickListLine, type SessionPaymentModeRow, type StoreProfile,
+  type BatchLabelData, type OrderPickListLine, type SessionPaymentModeRow, type StoreProfile,
 } from '@/lib/receipt-print';
 import { EscPosEncoder, wrapText, type MonoRaster } from './escpos-encoder';
 import { loadImageAsRaster, textToRaster } from './escpos-image';
@@ -347,6 +347,39 @@ export function pickListBytes(
   e.divider();
   e.bold(true).leftRight('ESTIMATED TOTAL', inr(total)).bold(false);
   e.feed(1).align('center').line('Pack & dispatch the quantities above.');
+  e.feed(4).cut();
+  return e.encode();
+}
+
+/** Production-batch label — mirrors `printBatchLabel`. */
+export function batchLabelBytes(b: BatchLabelData, s: PrinterSettings): Uint8Array {
+  const qtyStr = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(3))));
+  const e = new EscPosEncoder({ cols: colsFor(s) });
+  e.init().align('center');
+  smartLine(e, s, STORE_NAME, { bold: true, center: true, big: true });
+  e.line('Production Batch');
+  e.feed(1);
+  // What was made — the headline of the slip.
+  smartLine(e, s, b.productName, { bold: true, center: true, tall: true });
+  smartLine(e, s, `Qty: ${qtyStr(b.quantity)} ${b.unit}`, { bold: true, center: true });
+
+  e.align('left').divider();
+  e.leftRight('Batch', b.batchNumber);
+  e.leftRight('Date & time', format(new Date(b.productionDate), 'dd MMM yyyy, hh:mm a'));
+  e.divider();
+
+  if (b.ingredients.length) {
+    e.bold(true).line('INGREDIENTS').bold(false);
+    for (const it of b.ingredients) {
+      smartLine(e, s, it.name, { bold: true });
+      e.leftRight('', `${qtyStr(it.quantity)} ${it.unit}`);
+    }
+  } else {
+    e.align('center').line('No ingredients recorded.').align('left');
+  }
+
+  e.divider();
+  e.align('center').line(STORE_NAME);
   e.feed(4).cut();
   return e.encode();
 }

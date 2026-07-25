@@ -39,6 +39,26 @@ export function useBatches() {
   });
 }
 
+/** Full batch with its consumed-ingredient lines — used to print a batch label on demand. */
+export interface ProductionBatchDetail {
+  id: string;
+  batchNumber: string;
+  quantityProduced: string;
+  productionDate: string;
+  notes: string | null;
+  product: { name: string; unit: string };
+  items: Array<{
+    nameSnapshot: string | null;
+    quantityConsumed: string;
+    rawMaterial: { name: string; unit: string } | null;
+    componentProduct: { name: string; unit: string } | null;
+  }>;
+}
+
+export async function fetchBatchDetail(id: string): Promise<ProductionBatchDetail> {
+  return (await api.get<ApiSuccess<ProductionBatchDetail>>(`/production/batches/${id}`)).data.data;
+}
+
 export function useLogBatch() {
   const qc = useQueryClient();
   return useMutation({

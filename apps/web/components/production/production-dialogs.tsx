@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { Plus, Trash2, Boxes, Package } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -42,6 +43,8 @@ export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const { data: products } = useProducts({ isPosEnabled: false });
   const [productId, setProductId] = useState('');
   const [quantity, setQuantity] = useState(100);
+  // Local datetime-local value ("yyyy-MM-ddTHH:mm"); defaults to now, editable.
+  const [producedAt, setProducedAt] = useState(() => format(new Date(), "yyyy-MM-dd'T'HH:mm"));
   const [notes, setNotes] = useState('');
   const [overheads, setOverheads] = useState<Overhead[]>([]);
   const [rows, setRows] = useState<IngredientRow[]>([]);
@@ -53,6 +56,9 @@ export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     if (open && products?.rows.length && !productId) setProductId(products.rows[0].id);
     if (!open) { setOverheads([]); setNotes(''); }
   }, [open, products, productId]);
+
+  // Reset the production timestamp to "now" each time the dialog opens.
+  useEffect(() => { if (open) setProducedAt(format(new Date(), "yyyy-MM-dd'T'HH:mm")); }, [open]);
 
   // Recipe (re)loaded — e.g. product changed. Fresh rows, clear manual-edit tracking.
   useEffect(() => {
@@ -93,6 +99,7 @@ export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     log.mutate(
       {
         productId, quantityProduced: quantity, notes: notes || undefined,
+        productionDate: producedAt ? new Date(producedAt).toISOString() : undefined,
         overheads: cleanOverheads.length ? cleanOverheads : undefined,
         ingredients: ingredients.length ? ingredients : undefined,
       },
@@ -123,6 +130,10 @@ export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             <div className="space-y-1.5">
               <Label>Quantity Produced</Label>
               <Input type="number" min={1} value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Produced on (date &amp; time)</Label>
+              <Input type="datetime-local" value={producedAt} onChange={(e) => setProducedAt(e.target.value)} />
             </div>
           </div>
 

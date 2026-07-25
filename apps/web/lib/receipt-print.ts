@@ -328,6 +328,80 @@ export function printOrderPickList(
 }
 
 
+export interface BatchLabelData {
+  batchNumber: string;
+  productName: string;
+  quantity: number;
+  unit: string;
+  productionDate: string; // ISO
+  ingredients: Array<{ name: string; quantity: number; unit: string }>;
+}
+
+const qtyStr = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(3))));
+
+/**
+ * 80mm thermal production-batch label — printed from the Production Orders list.
+ * Shows what was made (product + quantity + when) and the ingredients that went
+ * into it (name + weight), so a physical slip can travel with the batch.
+ */
+export function printBatchLabel(b: BatchLabelData): void {
+  const ingredientRows = b.ingredients
+    .map(
+      (it) => `
+      <tr><td class="name" colspan="2">${esc(it.name)}</td></tr>
+      <tr class="sub"><td></td><td class="num">${qtyStr(it.quantity)} ${esc(it.unit)}</td></tr>`,
+    )
+    .join('');
+
+  const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  @page { size: 80mm auto; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 72mm; margin: 0 auto; padding: 4mm 2mm 8mm; font-family: 'Courier New', ui-monospace, monospace; font-size: 12px; color: #000; }
+  .center { text-align: center; }
+  .store { font-size: 16px; font-weight: 700; letter-spacing: 0.5px; }
+  .tagline { font-size: 10px; margin-top: 1px; }
+  .product { font-size: 22px; font-weight: 800; line-height: 1.15; margin: 4px 0 2px; }
+  .qty { font-size: 16px; font-weight: 700; }
+  hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
+  .meta { font-size: 11px; }
+  .row { display: flex; justify-content: space-between; padding: 1px 0; }
+  .sec { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 1px 0; vertical-align: top; }
+  td.name { font-size: 16px; font-weight: 700; padding-top: 4px; line-height: 1.25; }
+  tr.sub td { font-size: 13px; font-weight: 700; }
+  .num { text-align: right; white-space: nowrap; }
+</style>
+</head>
+<body>
+  <div class="center">
+    <div class="store">${esc(STORE_NAME)}</div>
+    <div class="tagline">Production Batch</div>
+    <div class="product">${esc(b.productName)}</div>
+    <div class="qty">Qty: ${qtyStr(b.quantity)} ${esc(b.unit)}</div>
+  </div>
+  <hr />
+  <div class="meta">
+    <div class="row"><span>Batch</span><span>${esc(b.batchNumber)}</span></div>
+    <div class="row"><span>Date &amp; time</span><span>${format(new Date(b.productionDate), 'dd MMM yyyy, hh:mm a')}</span></div>
+  </div>
+  <hr />
+  ${b.ingredients.length
+    ? `<div class="sec">Ingredients</div><table>${ingredientRows}</table>`
+    : '<p class="center" style="font-size:11px;">No ingredients recorded.</p>'}
+  <hr />
+  <p class="center" style="margin-top:6px;font-size:11px;">Shree Ganesh Aloopuri</p>
+</body>
+</html>`;
+
+  printHtml(html);
+}
+
+
 export interface SessionPaymentModeRow { mode: string; transactions: number; revenue: number }
 
 /**

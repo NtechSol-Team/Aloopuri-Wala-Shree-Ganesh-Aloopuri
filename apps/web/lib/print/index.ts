@@ -6,13 +6,15 @@ import {
   printReceipt as printReceiptHtml,
   printOrderPickList as printOrderPickListHtml,
   printSessionPaymentModeReport as printSessionPaymentModeReportHtml,
+  printBatchLabel as printBatchLabelHtml,
+  type BatchLabelData,
   type OrderPickListLine,
   type SessionPaymentModeRow,
   type StoreProfile,
 } from '@/lib/receipt-print';
 import { getPrinterSettings } from './printer-settings';
 import { resolveRawTransport, printRaw, type PrintResult } from './print-manager';
-import { receiptBytes, pickListBytes, sessionPaymentModeReportBytes, openDrawerBytes } from './receipt-escpos';
+import { receiptBytes, pickListBytes, sessionPaymentModeReportBytes, openDrawerBytes, batchLabelBytes } from './receipt-escpos';
 
 /**
  * Smart print entry points — same signatures the UI always used, but now
@@ -64,6 +66,14 @@ export function printOrderPickList(
   if (!resolveRawTransport()) return printOrderPickListHtml(order, lines);
   void (async () => {
     const res = await printRaw(pickListBytes(order, lines, getPrinterSettings()));
+    if (!res.ok) notifyFailure(res);
+  })();
+}
+
+export function printBatchLabel(b: BatchLabelData): void {
+  if (!resolveRawTransport()) return printBatchLabelHtml(b);
+  void (async () => {
+    const res = await printRaw(batchLabelBytes(b, getPrinterSettings()));
     if (!res.ok) notifyFailure(res);
   })();
 }

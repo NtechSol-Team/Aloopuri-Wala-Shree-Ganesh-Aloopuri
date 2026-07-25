@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
+import toast from 'react-hot-toast';
 import {
-  Plus, Pencil, Factory, Boxes, Truck, ArrowRight, AlertTriangle, ShoppingCart, Warehouse,
+  Plus, Pencil, Factory, Boxes, Truck, ArrowRight, AlertTriangle, ShoppingCart, Warehouse, Printer,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,8 +13,10 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR } from '@/lib/utils';
+import { apiErrorMessage } from '@/lib/api';
 import { useRawMaterials, type RawMaterial } from '@/hooks/useProducts';
-import { useBatches, useGodownStock, usePurchases } from '@/hooks/useProduction';
+import { useBatches, useGodownStock, usePurchases, fetchBatchDetail } from '@/hooks/useProduction';
+import { printBatchLabel } from '@/lib/print';
 import { RawMaterialFormDialog } from '@/components/products/raw-material-form-dialog';
 import { LogBatchDialog } from '@/components/production/production-dialogs';
 
@@ -174,7 +177,7 @@ function ProductionTab() {
       ) : (
         <Card className="overflow-hidden">
           <Table>
-            <THead><TR><TH>Batch #</TH><TH>Product</TH><TH className="text-right">Qty</TH><TH className="text-right">Material</TH><TH className="text-right">Overhead</TH><TH className="text-right">Cost / unit</TH><TH>Date</TH></TR></THead>
+            <THead><TR><TH>Batch #</TH><TH>Product</TH><TH className="text-right">Qty</TH><TH className="text-right">Material</TH><TH className="text-right">Overhead</TH><TH className="text-right">Cost / unit</TH><TH>Date &amp; time</TH><TH className="text-right">Print</TH></TR></THead>
             <TBody>
               {data.map((b) => (
                 <TR key={b.id}>
@@ -184,7 +187,8 @@ function ProductionTab() {
                   <TD className="text-right">{formatINR(b.totalMaterialCost)}</TD>
                   <TD className="text-right text-muted-foreground">{Number(b.overheadCost) > 0 ? formatINR(b.overheadCost) : '—'}</TD>
                   <TD className="text-right font-semibold text-primary">{formatINR(b.costPerUnit)}/{b.product.unit.toLowerCase()}</TD>
-                  <TD>{format(new Date(b.productionDate), 'dd MMM yyyy')}</TD>
+                  <TD className="whitespace-nowrap">{format(new Date(b.productionDate), 'dd MMM yyyy, hh:mm a')}</TD>
+                  <TD className="text-right"><BatchPrintButton batchId={b.id} /></TD>
                 </TR>
               ))}
             </TBody>
@@ -193,6 +197,38 @@ function ProductionTab() {
       )}
       <LogBatchDialog open={open} onOpenChange={setOpen} />
     </div>
+  );
+}
+
+/** Fetches a batch's ingredients on click and prints a batch label. */
+function BatchPrintButton({ batchId }: { batchId: string }) {
+  const [loading, setLoading] = useState(false);
+  const doPrint = async () => {
+    setLoading(true);
+    try {
+      const d = await fetchBatchDetail(batchId);
+      printBatchLabel({
+        batchNumber: d.batchNumber,
+        productName: d.product.name,
+        quantity: Number(d.quantityProduced),
+        unit: d.product.unit,
+        productionDate: d.productionDate,
+        ingredients: d.items.map((it) => ({
+          name: it.nameSnapshot ?? it.rawMaterial?.name ?? it.componentProduct?.name ?? 'Item',
+          quantity: Number(it.quantityConsumed),
+          unit: it.rawMaterial?.unit ?? it.componentProduct?.unit ?? '',
+        })),
+      });
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <Button variant="ghost" size="icon" title="Print batch label" loading={loading} onClick={doPrint}>
+      <Printer className="h-4 w-4" />
+    </Button>
   );
 }
 
