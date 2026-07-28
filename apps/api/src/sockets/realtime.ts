@@ -6,6 +6,7 @@ import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { prisma } from '../config/prisma';
 import { verifyAccessToken } from '../shared/utils/jwt';
+import { recordConnect, recordDisconnect } from '../modules/developer-presence/developer-presence.service';
 import {
   PG_NOTIFY_CHANNEL,
   Room,
@@ -30,32 +31,63 @@ export async function initRealtime(server: HttpServer): Promise<void> {
   });
 
   io.use((socket: Socket, nextFn: (err?: Error) => void) => {
-    try {
-      const token =
-        (socket.handshake.auth?.token as string | undefined) ??
-        (socket.handshake.headers.authorization?.replace('Bearer ', '') ?? '');
-      if (!token) throw new Error('missing token');
-      const payload = verifyAccessToken(token);
-      socket.data.userId = payload.sub;
-      socket.data.role = payload.role;
-      socket.data.outletId = payload.outletId;
-      nextFn();
-    } catch {
-      nextFn(new Error('unauthorized'));
-    }
+    void (async () => {
+      try {
+        const token =
+          (socket.handshake.auth?.token as string | undefined) ??
+          (socket.handshake.headers.authorization?.replace('Bearer ', '') ?? '');
+        if (!token) throw new Error('missing token');
+        const payload = verifyAccessToken(token);
+        socket.data.userId = payload.sub;
+        socket.data.role = payload.role;
+        socket.data.outletId = payload.outletId;
+        // The token carries no display name, and the developer console lists
+        // who's online by name. One PK lookup per connection (not per message)
+        // — rarer than the per-request lookup authGuard already does.
+        const user = await prisma.user.findUnique({ where: { id: payload.sub }, select: { name: true } });
+        socket.data.userName = user?.name ?? 'Unknown';
+        nextFn();
+      } catch {
+        nextFn(new Error('unauthorized'));
+      }
+    })();
   });
 
   io.on('connection', (socket: Socket) => {
     const role = socket.data.role as UserRole;
     const outletId = socket.data.outletId as string | null;
+    const userId = socket.data.userId as string;
+    const name = (socket.data.userName as string | undefined) ?? 'Unknown';
 
     if (role === UserRole.SUPER_ADMIN || role === UserRole.GODOWN_MANAGER) {
       void socket.join(Room.ADMIN);
     }
     if (outletId) void socket.join(Room.outlet(outletId));
 
-    logger.debug({ userId: socket.data.userId, role }, 'socket connected');
-    socket.on('disconnect', () => logger.debug({ userId: socket.data.userId }, 'socket disconnected'));
+    // Presence: in-memory only. Broadcast just once per user going online,
+    // regardless of how many tabs/devices they have open.
+    const cameOnline = recordConnect(socket.id, { userId, name, role, outletId });
+    if (cameOnline) {
+      void emitRealtime(
+        RealtimeEvent.PRESENCE_ONLINE,
+        { userId, name, role, outletId, onlineSince: new Date().toISOString() },
+        { global: true },
+      );
+    }
+
+    logger.debug({ userId, role }, 'socket connected');
+    socket.on('disconnect', () => {
+      logger.debug({ userId }, 'socket disconnected');
+      // Fires only once the reconnect grace period passes with no new socket —
+      // so ordinary navigation between layouts doesn't fragment a session.
+      recordDisconnect(socket.id, (closed) => {
+        const activeSeconds = Math.max(0, Math.round((closed.endedAt.getTime() - closed.startedAt.getTime()) / 1000));
+        void prisma.userActivityInterval
+          .create({ data: { userId: closed.userId, startedAt: closed.startedAt, endedAt: closed.endedAt, activeSeconds } })
+          .catch((err: unknown) => logger.error({ err, userId: closed.userId }, 'failed to persist user activity interval'));
+        void emitRealtime(RealtimeEvent.PRESENCE_OFFLINE, { userId: closed.userId, activeSeconds }, { global: true });
+      });
+    });
   });
 
   // Dedicated LISTEN connection (Prisma's pool can't hold a persistent LISTEN).

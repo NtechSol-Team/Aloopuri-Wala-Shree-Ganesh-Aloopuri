@@ -49,6 +49,16 @@ const envSchema = z.object({
   SUPPLIER_BILL_REMINDER_CRON: z.string().default('0 8 * * *'), // daily 8am: flags bills due in 10 or 5 days
   POS_SESSION_ROLLOVER_CRON: z.string().default('0 0 * * *'), // midnight IST: auto-close + reopen every open till
 
+  // Whole-server telemetry for the developer console's hosting-cost view. The
+  // sample itself is two in-process OS reads plus one small file read, so a
+  // 5-minute cadence costs nothing; retention keeps the table a few thousand
+  // rows at most. Interface defaults to the PUBLIC nic (eth0) because that is
+  // what DigitalOcean's bandwidth billing counts — not the private-VPC eth1
+  // the database connection uses.
+  SERVER_METRICS_SAMPLE_CRON: z.string().default('*/5 * * * *'),
+  SERVER_METRICS_RETENTION_DAYS: z.coerce.number().int().positive().default(14),
+  SERVER_METRICS_NET_INTERFACE: z.string().default('eth0'),
+
   // Company letterhead details for invoice PDFs. GSTIN blank by default — only
   // printed on GST invoices once the business's actual registered GSTIN is set.
   COMPANY_NAME: z.string().default('Shree Ganesh Aloopuri'),

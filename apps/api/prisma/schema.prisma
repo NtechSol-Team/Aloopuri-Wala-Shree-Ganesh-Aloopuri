@@ -196,8 +196,9 @@ model User {
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById  String?  @map("created_by") @db.Uuid
 
-  outlet   Outlet?       @relation("OutletMembers", fields: [outletId], references: [id])
-  sessions UserSession[]
+  outlet             Outlet?                @relation("OutletMembers", fields: [outletId], references: [id])
+  sessions           UserSession[]
+  activityIntervals  UserActivityInterval[]
 
   @@index([role])
   @@index([outletId])
@@ -1269,4 +1270,54 @@ model DeveloperPayment {
   @@index([scope, outletId])
   @@index([renewalDate])
   @@map("developer_payments")
+}
+
+// ────────────────── DEVELOPER: usage & infrastructure telemetry ──────────────
+// Both tables below feed the passphrase-gated /developer console only. Neither
+// is written on a hot path: activity intervals are written once when a user's
+// last connection closes, metric samples once per scheduled job run.
+
+/// One continuous "online" span for a user — from their first live connection
+/// to their last one closing. Deliberately NOT extra columns on UserSession:
+/// that model is a JWT refresh-token/security record with its own rotation and
+/// reuse-detection semantics, and one login can span many discrete online spans
+/// (tab closed and reopened, wifi drop, several devices).
+model UserActivityInterval {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  startedAt     DateTime @map("started_at") @db.Timestamptz(6)
+  endedAt       DateTime @map("ended_at") @db.Timestamptz(6)
+  activeSeconds Int      @map("active_seconds")
+  isDeleted     Boolean  @default(false) @map("is_deleted")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([startedAt])
+  @@map("user_activity_intervals")
+}
+
+/// Periodic whole-server telemetry sample (CPU load, memory, cumulative network
+/// counters) for hosting-cost analysis. Pure operational time-series, so unlike
+/// the business models above it has NO isDeleted: old rows are really deleted by
+/// the sampling job's retention sweep, since a soft-deleted row would still
+/// occupy the table and defeat the point of capping growth.
+model ServerMetricSample {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  loadAvg1        Float    @map("load_avg_1")
+  loadAvg5        Float    @map("load_avg_5")
+  loadAvg15       Float    @map("load_avg_15")
+  memUsedPct      Float    @map("mem_used_pct")
+  // RAW cumulative byte counters straight from /proc/net/dev, not per-interval
+  // deltas — deltas are derived by diffing consecutive rows at read time, so the
+  // job needs no persisted "previous value" that would go wrong on every restart.
+  // Null on non-Linux (local dev) or if the interface read fails for one run.
+  netRxBytesTotal BigInt?  @map("net_rx_bytes_total")
+  netTxBytesTotal BigInt?  @map("net_tx_bytes_total")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@map("server_metric_samples")
 }

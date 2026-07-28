@@ -17,6 +17,8 @@ import { accountingRouter } from '../modules/accounting/accounting.routes';
 import { payablesRouter } from '../modules/payables/payables.routes';
 import { contactsRouter } from '../modules/contacts/contacts.routes';
 import { developerPaymentsRouter } from '../modules/developer-payments/developer-payments.routes';
+import { developerPresenceRouter } from '../modules/developer-presence/developer-presence.routes';
+import { developerMetricsRouter } from '../modules/developer-metrics/developer-metrics.routes';
 
 /**
  * Central API router. Feature module routers are mounted here as they are built
@@ -47,6 +49,8 @@ export function buildApiRouter(): Router {
   router.use('/payables', payablesRouter);
   router.use('/contacts', contactsRouter);
   router.use('/developer-payments', developerPaymentsRouter);
+  router.use('/developer-presence', developerPresenceRouter);
+  router.use('/developer-metrics', developerMetricsRouter);
 
   return router;
 }

@@ -7,6 +7,7 @@ export const JobName = {
   GENERATE_BILL_PDF: 'generate-bill-pdf',
   SUPPLIER_BILL_REMINDERS: 'supplier-bill-reminders',
   POS_SESSION_ROLLOVER: 'pos-session-rollover',
+  SERVER_METRICS_SAMPLE: 'server-metrics-sample',
 } as const;
 
 export type JobNameValue = (typeof JobName)[keyof typeof JobName];
@@ -41,11 +42,13 @@ export async function startJobs(): Promise<void> {
   const { generateBillPdfHandler } = await import('./handlers/generateBillPdf');
   const { supplierBillRemindersHandler } = await import('./handlers/supplierBillReminders');
   const { dailySessionRolloverHandler } = await import('./handlers/dailySessionRollover');
+  const { serverMetricsSampleHandler } = await import('./handlers/serverMetricsSample');
 
   await boss.work(JobName.REFRESH_ANALYTICS, refreshAnalyticsHandler);
   await boss.work(JobName.GENERATE_BILL_PDF, generateBillPdfHandler);
   await boss.work(JobName.SUPPLIER_BILL_REMINDERS, supplierBillRemindersHandler);
   await boss.work(JobName.POS_SESSION_ROLLOVER, dailySessionRolloverHandler);
+  await boss.work(JobName.SERVER_METRICS_SAMPLE, serverMetricsSampleHandler);
 
   // Schedule recurring analytics refresh + daily supplier-bill due-date sweep.
   await boss.schedule(JobName.REFRESH_ANALYTICS, env.MATERIALIZED_VIEW_REFRESH_CRON, {});
@@ -53,6 +56,8 @@ export async function startJobs(): Promise<void> {
   // Pinned to IST regardless of the server's own system timezone — this is the
   // one schedule where "midnight" must mean the business's midnight, not UTC's.
   await boss.schedule(JobName.POS_SESSION_ROLLOVER, env.POS_SESSION_ROLLOVER_CRON, {}, { tz: 'Asia/Kolkata' });
+  // Whole-server telemetry for the developer console (one tiny row per run).
+  await boss.schedule(JobName.SERVER_METRICS_SAMPLE, env.SERVER_METRICS_SAMPLE_CRON, {});
 
   logger.info('pg-boss started (queues + scheduled jobs registered)');
 }

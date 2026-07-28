@@ -4,9 +4,11 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+import { useQueryClient } from '@tanstack/react-query';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
 import {
   Terminal, Lock, LogIn, Plus, Pencil, Trash2, Tag, ArrowLeft, Store, Loader2, ReceiptText,
-  IndianRupee, AlertTriangle, History,
+  IndianRupee, AlertTriangle, History, Cpu, MemoryStick, ArrowDownToLine, ArrowUpFromLine,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,6 +27,11 @@ import {
   useDeveloperPaymentClients, useSaveDeveloperPayment, useDeleteDeveloperPayment,
   type DeveloperPaymentClient, type RenewalStatus,
 } from '@/hooks/useDeveloperPayments';
+import { useOnlineUsers, useTodayActivityTotals } from '@/hooks/useDeveloperPresence';
+import { useRecentServerMetrics } from '@/hooks/useDeveloperMetrics';
+import { getSocket } from '@/lib/socket';
+import { KpiCard } from '@/components/dashboard/kpi-card';
+import { ROLE_LABEL } from '@/components/shared/nav-config';
 import { OutletPricesDialog } from '@/components/outlets/outlet-prices-dialog';
 
 export default function DeveloperPage() {
@@ -82,7 +89,7 @@ function UnlockScreen() {
 // ─────────────────────────────── Console ────────────────────────────────────
 function DeveloperConsole() {
   const clearDevKey = useDevStore((s) => s.clearDevKey);
-  const [tab, setTab] = useState<'outlets' | 'payments'>('outlets');
+  const [tab, setTab] = useState<'outlets' | 'payments' | 'presence' | 'server'>('outlets');
 
   return (
     <div className="mx-auto max-w-5xl p-4 sm:p-8">
@@ -105,7 +112,7 @@ function DeveloperConsole() {
       </div>
 
       <div className="mb-5 flex gap-1 rounded-lg border border-slate-800 bg-slate-900 p-1">
-        {([['outlets', 'Outlets'], ['payments', 'Payments & Renewals']] as const).map(([k, label]) => (
+        {([['outlets', 'Outlets'], ['payments', 'Payments & Renewals'], ['presence', "Who's Active"], ['server', 'Server Health']] as const).map(([k, label]) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -119,7 +126,10 @@ function DeveloperConsole() {
         ))}
       </div>
 
-      {tab === 'outlets' ? <OutletsTab /> : <PaymentsTab />}
+      {tab === 'outlets' ? <OutletsTab />
+        : tab === 'payments' ? <PaymentsTab />
+        : tab === 'presence' ? <PresenceTab />
+        : <ServerHealthTab />}
     </div>
   );
 }
@@ -397,6 +407,194 @@ function PaymentHistoryDialog({ client, onClose }: { client: DeveloperPaymentCli
         <DialogFooter><Button variant="secondary" onClick={onClose}>Close</Button></DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─────────────────────────────── Who's Active tab ────────────────────────────
+/** "1h 04m" / "12m 30s" — compact, and never shows a bare "0s" for a live row. */
+function formatDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2, '0')}s`;
+  return `${sec}s`;
+}
+
+function PresenceTab() {
+  const qc = useQueryClient();
+  const { data: online, isLoading } = useOnlineUsers(true);
+  const { data: totals } = useTodayActivityTotals(true);
+  // One shared 1s tick drives every live duration — no per-row timers, and it
+  // runs only while this tab is open (developer-only page).
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Presence changes are rare (a login/logout), so refetch on the event rather
+  // than polling on a timer.
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const handler = () => void qc.invalidateQueries({ queryKey: ['developer-presence'] });
+    socket.on('presence_online', handler);
+    socket.on('presence_offline', handler);
+    return () => { socket.off('presence_online', handler); socket.off('presence_offline', handler); };
+  }, [qc]);
+
+  if (isLoading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div>;
+
+  return (
+    <div className="space-y-4">
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <p className="flex items-center gap-2 font-semibold">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
+            </span>
+            Live now
+          </p>
+          <span className="text-caption text-muted-foreground">{online?.length ?? 0} online</span>
+        </div>
+        {!online?.length ? (
+          <p className="py-10 text-center text-body text-muted-foreground">Nobody is using the app right now.</p>
+        ) : (
+          <Table>
+            <THead><TR><TH>User</TH><TH>Role</TH><TH>Since</TH><TH className="text-right">Online for</TH></TR></THead>
+            <TBody>
+              {online.map((u) => (
+                <TR key={u.userId}>
+                  <TD className="font-medium">{u.name}</TD>
+                  <TD><Badge variant="info">{ROLE_LABEL[u.role]}</Badge></TD>
+                  <TD className="text-muted-foreground">{format(new Date(u.onlineSince), 'hh:mm a')}</TD>
+                  <TD className="text-right font-semibold tabular-nums text-success">
+                    {formatDuration((now - new Date(u.onlineSince).getTime()) / 1000)}
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="border-b border-border px-4 py-3">
+          <p className="font-semibold">Today&apos;s usage</p>
+          <p className="text-caption text-muted-foreground">Total time in the app today, per user (includes time still running).</p>
+        </div>
+        {!totals?.length ? (
+          <p className="py-10 text-center text-body text-muted-foreground">No activity recorded today yet.</p>
+        ) : (
+          <Table>
+            <THead><TR><TH>User</TH><TH>Role</TH><TH>Outlet</TH><TH className="text-right">Active today</TH></TR></THead>
+            <TBody>
+              {totals.map((t) => (
+                <TR key={t.userId}>
+                  <TD className="font-medium">
+                    <span className="flex items-center gap-1.5">
+                      {t.isOnline && <span className="h-2 w-2 shrink-0 rounded-full bg-success" title="Online now" />}
+                      {t.name}
+                    </span>
+                  </TD>
+                  <TD><Badge variant="neutral">{ROLE_LABEL[t.role]}</Badge></TD>
+                  <TD className="text-muted-foreground">{t.outletName ?? '—'}</TD>
+                  <TD className="text-right font-semibold tabular-nums">{formatDuration(t.activeSeconds)}</TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ─────────────────────────────── Server Health tab ───────────────────────────
+const WINDOWS = [[6, '6h'], [24, '24h'], [72, '3d'], [168, '7d']] as const;
+const toMb = (bytes: number | null) => (bytes == null ? 0 : bytes / 1024 / 1024);
+
+function ServerHealthTab() {
+  const [hours, setHours] = useState<number>(24);
+  const { data: points, isLoading } = useRecentServerMetrics(hours, true);
+
+  const latest = points?.length ? points[points.length - 1] : null;
+  const totalRxMb = (points ?? []).reduce((s, p) => s + toMb(p.netRxBytes), 0);
+  const totalTxMb = (points ?? []).reduce((s, p) => s + toMb(p.netTxBytes), 0);
+  const chartData = (points ?? []).map((p) => ({
+    at: format(new Date(p.at), hours > 48 ? 'dd MMM' : 'HH:mm'),
+    load: Number(p.loadAvg1.toFixed(2)),
+    mem: Number(p.memUsedPct.toFixed(1)),
+    rx: Number(toMb(p.netRxBytes).toFixed(2)),
+    tx: Number(toMb(p.netTxBytes).toFixed(2)),
+  }));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-caption text-muted-foreground">Whole-server usage, sampled every 5 minutes.</p>
+        <div className="flex gap-1 rounded-md border border-slate-800 bg-slate-900 p-1">
+          {WINDOWS.map(([h, label]) => (
+            <button
+              key={h}
+              onClick={() => setHours(h)}
+              className={cn('rounded px-2.5 py-1 text-caption font-medium', hours === h ? 'bg-primary text-primary-foreground' : 'text-slate-400 hover:text-slate-100')}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
+      ) : !points?.length ? (
+        <Card className="py-16 text-center">
+          <p className="text-body text-muted-foreground">No samples yet — the first one lands within 5 minutes of the API starting.</p>
+        </Card>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <KpiCard label="CPU load (1m)" value={latest ? latest.loadAvg1.toFixed(2) : '—'} icon={Cpu} accent={(latest?.loadAvg1 ?? 0) > 1 ? 'warning' : 'success'} />
+            <KpiCard label="Memory used" value={latest ? `${latest.memUsedPct.toFixed(0)}%` : '—'} icon={MemoryStick} accent={(latest?.memUsedPct ?? 0) > 85 ? 'danger' : 'primary'} />
+            <KpiCard label={`Downloaded (${hours}h)`} value={`${totalRxMb.toFixed(0)} MB`} icon={ArrowDownToLine} accent="primary" />
+            <KpiCard label={`Uploaded (${hours}h)`} value={`${totalTxMb.toFixed(0)} MB`} icon={ArrowUpFromLine} accent="primary" />
+          </div>
+
+          <Card className="p-4">
+            <p className="mb-3 font-semibold">CPU load average</p>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis dataKey="at" tick={{ fontSize: 10, fill: '#94a3b8' }} minTickGap={30} />
+                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, color: '#e2e8f0' }} />
+                <Line type="monotone" dataKey="load" name="Load (1m)" stroke="#6366F1" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card className="p-4">
+            <p className="mb-3 font-semibold">Network traffic per sample (MB)</p>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={chartData} margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis dataKey="at" tick={{ fontSize: 10, fill: '#94a3b8' }} minTickGap={30} />
+                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 8, color: '#e2e8f0' }} />
+                <Legend />
+                <Bar dataKey="rx" name="In" fill="#16A34A" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="tx" name="Out" fill="#D97706" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        </>
+      )}
+    </div>
   );
 }
 

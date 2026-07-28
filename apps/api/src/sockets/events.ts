@@ -16,6 +16,9 @@ export const RealtimeEvent = {
   POS_SESSION_ROLLOVER: 'pos_session_rollover',
   PAYMENT_DUE_REMINDER: 'payment_due_reminder',
   REPORT_READY: 'report_ready',
+  /** A user's first connection opened / last one closed — developer console only. */
+  PRESENCE_ONLINE: 'presence_online',
+  PRESENCE_OFFLINE: 'presence_offline',
 } as const;
 
 export type RealtimeEventName = (typeof RealtimeEvent)[keyof typeof RealtimeEvent];
