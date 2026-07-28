@@ -188,6 +188,45 @@ const STATUS_META: Record<RenewalStatus, { label: string; variant: 'danger' | 'w
   NEVER_PAID: { label: 'Never paid', variant: 'neutral' },
 };
 
+// Partnership split: the CA friend's cut of every payment collected. Purely a
+// display split of money already recorded above — doesn't change what's
+// stored, so adjusting this later needs no data migration.
+const PARTNER_SHARE_PCT = 40;
+const MY_SHARE_PCT = 100 - PARTNER_SHARE_PCT;
+
+function RevenueSplitCard({ clients }: { clients: DeveloperPaymentClient[] }) {
+  const allPayments = clients.flatMap((c) => c.history);
+  const totalAllTime = allPayments.reduce((s, h) => s + Number(h.amount), 0);
+  const thisYear = new Date().getFullYear();
+  const totalThisYear = allPayments
+    .filter((h) => new Date(h.paidOn).getFullYear() === thisYear)
+    .reduce((s, h) => s + Number(h.amount), 0);
+
+  const Split = ({ label, total }: { label: string; total: number }) => (
+    <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
+      <p className="text-caption uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="mt-1 text-page-heading font-bold text-slate-100">{formatINR(total)}</p>
+      <div className="mt-3 space-y-1.5 border-t border-slate-800 pt-2.5">
+        <div className="flex items-center justify-between text-body">
+          <span className="text-slate-300">Your share ({MY_SHARE_PCT}%)</span>
+          <span className="font-semibold text-success">{formatINR((total * MY_SHARE_PCT) / 100)}</span>
+        </div>
+        <div className="flex items-center justify-between text-body">
+          <span className="text-slate-300">Partner share ({PARTNER_SHARE_PCT}%)</span>
+          <span className="font-semibold text-primary">{formatINR((total * PARTNER_SHARE_PCT) / 100)}</span>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <Split label={`Total Collected — ${thisYear}`} total={totalThisYear} />
+      <Split label="Total Collected — All Time" total={totalAllTime} />
+    </div>
+  );
+}
+
 function PaymentsTab() {
   const { data: clients, isLoading } = useDeveloperPaymentClients(true);
   const [payFor, setPayFor] = useState<DeveloperPaymentClient | null>(null);
@@ -199,6 +238,8 @@ function PaymentsTab() {
 
   return (
     <div className="space-y-4">
+      <RevenueSplitCard clients={clients ?? []} />
+
       {dueSoon.length > 0 && (
         <div className="rounded-lg border border-warning/40 bg-warning/10 p-4">
           <p className="mb-2 flex items-center gap-2 font-semibold text-warning"><AlertTriangle className="h-4 w-4" /> Renewals due soon</p>
