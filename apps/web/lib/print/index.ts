@@ -60,7 +60,7 @@ export async function printOpenDrawer(): Promise<PrintResult> {
 }
 
 export function printOrderPickList(
-  order: { orderNumber: string; outletName: string; fulfillmentSource: 'MAIN_BRANCH' | 'GODOWN'; isGstBill: boolean },
+  order: { orderNumber: string; outletName: string; fulfillmentSource?: 'MAIN_BRANCH' | 'GODOWN' | null; isGstBill: boolean; orderDate?: string },
   lines: OrderPickListLine[],
 ): void {
   if (!resolveRawTransport()) return printOrderPickListHtml(order, lines);

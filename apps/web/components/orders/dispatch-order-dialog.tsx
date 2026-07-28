@@ -10,7 +10,6 @@ import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useDispatchOrder, type Order, type FulfillmentSource } from '@/hooks/useOrders';
 import { useMainBranchInventory, useGodownInventory } from '@/hooks/useInventory';
-import { printOrderPickList } from '@/lib/print';
 
 /**
  * Dispatch: pick where the goods physically come from, then send them. Stock leaves
@@ -50,11 +49,10 @@ export function DispatchOrderDialog({ order, onClose }: { order: Order | null; o
       { id: order.id, fulfillmentSource: source },
       {
         onSuccess: () => {
+          // No print here — a receipt already auto-printed the instant this
+          // order was placed (see OrderPrintListener), so godown/admin have
+          // been processing it since before it was even confirmed.
           toast.success(`${order.orderNumber} dispatched — awaiting the outlet's receipt`);
-          printOrderPickList(
-            { orderNumber: order.orderNumber, outletName: order.outlet.name, fulfillmentSource: source, isGstBill: order.isGstBill },
-            lines.map((l) => ({ name: l.name, unit: l.unit, approvedQty: l.qty, price: l.price })),
-          );
           onClose();
         },
         onError: (e) => toast.error(apiErrorMessage(e)),
@@ -115,7 +113,7 @@ export function DispatchOrderDialog({ order, onClose }: { order: Order | null; o
         <DialogFooter>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button onClick={submit} loading={dispatch.isPending} disabled={anyShort}>
-            <Truck className="h-4 w-4" /> Dispatch &amp; Print Pick List
+            <Truck className="h-4 w-4" /> Dispatch
           </Button>
         </DialogFooter>
       </DialogContent>

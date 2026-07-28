@@ -318,22 +318,22 @@ export async function receiptBytes(
   return e.encode();
 }
 
-/** Godown/admin pick list — mirrors `printOrderPickList`. */
+/** Godown/admin order slip — mirrors `printOrderPickList` (new-order receipt or, once dispatched, a pick list). */
 export function pickListBytes(
-  order: { orderNumber: string; outletName: string; fulfillmentSource: 'MAIN_BRANCH' | 'GODOWN'; isGstBill: boolean },
+  order: { orderNumber: string; outletName: string; fulfillmentSource?: 'MAIN_BRANCH' | 'GODOWN' | null; isGstBill: boolean; orderDate?: string },
   lines: OrderPickListLine[],
   s: PrinterSettings,
 ): Uint8Array {
   const e = new EscPosEncoder({ cols: colsFor(s) });
   e.init().align('center');
   e.bold(true).size(2, 2).line(STORE_NAME).size(1, 1).bold(false);
-  e.line('Order Pick List');
+  e.line(order.fulfillmentSource ? 'Order Pick List' : 'New Order Receipt');
 
   e.align('left').divider();
   e.leftRight('Order', order.orderNumber);
   e.leftRight('Outlet', order.outletName);
-  e.leftRight('Fulfil from', order.fulfillmentSource === 'GODOWN' ? 'Godown' : 'Main Branch');
-  e.leftRight('Confirmed', format(new Date(), 'dd MMM yyyy, hh:mm a'));
+  if (order.fulfillmentSource) e.leftRight('Fulfil from', order.fulfillmentSource === 'GODOWN' ? 'Godown' : 'Main Branch');
+  e.leftRight(order.fulfillmentSource ? 'Confirmed' : 'Received', format(order.orderDate ? new Date(order.orderDate) : new Date(), 'dd MMM yyyy, hh:mm a'));
   e.leftRight('Bill type', order.isGstBill ? 'With GST' : 'No GST');
   e.divider();
 
@@ -346,7 +346,7 @@ export function pickListBytes(
 
   e.divider();
   e.bold(true).leftRight('ESTIMATED TOTAL', inr(total)).bold(false);
-  e.feed(1).align('center').line('Pack & dispatch the quantities above.');
+  e.feed(1).align('center').line(order.fulfillmentSource ? 'Pack & dispatch the quantities above.' : 'New order - start processing.');
   e.feed(4).cut();
   return e.encode();
 }

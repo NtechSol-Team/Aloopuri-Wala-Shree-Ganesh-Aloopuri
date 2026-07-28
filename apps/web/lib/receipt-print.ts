@@ -264,12 +264,15 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
 export interface OrderPickListLine { name: string; unit: string; approvedQty: number; price: number }
 
 /**
- * 80mm thermal pick-list — printed automatically for the admin/godown when they
- * confirm an outlet's stock order, so whoever packs it has a physical copy of
- * exactly what (and how much) was approved.
+ * 80mm thermal order slip. Two moments print this, same layout:
+ *  - the instant an order is placed (no fulfillmentSource yet) — an automatic
+ *    "New Order Receipt" so godown/admin start processing immediately, without
+ *    waiting on the payment/credit-approval workflow;
+ *  - when the admin dispatches it (fulfillmentSource chosen) — an "Order Pick
+ *    List" naming where the goods came from.
  */
 export function printOrderPickList(
-  order: { orderNumber: string; outletName: string; fulfillmentSource: 'MAIN_BRANCH' | 'GODOWN'; isGstBill: boolean },
+  order: { orderNumber: string; outletName: string; fulfillmentSource?: 'MAIN_BRANCH' | 'GODOWN' | null; isGstBill: boolean; orderDate?: string },
   lines: OrderPickListLine[],
 ): void {
   const total = lines.reduce((s, l) => s + l.approvedQty * l.price, 0);
@@ -280,6 +283,9 @@ export function printOrderPickList(
       <tr class="sub"><td>${l.approvedQty} ${esc(l.unit)} × ${inr(l.price)}</td><td></td><td class="num">${inr(l.approvedQty * l.price)}</td></tr>`,
     )
     .join('');
+  const dateLabel = order.fulfillmentSource ? 'Confirmed' : 'Received';
+  const dateValue = format(order.orderDate ? new Date(order.orderDate) : new Date(), 'dd MMM yyyy, hh:mm a');
+  const footer = order.fulfillmentSource ? 'Pack &amp; dispatch the quantities above.' : 'New order — start processing.';
 
   const html = `<!doctype html>
 <html>
@@ -306,21 +312,21 @@ export function printOrderPickList(
 <body>
   <div class="center">
     <div class="store">${esc(STORE_NAME)}</div>
-    <div class="tagline">Order Pick List</div>
+    <div class="tagline">${order.fulfillmentSource ? 'Order Pick List' : 'New Order Receipt'}</div>
   </div>
   <hr />
   <div class="meta">
     <div class="row"><span>Order</span><span>${esc(order.orderNumber)}</span></div>
     <div class="row"><span>Outlet</span><span>${esc(order.outletName)}</span></div>
-    <div class="row"><span>Fulfil from</span><span>${order.fulfillmentSource === 'GODOWN' ? 'Godown' : 'Main Branch'}</span></div>
-    <div class="row"><span>Confirmed</span><span>${format(new Date(), 'dd MMM yyyy, hh:mm a')}</span></div>
+    ${order.fulfillmentSource ? `<div class="row"><span>Fulfil from</span><span>${order.fulfillmentSource === 'GODOWN' ? 'Godown' : 'Main Branch'}</span></div>` : ''}
+    <div class="row"><span>${dateLabel}</span><span>${dateValue}</span></div>
     <div class="row"><span>Bill type</span><span>${order.isGstBill ? 'With GST' : 'No GST'}</span></div>
   </div>
   <hr />
   <table>${itemRows}</table>
   <hr />
   <div class="row total"><span>ESTIMATED TOTAL</span><span>${inr(total)}</span></div>
-  <p class="center" style="margin-top:8px;font-size:11px;">Pack &amp; dispatch the quantities above.</p>
+  <p class="center" style="margin-top:8px;font-size:11px;">${footer}</p>
 </body>
 </html>`;
 

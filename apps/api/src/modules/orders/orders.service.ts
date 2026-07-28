@@ -153,6 +153,30 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
   });
 
   cache.invalidateTags(CacheTag.ORDERS, CacheTag.DASHBOARD, CacheTag.outlet(outletId));
+
+  // Auto-print trigger: fire the instant the order lands, regardless of what
+  // happens next (online payment vs. credit approval) — godown/admin start
+  // processing it right away instead of waiting on that approval workflow.
+  // Full print-ready data rides in the event itself so the listener never
+  // needs a follow-up fetch to print.
+  await emitRealtime(
+    RealtimeEvent.NEW_ORDER,
+    {
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      outletName: order.outlet.name,
+      isGstBill: order.isGstBill,
+      orderDate: order.orderDate.toISOString(),
+      items: order.items.map((i) => ({
+        name: i.product.name,
+        unit: i.product.unit,
+        qty: Number(i.confirmedQuantity ?? i.requestedQuantity),
+        price: Number(i.unitPriceSnapshot ?? i.product.basePrice),
+      })),
+    },
+    { global: true, outletId },
+  );
+
   return { ...order, totals: numericTotals(order) };
 }
 

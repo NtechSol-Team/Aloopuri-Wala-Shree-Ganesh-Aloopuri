@@ -1,10 +1,12 @@
 import { AuthGuard } from '@/components/shared/auth-guard';
 import { Sidebar } from '@/components/shared/sidebar';
 import { Header } from '@/components/shared/header';
+import { OrderPrintListener } from '@/components/orders/order-print-listener';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
+      <OrderPrintListener />
       <div className="flex min-h-screen bg-surface">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
