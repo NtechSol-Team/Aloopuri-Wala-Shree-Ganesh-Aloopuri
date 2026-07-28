@@ -1,7 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { Bell, LogOut, Menu } from 'lucide-react';
+import { Bell, LogOut, Menu, Printer } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/store/auth.store';
@@ -9,6 +10,7 @@ import { useUiStore } from '@/store/ui.store';
 import { useLogout } from '@/hooks/useAuth';
 import { ROLE_LABEL } from './nav-config';
 import { useRealtimeNotifications } from '@/hooks/useRealtime';
+import { PrinterSettingsDialog } from '@/components/printer-settings-dialog';
 
 function titleFromPath(pathname: string): string {
   if (pathname === '/') return 'Dashboard';
@@ -22,6 +24,7 @@ export function Header() {
   const openMobileNav = useUiStore((s) => s.openMobileNav);
   const logout = useLogout();
   const { unread, clear } = useRealtimeNotifications();
+  const [printerOpen, setPrinterOpen] = useState(false);
   if (!user) return null;
 
   const initials = user.name
@@ -52,6 +55,18 @@ export function Header() {
       </div>
 
       <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+        {(user.role === 'SUPER_ADMIN' || user.role === 'GODOWN_MANAGER') && (
+          <button
+            type="button"
+            onClick={() => setPrinterOpen(true)}
+            className="rounded-md p-2 text-muted-foreground hover:bg-surface"
+            aria-label="Printer settings"
+            title="Printer settings"
+          >
+            <Printer className="h-5 w-5" />
+          </button>
+        )}
+
         <button
           type="button"
           onClick={clear}
@@ -82,6 +97,8 @@ export function Header() {
           <LogOut className="h-5 w-5" />
         </Button>
       </div>
+
+      <PrinterSettingsDialog open={printerOpen} onOpenChange={setPrinterOpen} />
     </header>
   );
 }

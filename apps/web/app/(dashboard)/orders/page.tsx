@@ -5,7 +5,7 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
   Plus, Trash2, ShoppingCart, X, Truck, PackageCheck, CreditCard, Landmark,
-  CheckCircle2, Ban, Clock, Info,
+  CheckCircle2, Ban, Clock, Info, Printer,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,7 @@ import {
   ACTIVE_ORDER_STATUSES, ORDER_STATUS_BADGE, ORDER_STATUS_LABEL,
   type Order, type OrderStatus,
 } from '@/hooks/useOrders';
+import { PrinterSettingsDialog } from '@/components/printer-settings-dialog';
 import { OrderPaymentDialog } from '@/components/orders/order-payment-dialog';
 import { ApproveOrderDialog } from '@/components/orders/approve-order-dialog';
 import { DispatchOrderDialog } from '@/components/orders/dispatch-order-dialog';
@@ -50,6 +51,7 @@ export default function OrdersPage() {
   const [approveFor, setApproveFor] = useState<Order | null>(null);
   const [dispatchFor, setDispatchFor] = useState<Order | null>(null);
   const [killFor, setKillFor] = useState<Order | null>(null);
+  const [printerOpen, setPrinterOpen] = useState(false);
   const receive = useReceiveOrder();
 
   const orders = data ?? [];
@@ -71,7 +73,11 @@ export default function OrdersPage() {
         <p className="text-body text-muted-foreground">
           {isAdmin ? 'Incoming stock orders from all outlets, by stage.' : 'Order stock from the main branch.'}
         </p>
-        {!isAdmin && (
+        {isAdmin ? (
+          <Button variant="secondary" onClick={() => setPrinterOpen(true)}>
+            <Printer className="h-4 w-4" /> Printer Settings
+          </Button>
+        ) : (
           <Button onClick={() => setPlacing(true)} disabled={!!activeOrder} title={activeOrder ? 'You already have an active order' : undefined}>
             <Plus className="h-4 w-4" /> Order Stock
           </Button>
@@ -244,6 +250,7 @@ export default function OrdersPage() {
       <ApproveOrderDialog order={approveFor} onClose={() => setApproveFor(null)} />
       <DispatchOrderDialog order={dispatchFor} onClose={() => setDispatchFor(null)} />
       <RejectOrderDialog order={killFor} mode={isAdmin ? 'reject' : 'cancel'} onClose={() => setKillFor(null)} />
+      <PrinterSettingsDialog open={printerOpen} onOpenChange={setPrinterOpen} />
     </div>
   );
 }

@@ -52,7 +52,7 @@ export default function LoginPage() {
           </div>
           <h1 className="text-page-heading font-bold">Shree Ganesh Aloopuri</h1>
           <p className="text-body text-muted-foreground">
-            Surat Food Chain — franchise ordering &amp; billing portal. Sign in to your partner account.
+            AlooBari.com — franchise ordering &amp; billing portal. Sign in to your partner account.
           </p>
         </CardHeader>
         <CardContent>
