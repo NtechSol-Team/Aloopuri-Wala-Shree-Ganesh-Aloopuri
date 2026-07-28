@@ -29,6 +29,10 @@ import {
 } from '@/hooks/useDeveloperPayments';
 import { useOnlineUsers, useTodayActivityTotals } from '@/hooks/useDeveloperPresence';
 import { useRecentServerMetrics } from '@/hooks/useDeveloperMetrics';
+import {
+  useDeveloperExpenses, useSaveDeveloperExpense, useDeleteDeveloperExpense,
+  type DeveloperExpense, type ExpenseCategory,
+} from '@/hooks/useDeveloperExpenses';
 import { getSocket } from '@/lib/socket';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { ROLE_LABEL } from '@/components/shared/nav-config';
@@ -89,7 +93,7 @@ function UnlockScreen() {
 // ─────────────────────────────── Console ────────────────────────────────────
 function DeveloperConsole() {
   const clearDevKey = useDevStore((s) => s.clearDevKey);
-  const [tab, setTab] = useState<'outlets' | 'payments' | 'presence' | 'server'>('outlets');
+  const [tab, setTab] = useState<'outlets' | 'payments' | 'costs' | 'presence' | 'server'>('outlets');
 
   return (
     <div className="mx-auto max-w-5xl p-4 sm:p-8">
@@ -112,7 +116,7 @@ function DeveloperConsole() {
       </div>
 
       <div className="mb-5 flex gap-1 rounded-lg border border-slate-800 bg-slate-900 p-1">
-        {([['outlets', 'Outlets'], ['payments', 'Payments & Renewals'], ['presence', "Who's Active"], ['server', 'Server Health']] as const).map(([k, label]) => (
+        {([['outlets', 'Outlets'], ['payments', 'Payments & Renewals'], ['costs', 'Costs & Profit'], ['presence', "Who's Active"], ['server', 'Server Health']] as const).map(([k, label]) => (
           <button
             key={k}
             onClick={() => setTab(k)}
@@ -128,6 +132,7 @@ function DeveloperConsole() {
 
       {tab === 'outlets' ? <OutletsTab />
         : tab === 'payments' ? <PaymentsTab />
+        : tab === 'costs' ? <CostsProfitTab />
         : tab === 'presence' ? <PresenceTab />
         : <ServerHealthTab />}
     </div>
@@ -204,36 +209,292 @@ const STATUS_META: Record<RenewalStatus, { label: string; variant: 'danger' | 'w
 const PARTNER_SHARE_PCT = 40;
 const MY_SHARE_PCT = 100 - PARTNER_SHARE_PCT;
 
-function RevenueSplitCard({ clients }: { clients: DeveloperPaymentClient[] }) {
-  const allPayments = clients.flatMap((c) => c.history);
-  const totalAllTime = allPayments.reduce((s, h) => s + Number(h.amount), 0);
-  const thisYear = new Date().getFullYear();
-  const totalThisYear = allPayments
-    .filter((h) => new Date(h.paidOn).getFullYear() === thisYear)
-    .reduce((s, h) => s + Number(h.amount), 0);
+/**
+ * How the partner's cut is taken. After-expenses = both share the running
+ * costs (the default); before-expenses = the partner's cut comes off the gross
+ * and the developer absorbs all costs from their own share. Display-only, so
+ * flipping it never rewrites anything stored — kept per-device in localStorage.
+ */
+const SPLIT_BASIS_KEY = 'scfc-dev-split-after-expenses';
 
-  const Split = ({ label, total }: { label: string; total: number }) => (
+function splitFor(collected: number, expenses: number, afterExpenses: boolean) {
+  const profit = collected - expenses;
+  if (afterExpenses) {
+    return { profit, mine: (profit * MY_SHARE_PCT) / 100, partner: (profit * PARTNER_SHARE_PCT) / 100 };
+  }
+  return {
+    profit,
+    mine: (collected * MY_SHARE_PCT) / 100 - expenses,
+    partner: (collected * PARTNER_SHARE_PCT) / 100,
+  };
+}
+
+function MoneyRow({ label, value, tone, strong }: { label: string; value: number; tone?: 'good' | 'bad' | 'brand'; strong?: boolean }) {
+  return (
+    <div className={cn('flex items-center justify-between text-body', strong && 'font-semibold')}>
+      <span className="text-slate-300">{label}</span>
+      <span className={cn(
+        'font-semibold tabular-nums',
+        tone === 'good' ? 'text-success' : tone === 'bad' ? 'text-danger' : tone === 'brand' ? 'text-primary' : 'text-slate-100',
+      )}>
+        {value < 0 ? `-${formatINR(Math.abs(value))}` : formatINR(value)}
+      </span>
+    </div>
+  );
+}
+
+function ProfitCard({ label, collected, expenses, afterExpenses, hint }: {
+  label: string; collected: number; expenses: number; afterExpenses: boolean; hint?: string;
+}) {
+  const { profit, mine, partner } = splitFor(collected, expenses, afterExpenses);
+  return (
     <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
       <p className="text-caption uppercase tracking-wide text-slate-400">{label}</p>
-      <p className="mt-1 text-page-heading font-bold text-slate-100">{formatINR(total)}</p>
+      {hint && <p className="mt-0.5 text-caption text-slate-500">{hint}</p>}
+      <p className={cn('mt-2 text-page-heading font-bold', profit >= 0 ? 'text-slate-100' : 'text-danger')}>
+        {profit < 0 ? `-${formatINR(Math.abs(profit))}` : formatINR(profit)}
+      </p>
+      <p className="text-caption text-slate-500">profit</p>
       <div className="mt-3 space-y-1.5 border-t border-slate-800 pt-2.5">
-        <div className="flex items-center justify-between text-body">
-          <span className="text-slate-300">Your share ({MY_SHARE_PCT}%)</span>
-          <span className="font-semibold text-success">{formatINR((total * MY_SHARE_PCT) / 100)}</span>
-        </div>
-        <div className="flex items-center justify-between text-body">
-          <span className="text-slate-300">Partner share ({PARTNER_SHARE_PCT}%)</span>
-          <span className="font-semibold text-primary">{formatINR((total * PARTNER_SHARE_PCT) / 100)}</span>
-        </div>
+        <MoneyRow label="Collected" value={collected} tone="good" />
+        <MoneyRow label="Costs" value={-expenses} tone="bad" />
+      </div>
+      <div className="mt-2 space-y-1.5 border-t border-slate-800 pt-2.5">
+        <MoneyRow label={`You (${MY_SHARE_PCT}%)`} value={mine} tone="good" strong />
+        <MoneyRow label={`Partner (${PARTNER_SHARE_PCT}%)`} value={partner} tone="brand" strong />
       </div>
     </div>
   );
+}
+
+const CATEGORY_LABEL: Record<ExpenseCategory, string> = {
+  DROPLET: 'Droplet',
+  DATABASE: 'Database',
+  AI: 'AI / API',
+  DOMAIN: 'Domain',
+  OTHER: 'Other',
+};
+
+function CostsProfitTab() {
+  const { data: clients } = useDeveloperPaymentClients(true);
+  const { data: expenseData, isLoading } = useDeveloperExpenses(true);
+  const [editing, setEditing] = useState<DeveloperExpense | null>(null);
+  const [creating, setCreating] = useState(false);
+  const del = useDeleteDeveloperExpense();
+
+  const [afterExpenses, setAfterExpenses] = useState(true);
+  useEffect(() => {
+    const saved = localStorage.getItem(SPLIT_BASIS_KEY);
+    if (saved !== null) setAfterExpenses(saved === 'true');
+  }, []);
+  const toggleBasis = (v: boolean) => { setAfterExpenses(v); localStorage.setItem(SPLIT_BASIS_KEY, String(v)); };
+
+  const payments = (clients ?? []).flatMap((c) => c.history);
+  const year = new Date().getFullYear();
+  const collectedThisYear = payments.filter((h) => new Date(h.paidOn).getFullYear() === year).reduce((s, h) => s + Number(h.amount), 0);
+  const collectedAllTime = payments.reduce((s, h) => s + Number(h.amount), 0);
+  const totals = expenseData?.totals;
+
+  // Yearly run rate: every client renews annually, so their latest payment is
+  // their current annual fee. Costs use the active recurring monthly × 12.
+  const annualRevenueRunRate = (clients ?? []).reduce((s, c) => s + (c.lastPayment ? Number(c.lastPayment.amount) : 0), 0);
+
+  if (isLoading) return <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>;
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <Split label={`Total Collected — ${thisYear}`} total={totalThisYear} />
-      <Split label="Total Collected — All Time" total={totalAllTime} />
+    <div className="space-y-4">
+      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-800 bg-slate-900 p-3">
+        <input
+          type="checkbox"
+          className="mt-0.5 h-4 w-4 accent-[hsl(var(--primary))]"
+          checked={afterExpenses}
+          onChange={(e) => toggleBasis(e.target.checked)}
+        />
+        <span>
+          <span className="block text-body font-medium text-slate-100">Partner&apos;s {PARTNER_SHARE_PCT}% is taken after costs</span>
+          <span className="block text-caption text-slate-400">
+            {afterExpenses
+              ? 'Ticked: costs come off first, then you split the profit — you both share hosting/AI costs.'
+              : 'Unticked: the partner gets their cut of everything collected, and you absorb all costs from your own share.'}
+          </span>
+        </span>
+      </label>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <ProfitCard label={`Actual — ${year}`} collected={collectedThisYear} expenses={totals?.thisYear ?? 0} afterExpenses={afterExpenses} />
+        <ProfitCard label="Actual — All Time" collected={collectedAllTime} expenses={totals?.allTime ?? 0} afterExpenses={afterExpenses} />
+        <ProfitCard
+          label="Yearly Projection"
+          hint="At today's rates, if every client renews"
+          collected={annualRevenueRunRate}
+          expenses={totals?.annualRunRate ?? 0}
+          afterExpenses={afterExpenses}
+        />
+      </div>
+
+      {totals && totals.monthlyRunRate > 0 && (
+        <p className="text-caption text-slate-400">
+          Running costs: <b className="text-slate-200">{formatINR(totals.monthlyRunRate)}/month</b>
+          {' '}({formatINR(totals.annualRunRate)}/year) from active monthly items.
+        </p>
+      )}
+
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div>
+            <p className="font-semibold">Running costs</p>
+            <p className="text-caption text-muted-foreground">Droplet, database, AI and anything else you pay to run this.</p>
+          </div>
+          <Button size="sm" onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> Add Cost</Button>
+        </div>
+        {!expenseData?.expenses.length ? (
+          <p className="py-10 text-center text-body text-muted-foreground">No costs recorded yet.</p>
+        ) : (
+          <Table>
+            <THead><TR><TH>Category</TH><TH>Detail</TH><TH>Type</TH><TH>Period</TH><TH className="text-right">Amount</TH><TH className="text-right">Actions</TH></TR></THead>
+            <TBody>
+              {expenseData.expenses.map((e) => (
+                <TR key={e.id} className={cn(e.isEnded && 'opacity-50')}>
+                  <TD className="font-medium">{CATEGORY_LABEL[e.category]}</TD>
+                  <TD className="text-muted-foreground">{e.label ?? '—'}</TD>
+                  <TD>
+                    {e.isRecurring
+                      ? <Badge variant={e.isEnded ? 'neutral' : 'info'}>{e.isEnded ? 'Stopped' : 'Monthly'}</Badge>
+                      : <Badge variant="neutral">One-off</Badge>}
+                  </TD>
+                  <TD className="text-muted-foreground">
+                    {format(new Date(e.incurredOn), 'MMM yyyy')}
+                    {e.isRecurring && ` → ${e.endedOn ? format(new Date(e.endedOn), 'MMM yyyy') : 'ongoing'}`}
+                  </TD>
+                  <TD className="text-right font-semibold">
+                    {formatINR(e.amount)}{e.isRecurring && <span className="text-caption font-normal text-muted-foreground">/mo</span>}
+                  </TD>
+                  <TD className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" title="Edit" onClick={() => setEditing(e)}><Pencil className="h-4 w-4" /></Button>
+                      <Button
+                        variant="ghost" size="icon" className="h-8 w-8" title="Remove"
+                        onClick={() => del.mutate(e.id, { onSuccess: () => toast.success('Cost removed') })}
+                      >
+                        <Trash2 className="h-4 w-4 text-danger" />
+                      </Button>
+                    </div>
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+
+      <ExpenseFormDialog
+        open={creating || !!editing}
+        expense={editing}
+        onOpenChange={(v) => { if (!v) { setCreating(false); setEditing(null); } }}
+      />
     </div>
+  );
+}
+
+const CATEGORIES: ExpenseCategory[] = ['DROPLET', 'DATABASE', 'AI', 'DOMAIN', 'OTHER'];
+const monthInput = (iso?: string | null) => (iso ? format(new Date(iso), 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd'));
+
+function ExpenseFormDialog({ open, expense, onOpenChange }: {
+  open: boolean; expense: DeveloperExpense | null; onOpenChange: (v: boolean) => void;
+}) {
+  const save = useSaveDeveloperExpense();
+  const [category, setCategory] = useState<ExpenseCategory>('DROPLET');
+  const [label, setLabel] = useState('');
+  const [amount, setAmount] = useState('');
+  const [isRecurring, setIsRecurring] = useState(true);
+  const [incurredOn, setIncurredOn] = useState(monthInput());
+  const [endedOn, setEndedOn] = useState('');
+  const [notes, setNotes] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setCategory(expense?.category ?? 'DROPLET');
+    setLabel(expense?.label ?? '');
+    setAmount(expense ? String(expense.amount) : '');
+    setIsRecurring(expense ? expense.isRecurring : true);
+    setIncurredOn(monthInput(expense?.incurredOn));
+    setEndedOn(expense?.endedOn ? monthInput(expense.endedOn) : '');
+    setNotes(expense?.notes ?? '');
+  }, [open, expense]);
+
+  const submit = () => {
+    const amt = Number(amount);
+    if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return; }
+    save.mutate(
+      {
+        id: expense?.id,
+        category,
+        label: label.trim() || undefined,
+        amount: amt,
+        isRecurring,
+        incurredOn: new Date(incurredOn).toISOString(),
+        endedOn: isRecurring && endedOn ? new Date(endedOn).toISOString() : null,
+        notes: notes.trim() || undefined,
+      },
+      {
+        onSuccess: () => { toast.success(expense ? 'Cost updated' : 'Cost added'); onOpenChange(false); },
+        onError: (e) => toast.error(apiErrorMessage(e)),
+      },
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{expense ? 'Edit Cost' : 'Add Cost'}</DialogTitle>
+          <DialogDescription>A monthly cost counts automatically every month — no need to re-enter it.</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label required>Category</Label>
+            <Select value={category} onChange={(e) => setCategory(e.target.value as ExpenseCategory)}>
+              {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>)}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Detail</Label>
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. 2GB droplet, Claude API" />
+          </div>
+          <div className="space-y-1.5">
+            <Label required>Amount{isRecurring && ' (per month)'}</Label>
+            <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+          </div>
+          <div className="space-y-1.5">
+            <Label required>{isRecurring ? 'Starts' : 'Date paid'}</Label>
+            <Input type="date" value={incurredOn} onChange={(e) => setIncurredOn(e.target.value)} />
+          </div>
+          {isRecurring && (
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>Stopped on (leave blank if still running)</Label>
+              <Input type="date" value={endedOn} min={incurredOn} onChange={(e) => setEndedOn(e.target.value)} />
+            </div>
+          )}
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>Notes</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
+          </div>
+        </div>
+        <label className="flex items-start gap-2 rounded-md border border-border bg-surface p-2.5 text-body">
+          <input type="checkbox" className="mt-0.5 h-4 w-4" checked={isRecurring} onChange={(e) => setIsRecurring(e.target.checked)} />
+          <span>
+            <span className="font-medium">Repeats every month</span>
+            <span className="block text-caption text-muted-foreground">
+              Tick for subscriptions (droplet, database). Untick for a one-time payment.
+            </span>
+          </span>
+        </label>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} loading={save.isPending}>{expense ? 'Save' : 'Add Cost'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -248,8 +509,6 @@ function PaymentsTab() {
 
   return (
     <div className="space-y-4">
-      <RevenueSplitCard clients={clients ?? []} />
-
       {dueSoon.length > 0 && (
         <div className="rounded-lg border border-warning/40 bg-warning/10 p-4">
           <p className="mb-2 flex items-center gap-2 font-semibold text-warning"><AlertTriangle className="h-4 w-4" /> Renewals due soon</p>

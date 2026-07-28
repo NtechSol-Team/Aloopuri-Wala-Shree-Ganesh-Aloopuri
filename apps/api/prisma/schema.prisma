@@ -1321,3 +1321,40 @@ model ServerMetricSample {
   @@index([createdAt])
   @@map("server_metric_samples")
 }
+
+/// What a developer-side cost is for. Free-text `label` carries the specifics
+/// (e.g. "Claude API", "2GB droplet"); the category is what the console groups by.
+enum DeveloperExpenseCategory {
+  DROPLET
+  DATABASE
+  AI
+  DOMAIN
+  OTHER
+}
+
+/// A cost the DEVELOPER pays to run this service (hosting, managed database, AI
+/// APIs...), netted against DeveloperPayment income to show real profit. Like
+/// that model, this is developer-console-only and never visible to any in-app role.
+model DeveloperExpense {
+  id          String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  category    DeveloperExpenseCategory
+  label       String?
+  amount      Decimal                  @db.Decimal(12, 2)
+  /// True = this amount repeats every month from `incurredOn` until `endedOn`
+  /// (or forever while null). No rows are generated per month — a month's cost
+  /// is derived from the span, so stopping a subscription is a single edit.
+  isRecurring Boolean                  @default(false) @map("is_recurring")
+  /// One-off: the date it was paid. Recurring: the month it started.
+  incurredOn  DateTime                 @map("incurred_on") @db.Timestamptz(6)
+  /// Recurring only — the last month it applied. Null = still running.
+  endedOn     DateTime?                @map("ended_on") @db.Timestamptz(6)
+  notes       String?
+  isDeleted   Boolean                  @default(false) @map("is_deleted")
+  createdAt   DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?                  @map("created_by") @db.Uuid
+
+  @@index([category])
+  @@index([incurredOn])
+  @@map("developer_expenses")
+}
