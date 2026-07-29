@@ -45,6 +45,15 @@ const envSchema = z.object({
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(20),
 
   KPI_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+  // Prisma's own default pool size is derived from CPU count (small droplets get
+  // as few as ~5), which starves the app under real concurrent traffic even though
+  // individual queries are fast. Set explicitly rather than trusting the formula.
+  // pg-boss keeps its own separate pool (see DB_POOL_SIZE_PGBOSS) — both share the
+  // managed Postgres instance's max_connections ceiling, so keep the two numbers
+  // (plus a little headroom for the LISTEN client and admin tools) under that limit.
+  DB_POOL_SIZE: z.coerce.number().int().positive().default(10),
+  DB_POOL_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(20),
+  DB_POOL_SIZE_PGBOSS: z.coerce.number().int().positive().default(4),
   MATERIALIZED_VIEW_REFRESH_CRON: z.string().default('*/15 * * * *'),
   SUPPLIER_BILL_REMINDER_CRON: z.string().default('0 8 * * *'), // daily 8am: flags bills due in 10 or 5 days
   POS_SESSION_ROLLOVER_CRON: z.string().default('0 0 * * *'), // midnight IST: auto-close + reopen every open till

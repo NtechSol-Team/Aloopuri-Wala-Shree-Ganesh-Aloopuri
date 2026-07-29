@@ -48,7 +48,7 @@ export interface OrderItem {
   requestedQuantity: string;
   confirmedQuantity: string | null;
   unitPriceSnapshot: string | null;
-  product: { id: string; name: string; unit: string; basePrice: string; taxPercent: string };
+  product: { id: string; name: string; unit: string; mrp: string; taxPercent: string };
 }
 
 export interface Order {

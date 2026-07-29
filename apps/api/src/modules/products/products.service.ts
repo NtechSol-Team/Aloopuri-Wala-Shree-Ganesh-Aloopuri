@@ -24,25 +24,32 @@ function invalidate(): void {
 
 // ─────────────────────────────── Categories ─────────────────────────────────
 export async function listCategories() {
-  return prisma.productCategory.findMany({
-    where: { isDeleted: false },
-    orderBy: { name: 'asc' },
-    select: { id: true, name: true, description: true, isActive: true, _count: { select: { products: true } } },
-  });
+  return cache.getOrSet('categories:list', [CacheTag.INVENTORY], () =>
+    prisma.productCategory.findMany({
+      where: { isDeleted: false },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, description: true, isActive: true, _count: { select: { products: true } } },
+    }),
+  );
 }
 
 export async function createCategory(input: CreateCategoryInput, createdById: string) {
-  return prisma.productCategory.create({ data: { ...input, createdById } });
+  const category = await prisma.productCategory.create({ data: { ...input, createdById } });
+  invalidate();
+  return category;
 }
 
 export async function updateCategory(id: string, input: UpdateCategoryInput) {
-  return prisma.productCategory.update({ where: { id }, data: input });
+  const category = await prisma.productCategory.update({ where: { id }, data: input });
+  invalidate();
+  return category;
 }
 
 export async function deleteCategory(id: string) {
   const count = await prisma.product.count({ where: { categoryId: id, isDeleted: false } });
   if (count > 0) throw AppError.conflict('Cannot delete a category that still has products');
   await prisma.productCategory.update({ where: { id }, data: { isDeleted: true, isActive: false } });
+  invalidate();
   return { deleted: true };
 }
 
@@ -66,28 +73,30 @@ const productSelect = {
 } satisfies Prisma.ProductSelect;
 
 export async function listProducts(query: ListProductsQuery) {
-  const where: Prisma.ProductWhereInput = {
-    isDeleted: false,
-    ...(query.categoryId ? { categoryId: query.categoryId } : {}),
-    ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
-    // POS-only items belong solely to the POS screen (served by /pos/products).
-    // Everywhere else — orders, purchases, transfers, BOM, production — deals in
-    // finished goods, so this endpoint EXCLUDES POS items by default and only
-    // returns them when a caller explicitly asks (the POS Items admin page).
-    // Defaulting here, rather than trusting each caller to pass the filter, means
-    // a POS item can never leak into a finished-goods picker, even from a stale
-    // client that omits the parameter.
-    isPosEnabled: query.isPosEnabled === undefined ? false : query.isPosEnabled,
-    ...(query.search
-      ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { sku: { contains: query.search, mode: 'insensitive' } }] }
-      : {}),
-  };
-  const { skip, take } = toSkipTake(query);
-  const [rows, total] = await Promise.all([
-    prisma.product.findMany({ where, select: productSelect, orderBy: { name: 'asc' }, skip, take }),
-    prisma.product.count({ where }),
-  ]);
-  return { rows, meta: buildPaginationMeta(query, total) };
+  return cache.getOrSet(`products:list:${JSON.stringify(query)}`, [CacheTag.INVENTORY], async () => {
+    const where: Prisma.ProductWhereInput = {
+      isDeleted: false,
+      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
+      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+      // POS-only items belong solely to the POS screen (served by /pos/products).
+      // Everywhere else — orders, purchases, transfers, BOM, production — deals in
+      // finished goods, so this endpoint EXCLUDES POS items by default and only
+      // returns them when a caller explicitly asks (the POS Items admin page).
+      // Defaulting here, rather than trusting each caller to pass the filter, means
+      // a POS item can never leak into a finished-goods picker, even from a stale
+      // client that omits the parameter.
+      isPosEnabled: query.isPosEnabled === undefined ? false : query.isPosEnabled,
+      ...(query.search
+        ? { OR: [{ name: { contains: query.search, mode: 'insensitive' } }, { sku: { contains: query.search, mode: 'insensitive' } }] }
+        : {}),
+    };
+    const { skip, take } = toSkipTake(query);
+    const [rows, total] = await Promise.all([
+      prisma.product.findMany({ where, select: productSelect, orderBy: { name: 'asc' }, skip, take }),
+      prisma.product.count({ where }),
+    ]);
+    return { rows, meta: buildPaginationMeta(query, total) };
+  });
 }
 
 export async function getProduct(id: string) {
@@ -234,19 +243,21 @@ export async function setBom(productId: string, input: SetBomInput, createdById:
 
 // ─────────────────────────────── Raw materials ──────────────────────────────
 export async function listRawMaterials(query: ListRawMaterialsQuery) {
-  const where: Prisma.RawMaterialWhereInput = {
-    isDeleted: false,
-    ...(query.search ? { name: { contains: query.search, mode: 'insensitive' } } : {}),
-  };
-  const { skip, take } = toSkipTake(query);
-  let [rows, total] = await Promise.all([
-    prisma.rawMaterial.findMany({ where, orderBy: { name: 'asc' }, skip, take }),
-    prisma.rawMaterial.count({ where }),
-  ]);
-  if (query.lowStockOnly) {
-    rows = rows.filter((r) => Number(r.currentStock) < Number(r.reorderLevel));
-  }
-  return { rows, meta: buildPaginationMeta(query, total) };
+  return cache.getOrSet(`raw-materials:list:${JSON.stringify(query)}`, [CacheTag.INVENTORY], async () => {
+    const where: Prisma.RawMaterialWhereInput = {
+      isDeleted: false,
+      ...(query.search ? { name: { contains: query.search, mode: 'insensitive' } } : {}),
+    };
+    const { skip, take } = toSkipTake(query);
+    let [rows, total] = await Promise.all([
+      prisma.rawMaterial.findMany({ where, orderBy: { name: 'asc' }, skip, take }),
+      prisma.rawMaterial.count({ where }),
+    ]);
+    if (query.lowStockOnly) {
+      rows = rows.filter((r) => Number(r.currentStock) < Number(r.reorderLevel));
+    }
+    return { rows, meta: buildPaginationMeta(query, total) };
+  });
 }
 
 export async function createRawMaterial(input: CreateRawMaterialInput, createdById: string) {

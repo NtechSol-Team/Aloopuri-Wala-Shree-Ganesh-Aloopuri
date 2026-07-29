@@ -16,7 +16,9 @@ const outletSelect = {
 } as const;
 
 export async function listOutlets() {
-  return prisma.outlet.findMany({ where: { isDeleted: false }, orderBy: { name: 'asc' }, select: outletSelect });
+  return cache.getOrSet('outlets:list', [CacheTag.OUTLETS], () =>
+    prisma.outlet.findMany({ where: { isDeleted: false }, orderBy: { name: 'asc' }, select: outletSelect }),
+  );
 }
 
 export async function getOutlet(id: string) {
@@ -28,7 +30,9 @@ export async function getOutlet(id: string) {
 export async function createOutlet(input: CreateOutletInput, createdById: string) {
   const existing = await prisma.outlet.findFirst({ where: { code: input.code } });
   if (existing) throw AppError.conflict('An outlet with this code already exists', 'code');
-  return prisma.outlet.create({ data: { ...input, createdById }, select: outletSelect });
+  const outlet = await prisma.outlet.create({ data: { ...input, createdById }, select: outletSelect });
+  cache.invalidateTags(CacheTag.OUTLETS);
+  return outlet;
 }
 
 export async function updateOutlet(id: string, input: UpdateOutletInput) {
@@ -37,7 +41,9 @@ export async function updateOutlet(id: string, input: UpdateOutletInput) {
     const clash = await prisma.outlet.findFirst({ where: { code: input.code, id: { not: id } } });
     if (clash) throw AppError.conflict('An outlet with this code already exists', 'code');
   }
-  return prisma.outlet.update({ where: { id }, data: input, select: outletSelect });
+  const outlet = await prisma.outlet.update({ where: { id }, data: input, select: outletSelect });
+  cache.invalidateTags(CacheTag.OUTLETS, CacheTag.outlet(id));
+  return outlet;
 }
 
 /**
@@ -53,7 +59,7 @@ export async function assignMenu(id: string, assignedMenuId: string | null) {
     if (!menu) throw AppError.badRequest('That menu does not exist', undefined, 'assignedMenuId');
   }
   const outlet = await prisma.outlet.update({ where: { id }, data: { assignedMenuId }, select: outletSelect });
-  cache.invalidateTags(CacheTag.POS, CacheTag.outlet(id));
+  cache.invalidateTags(CacheTag.POS, CacheTag.OUTLETS, CacheTag.outlet(id));
   return outlet;
 }
 
@@ -66,7 +72,9 @@ export async function assignMenu(id: string, assignedMenuId: string | null) {
  */
 export async function updateOutletProfile(id: string, input: OutletProfileInput) {
   await getOutlet(id);
-  return prisma.outlet.update({ where: { id }, data: input, select: outletSelect });
+  const outlet = await prisma.outlet.update({ where: { id }, data: input, select: outletSelect });
+  cache.invalidateTags(CacheTag.OUTLETS, CacheTag.outlet(id));
+  return outlet;
 }
 
 /** Every active product with this outlet's special price, if one is set (null = falls back to catalog price). */
@@ -76,7 +84,7 @@ export async function getOutletPrices(outletId: string) {
     prisma.product.findMany({
       where: { isDeleted: false, isActive: true },
       orderBy: { name: 'asc' },
-      select: { id: true, name: true, sku: true, unit: true, basePrice: true, category: { select: { name: true } } },
+      select: { id: true, name: true, sku: true, unit: true, mrp: true, category: { select: { name: true } } },
     }),
     prisma.outletProductPrice.findMany({ where: { outletId }, select: { productId: true, price: true } }),
   ]);

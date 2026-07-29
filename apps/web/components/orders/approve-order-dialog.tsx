@@ -44,7 +44,7 @@ export function ApproveOrderDialog({ order, onClose }: { order: Order | null; on
       unit: i.product.unit,
       requested: Number(i.requestedQuantity),
       approved: Number(i.confirmedQuantity ?? i.requestedQuantity),
-      price: Number(i.unitPriceSnapshot ?? i.product.basePrice),
+      price: Number(i.unitPriceSnapshot ?? i.product.mrp),
       taxPercent: Number(i.product.taxPercent),
     })));
   }, [order]);

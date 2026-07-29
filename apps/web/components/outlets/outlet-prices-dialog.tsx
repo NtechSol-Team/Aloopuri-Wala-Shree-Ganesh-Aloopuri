@@ -62,12 +62,12 @@ export function OutletPricesDialog({ outlet, onClose }: { outlet: Outlet | null;
                   return (
                     <TR key={r.id}>
                       <TD className="font-medium">{r.name}<span className="ml-1.5 text-caption text-muted-foreground">{r.sku}</span></TD>
-                      <TD className="text-right text-muted-foreground">{formatINR(r.basePrice)}</TD>
+                      <TD className="text-right text-muted-foreground">{formatINR(r.mrp)}</TD>
                       <TD className="px-1.5 py-1.5">
                         <div className="flex items-center justify-end gap-1.5">
                           {customized && <Tag className="h-3.5 w-3.5 text-primary" />}
                           <Input
-                            type="number" step="0.01" placeholder={Number(r.basePrice).toFixed(2)}
+                            type="number" step="0.01" placeholder={Number(r.mrp).toFixed(2)}
                             className="h-8 w-24 text-right"
                             value={prices[r.id] ?? ''}
                             onChange={(e) => setPrices((p) => ({ ...p, [r.id]: e.target.value }))}

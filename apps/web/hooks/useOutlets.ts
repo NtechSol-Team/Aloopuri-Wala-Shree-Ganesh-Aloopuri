@@ -76,7 +76,7 @@ export interface OutletPriceRow {
   name: string;
   sku: string;
   unit: string;
-  basePrice: string;
+  mrp: string;
   specialPrice: string | null;
   category: { name: string };
 }

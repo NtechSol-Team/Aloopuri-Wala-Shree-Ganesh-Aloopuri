@@ -19,7 +19,9 @@ import type {
 } from './orders.schema';
 
 const orderInclude = {
-  items: { include: { product: { select: { id: true, name: true, unit: true, basePrice: true, taxPercent: true } } } },
+  // Franchise ordering prices against MRP, not the internal basePrice cost basis —
+  // an outlet order calculates and bills the same way an outlet customer would see.
+  items: { include: { product: { select: { id: true, name: true, unit: true, mrp: true, taxPercent: true } } } },
   outlet: { select: { id: true, name: true, pricingMode: true, gstBilling: true, creditPeriodDays: true } },
   bill: { select: { id: true, billNumber: true, grandTotal: true, status: true, isGstBill: true, balanceDue: true } },
 } satisfies Prisma.OutletOrderInclude;
@@ -78,7 +80,7 @@ export function orderTotals(order: OrderWithItems) {
   let taxTotal = new Prisma.Decimal(0);
   for (const item of order.items) {
     const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
-    const rate = new Prisma.Decimal(item.unitPriceSnapshot ?? item.product.basePrice);
+    const rate = new Prisma.Decimal(item.unitPriceSnapshot ?? item.product.mrp);
     const lineBase = rate.mul(qty);
     const taxPercent = order.isGstBill ? new Prisma.Decimal(item.product.taxPercent) : new Prisma.Decimal(0);
     subTotal = subTotal.add(lineBase);
@@ -113,10 +115,10 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
   const productIds = input.items.map((i) => i.productId);
   const products = await prisma.product.findMany({
     where: { id: { in: productIds }, isDeleted: false, isActive: true, isPosEnabled: false },
-    select: { id: true, basePrice: true },
+    select: { id: true, mrp: true },
   });
   if (products.length !== new Set(productIds).size) throw AppError.badRequest('One or more products are invalid');
-  const priceOf = new Map(products.map((p) => [p.id, p.basePrice]));
+  const priceOf = new Map(products.map((p) => [p.id, p.mrp]));
 
   const outlet = await prisma.outlet.findFirst({ where: { id: outletId, isDeleted: false }, select: { id: true, pricingMode: true, gstBilling: true } });
   if (!outlet) throw AppError.notFound('Outlet not found');
@@ -171,7 +173,7 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
         name: i.product.name,
         unit: i.product.unit,
         qty: Number(i.confirmedQuantity ?? i.requestedQuantity),
-        price: Number(i.unitPriceSnapshot ?? i.product.basePrice),
+        price: Number(i.unitPriceSnapshot ?? i.product.mrp),
       })),
     },
     { global: true, outletId },
@@ -182,17 +184,20 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
 
 export async function listOrders(user: AuthUser, query: ListOrdersQuery) {
   const scoped = user.role === UserRole.FRANCHISE_OWNER || user.role === UserRole.CASHIER;
-  const where: Prisma.OutletOrderWhereInput = {
-    isDeleted: false,
-    ...(scoped ? { outletId: user.outletId ?? '__none__' } : query.outletId ? { outletId: query.outletId } : {}),
-    ...(query.status ? { status: query.status } : {}),
-  };
-  const { skip, take } = toSkipTake(query);
-  const [rows, total] = await Promise.all([
-    prisma.outletOrder.findMany({ where, orderBy: { orderDate: 'desc' }, skip, take, include: orderInclude }),
-    prisma.outletOrder.count({ where }),
-  ]);
-  return { rows: rows.map((o) => ({ ...o, totals: numericTotals(o) })), meta: buildPaginationMeta(query, total) };
+  const scopeKey = scoped ? (user.outletId ?? '__none__') : (query.outletId ?? '__all__');
+  return cache.getOrSet(`orders:list:${scopeKey}:${JSON.stringify(query)}`, [CacheTag.ORDERS], async () => {
+    const where: Prisma.OutletOrderWhereInput = {
+      isDeleted: false,
+      ...(scoped ? { outletId: user.outletId ?? '__none__' } : query.outletId ? { outletId: query.outletId } : {}),
+      ...(query.status ? { status: query.status } : {}),
+    };
+    const { skip, take } = toSkipTake(query);
+    const [rows, total] = await Promise.all([
+      prisma.outletOrder.findMany({ where, orderBy: { orderDate: 'desc' }, skip, take, include: orderInclude }),
+      prisma.outletOrder.count({ where }),
+    ]);
+    return { rows: rows.map((o) => ({ ...o, totals: numericTotals(o) })), meta: buildPaginationMeta(query, total) };
+  });
 }
 
 export async function getOrder(user: AuthUser, id: string) {

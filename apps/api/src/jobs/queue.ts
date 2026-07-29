@@ -29,7 +29,12 @@ export async function enqueue<T extends object>(name: JobNameValue, data: T): Pr
  * recurring materialized-view refresh (every 15 min by default).
  */
 export async function startJobs(): Promise<void> {
-  boss = new PgBoss({ connectionString: env.DATABASE_URL, schema: 'pgboss' });
+  // pg-boss defaults to its own 10-connection pool (node-postgres's default),
+  // entirely uncoordinated with Prisma's pool — both draw from the same managed
+  // Postgres max_connections ceiling. Our job volume here is light (a handful of
+  // scheduled/queued jobs, not high-throughput queueing), so cap it explicitly
+  // and leave the bulk of the connection budget to the API's own Prisma pool.
+  boss = new PgBoss({ connectionString: env.DATABASE_URL, schema: 'pgboss', max: env.DB_POOL_SIZE_PGBOSS });
   boss.on('error', (err) => logger.error({ err }, 'pg-boss error'));
   await boss.start();
 

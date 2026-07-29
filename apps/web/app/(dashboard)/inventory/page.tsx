@@ -11,22 +11,28 @@ import { KpiCard } from '@/components/dashboard/kpi-card';
 import { cn, formatINR } from '@/lib/utils';
 import { useInventorySummary, useGodownInventory, useMainBranchInventory, useOutletInventory, type StockRow } from '@/hooks/useInventory';
 import { useOutlets } from '@/hooks/useOutlets';
+import { useAuthStore } from '@/store/auth.store';
 
 type Tab = 'godown' | 'main' | 'outlets';
 
 export default function InventoryPage() {
+  // The godown manager works the godown → outlets flow directly and never
+  // handles main-branch stock, so that tab (and its KPI) stays admin-only.
+  const role = useAuthStore((s) => s.user?.role);
+  const showMainBranch = role !== 'GODOWN_MANAGER';
+
   const [tab, setTab] = useState<Tab>('godown');
   const { data: summary, isLoading: sLoading } = useInventorySummary();
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className={cn('grid grid-cols-1 gap-4 sm:grid-cols-2', showMainBranch ? 'lg:grid-cols-4' : 'lg:grid-cols-3')}>
         {sLoading || !summary ? (
-          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28" />)
+          Array.from({ length: showMainBranch ? 4 : 3 }).map((_, i) => <Skeleton key={i} className="h-28" />)
         ) : (
           <>
             <KpiCard label="Godown Units" value={String(summary.godownUnits)} icon={Warehouse} accent="primary" />
-            <KpiCard label="Main Branch Units" value={String(summary.mainBranchUnits)} icon={Store} accent="primary" />
+            {showMainBranch && <KpiCard label="Main Branch Units" value={String(summary.mainBranchUnits)} icon={Store} accent="primary" />}
             <KpiCard label="Outlet Units" value={String(summary.outletUnits)} icon={Boxes} accent="primary" />
             <KpiCard label="Low Stock Alerts" value={String(summary.lowStockCount)} icon={AlertTriangle} accent="danger" />
           </>
@@ -34,13 +40,13 @@ export default function InventoryPage() {
       </div>
 
       <div className="flex gap-1 overflow-x-auto border-b border-border scrollbar-thin">
-        {([['godown', 'Godown'], ['main', 'Main Branch'], ['outlets', 'Outlets']] as const).map(([key, label]) => (
+        {([['godown', 'Godown'], ...(showMainBranch ? [['main', 'Main Branch'] as const] : []), ['outlets', 'Outlets']] as const).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} className={cn('border-b-2 px-4 py-2 text-body font-medium transition-colors', tab === key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{label}</button>
         ))}
       </div>
 
       {tab === 'godown' && <GodownTab />}
-      {tab === 'main' && <MainBranchTab />}
+      {tab === 'main' && showMainBranch && <MainBranchTab />}
       {tab === 'outlets' && <OutletsTab />}
     </div>
   );

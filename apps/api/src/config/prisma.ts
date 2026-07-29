@@ -1,9 +1,26 @@
 import { PrismaClient, Prisma } from '@prisma/client';
-import { isDev } from './env';
+import { env, isDev } from './env';
 import { logger } from './logger';
+
+/**
+ * Prisma's default pool size is derived from CPU count, which on a small
+ * droplet works out to only ~5 connections for the whole API process — far
+ * too few once several dashboard widgets, POS terminals, and background jobs
+ * all want a connection at once. Force explicit sizing instead (see
+ * DB_POOL_SIZE / DB_POOL_TIMEOUT_SECONDS in env.ts); this only adds the
+ * params if the URL doesn't already specify them, so a deployment-specific
+ * override in DATABASE_URL itself still wins.
+ */
+function poolSizedDatabaseUrl(): string {
+  const url = new URL(env.DATABASE_URL);
+  if (!url.searchParams.has('connection_limit')) url.searchParams.set('connection_limit', String(env.DB_POOL_SIZE));
+  if (!url.searchParams.has('pool_timeout')) url.searchParams.set('pool_timeout', String(env.DB_POOL_TIMEOUT_SECONDS));
+  return url.toString();
+}
 
 function createPrismaClient() {
   return new PrismaClient({
+    datasources: { db: { url: poolSizedDatabaseUrl() } },
     // Event-based logging so warnings/errors flow through pino.
     log: [
       { level: 'warn', emit: 'event' },

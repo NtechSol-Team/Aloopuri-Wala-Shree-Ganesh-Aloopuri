@@ -20,6 +20,8 @@ const schema = z.object({
   reorderLevel: z.coerce.number().nonnegative(),
   currentStock: z.coerce.number().nonnegative(),
   costPerUnit: z.coerce.number().nonnegative(),
+  hsnCode: z.string().max(20).optional(),
+  taxPercent: z.coerce.number().min(0).max(100),
 });
 type FormValues = z.infer<typeof schema>;
 
@@ -42,8 +44,9 @@ export function RawMaterialFormDialog({
           ? {
               name: material.name, unit: material.unit, supplierName: material.supplierName ?? '',
               reorderLevel: Number(material.reorderLevel), currentStock: Number(material.currentStock), costPerUnit: Number(material.costPerUnit),
+              hsnCode: material.hsnCode ?? '', taxPercent: Number(material.taxPercent),
             }
-          : { name: '', unit: 'KG', supplierName: '', reorderLevel: 0, currentStock: 0, costPerUnit: 0 },
+          : { name: '', unit: 'KG', supplierName: '', reorderLevel: 0, currentStock: 0, costPerUnit: 0, hsnCode: '', taxPercent: 0 },
       );
     }
   }, [open, material, reset]);
@@ -92,6 +95,15 @@ export function RawMaterialFormDialog({
             <div className="space-y-1.5">
               <Label>Cost / Unit (₹)</Label>
               <Input type="number" step="0.01" {...register('costPerUnit')} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>HSN Code</Label>
+              <Input {...register('hsnCode')} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>GST (%)</Label>
+              <Input type="number" step="0.01" {...register('taxPercent')} aria-invalid={!!errors.taxPercent} />
+              {errors.taxPercent && <p className="text-caption text-danger">{errors.taxPercent.message}</p>}
             </div>
           </div>
           <DialogFooter>

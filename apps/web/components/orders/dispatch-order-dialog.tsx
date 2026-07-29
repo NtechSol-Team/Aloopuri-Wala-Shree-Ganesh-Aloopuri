@@ -40,7 +40,7 @@ export function DispatchOrderDialog({ order, onClose }: { order: Order | null; o
     name: i.product.name,
     unit: i.product.unit,
     qty: Number(i.confirmedQuantity ?? i.requestedQuantity),
-    price: Number(i.unitPriceSnapshot ?? i.product.basePrice),
+    price: Number(i.unitPriceSnapshot ?? i.product.mrp),
   }));
   const anyShort = lines.some((l) => l.qty > (stockMap.get(l.productId) ?? 0));
 

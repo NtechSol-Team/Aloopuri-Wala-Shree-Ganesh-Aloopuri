@@ -9,9 +9,10 @@ import type {
   ReorderMenuItemsInput,
 } from './menus.schema';
 
-// POS reads the assigned menu, so any menu edit must bust the POS cache.
+// POS reads the assigned menu, so any menu edit must bust the POS cache
+// (and the Menu Management list, which is itself cached below).
 function invalidate(): void {
-  cache.invalidateTags(CacheTag.POS);
+  cache.invalidateTags(CacheTag.POS, CacheTag.MENUS);
 }
 
 const menuSummarySelect = {
@@ -28,14 +29,16 @@ async function getMenuOrThrow(id: string) {
 // ─────────────────────────────── Menus ──────────────────────────────────────
 
 export async function listMenus() {
-  return prisma.menu.findMany({
-    where: { isDeleted: false },
-    orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
-    select: {
-      ...menuSummarySelect,
-      outlets: { where: { isDeleted: false }, select: { id: true, name: true, code: true } },
-    },
-  });
+  return cache.getOrSet('menus:list', [CacheTag.MENUS], () =>
+    prisma.menu.findMany({
+      where: { isDeleted: false },
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+      select: {
+        ...menuSummarySelect,
+        outlets: { where: { isDeleted: false }, select: { id: true, name: true, code: true } },
+      },
+    }),
+  );
 }
 
 export async function getMenu(id: string) {

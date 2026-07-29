@@ -298,7 +298,7 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
   }, [open, products]);
 
   const list = products?.rows ?? [];
-  const priceOf = (id: string) => Number(list.find((p) => p.id === id)?.basePrice ?? 0);
+  const priceOf = (id: string) => Number(list.find((p) => p.id === id)?.mrp ?? 0);
   const total = rows.reduce((s, r) => s + priceOf(r.productId) * r.requestedQuantity, 0);
 
   const add = () => list[0] && setRows((r) => [...r, { productId: list[0].id, requestedQuantity: 5 }]);
@@ -322,7 +322,7 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
           {rows.map((row, i) => (
             <div key={i} className="flex items-center gap-2">
               <Select className="flex-1" value={row.productId} onChange={(e) => upd(i, { productId: e.target.value })}>
-                {list.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatINR(p.basePrice)}/{p.unit}</option>)}
+                {list.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatINR(p.mrp)}/{p.unit}</option>)}
               </Select>
               <Input type="number" className="w-24" value={row.requestedQuantity} onChange={(e) => upd(i, { requestedQuantity: Number(e.target.value) })} />
               <Button variant="ghost" size="icon" onClick={() => rm(i)}><Trash2 className="h-4 w-4 text-danger" /></Button>

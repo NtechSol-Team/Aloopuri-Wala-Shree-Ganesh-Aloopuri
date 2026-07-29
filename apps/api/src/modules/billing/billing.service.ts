@@ -25,7 +25,7 @@ export async function createBillForOrderTx(tx: Prisma.TransactionClient, order: 
 
   const items = order.items.map((it) => {
     const qty = new Prisma.Decimal(it.confirmedQuantity ?? it.requestedQuantity);
-    const rate = new Prisma.Decimal(it.unitPriceSnapshot ?? it.product.basePrice);
+    const rate = new Prisma.Decimal(it.unitPriceSnapshot ?? it.product.mrp);
     // Without-GST bills carry no tax at all, regardless of the product's catalog tax rate.
     const taxPercent = order.isGstBill ? new Prisma.Decimal(it.product.taxPercent) : new Prisma.Decimal(0);
     const lineBase = rate.mul(qty);

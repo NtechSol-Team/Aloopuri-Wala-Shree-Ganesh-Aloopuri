@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useDeferredValue, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, ListTree, Search } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -48,8 +48,11 @@ export default function ProductsPage() {
 
 function ProductsTab() {
   const [search, setSearch] = useState('');
+  // Deferred so a fast typist doesn't fire a fresh (cache-missing) API request
+  // per keystroke — the list only refetches once typing settles.
+  const deferredSearch = useDeferredValue(search);
   // Catalog products only — POS counter items live on their own "POS Items" page.
-  const { data, isLoading } = useProducts({ search: search || undefined, isPosEnabled: false });
+  const { data, isLoading } = useProducts({ search: deferredSearch || undefined, isPosEnabled: false });
   const { data: categories } = useCategories();
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);

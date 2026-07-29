@@ -41,6 +41,8 @@ export interface RawMaterial {
   reorderLevel: string;
   currentStock: string;
   costPerUnit: string;
+  hsnCode: string | null;
+  taxPercent: string;
   isActive: boolean;
 }
 
@@ -181,6 +183,7 @@ export function useRawMaterials(params: { search?: string; lowStockOnly?: boolea
 type RawMaterialPayload = {
   name: string; unit: MeasurementUnit; supplierName?: string;
   reorderLevel: number; currentStock: number; costPerUnit: number;
+  hsnCode?: string; taxPercent: number;
 };
 
 export function useSaveRawMaterial() {

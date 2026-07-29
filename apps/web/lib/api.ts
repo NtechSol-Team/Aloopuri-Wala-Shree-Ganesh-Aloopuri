@@ -8,6 +8,10 @@ export const API_BASE = `${API_URL}/api/v1`;
 export const api = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
+  // Without this, a genuinely stuck request (e.g. server under load) hangs
+  // until the browser's own very long default — the UI just looks frozen
+  // instead of failing with a clear, retryable error.
+  timeout: 20_000,
 });
 
 // ── Request: attach the access token ─────────────────────────────────────────

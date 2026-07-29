@@ -1,13 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
-  Plus, Pencil, Factory, Boxes, Truck, ArrowRight, AlertTriangle, ShoppingCart, Warehouse, Printer,
+  Plus, Pencil, Factory, Boxes, AlertTriangle, Warehouse, Printer,
 } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,22 +14,21 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useRawMaterials, type RawMaterial } from '@/hooks/useProducts';
-import { useBatches, useGodownStock, usePurchases, fetchBatchDetail } from '@/hooks/useProduction';
+import { useBatches, useGodownStock, fetchBatchDetail } from '@/hooks/useProduction';
 import { printBatchLabel } from '@/lib/print';
 import { RawMaterialFormDialog } from '@/components/products/raw-material-form-dialog';
 import { LogBatchDialog } from '@/components/production/production-dialogs';
 
-type Tab = 'overview' | 'materials' | 'production' | 'finished';
+type Tab = 'materials' | 'production' | 'finished';
 
 const TABS: Array<[Tab, string]> = [
-  ['overview', 'Overview'],
   ['materials', 'Raw Materials'],
   ['production', 'Production Orders'],
   ['finished', 'Finished Goods'],
 ];
 
 export default function ProductionPage() {
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>('materials');
   return (
     <div className="space-y-5">
       <div className="flex gap-1 overflow-x-auto border-b border-border scrollbar-thin">
@@ -45,74 +43,10 @@ export default function ProductionPage() {
         ))}
       </div>
 
-      {tab === 'overview' && <OverviewTab onGo={setTab} />}
       {tab === 'materials' && <MaterialsTab />}
       {tab === 'production' && <ProductionTab />}
       {tab === 'finished' && <FinishedTab />}
     </div>
-  );
-}
-
-// ───────────────────────────── Overview (the chain) ─────────────────────────
-function OverviewTab({ onGo }: { onGo: (t: Tab) => void }) {
-  const router = useRouter();
-  const { data: materials } = useRawMaterials();
-  const { data: purchases } = usePurchases();
-  const { data: batches } = useBatches();
-  const { data: stock } = useGodownStock();
-
-  const lowCount = (materials?.rows ?? []).filter((m) => Number(m.currentStock) < Number(m.reorderLevel)).length;
-  const fgUnits = (stock ?? []).reduce((s, r) => s + Number(r.quantity), 0);
-
-  const stages = [
-    { icon: Boxes, label: 'Raw Materials', value: `${materials?.rows.length ?? 0}`, sub: lowCount ? `${lowCount} low` : 'in stock', accent: lowCount ? 'text-danger' : 'text-muted-foreground', onClick: () => onGo('materials') },
-    { icon: ShoppingCart, label: 'Purchases', value: `${purchases?.length ?? 0}`, sub: 'bills →', accent: 'text-muted-foreground', onClick: () => router.push('/purchases') },
-    { icon: Factory, label: 'Production Orders', value: `${batches?.length ?? 0}`, sub: 'batches', accent: 'text-muted-foreground', onClick: () => onGo('production') },
-    { icon: Warehouse, label: 'Finished Goods', value: `${fgUnits}`, sub: 'units at godown', accent: 'text-muted-foreground', onClick: () => onGo('finished') },
-  ];
-
-  return (
-    <div className="space-y-5">
-      {/* Pipeline */}
-      <Card>
-        <CardContent className="flex flex-col items-stretch gap-3 p-5 lg:flex-row lg:items-center">
-          {stages.map((s, i) => (
-            <div key={s.label} className="flex flex-1 items-center gap-3">
-              <button onClick={s.onClick} className="flex flex-1 items-center gap-3 rounded-lg border border-border p-4 text-left transition-shadow hover:shadow-md">
-                <div className="flex h-11 w-11 items-center justify-center rounded-md bg-accent text-primary"><s.icon className="h-5 w-5" /></div>
-                <div>
-                  <p className="text-caption uppercase tracking-wide text-muted-foreground">{s.label}</p>
-                  <p className="text-card-title font-bold leading-none">{s.value}</p>
-                  <p className={cn('text-caption', s.accent)}>{s.sub}</p>
-                </div>
-              </button>
-              {i < stages.length - 1 && <ArrowRight className="hidden h-5 w-5 shrink-0 text-muted-foreground lg:block" />}
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      <div className="flex items-center gap-2 rounded-lg border border-border bg-surface p-4 text-body text-muted-foreground">
-        <Truck className="h-5 w-5 shrink-0 text-primary" />
-        Flow: purchase materials/goods (Purchases) → log a production order (auto-consumes materials via BOM) → finished goods land in the godown → transfer to main branch or outlets (Transfers).
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <QuickAction label="Record Purchase" icon={ShoppingCart} onClick={() => router.push('/purchases')} />
-        <QuickAction label="New Production Order" icon={Factory} onClick={() => onGo('production')} />
-        <QuickAction label="Add Raw Material" icon={Plus} onClick={() => onGo('materials')} />
-        <QuickAction label="View Finished Goods" icon={Warehouse} onClick={() => onGo('finished')} />
-      </div>
-    </div>
-  );
-}
-
-function QuickAction({ label, icon: Icon, onClick }: { label: string; icon: typeof Factory; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 text-left font-medium transition-shadow hover:shadow-md">
-      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground"><Icon className="h-4 w-4" /></div>
-      {label}
-    </button>
   );
 }
 

@@ -504,6 +504,10 @@ model RawMaterial {
   reorderLevel Decimal         @default(0) @map("reorder_level") @db.Decimal(12, 2)
   currentStock Decimal         @default(0) @map("current_stock") @db.Decimal(12, 2)
   costPerUnit  Decimal         @default(0) @map("cost_per_unit") @db.Decimal(12, 2)
+  // Master-level defaults for future billing/reporting — a purchase entry can
+  // still override these per-intake (see RawMaterialIntake.hsnCode/taxRate).
+  hsnCode      String?         @map("hsn_code")
+  taxPercent   Decimal         @default(0) @map("tax_percent") @db.Decimal(5, 2)
   isActive     Boolean         @default(true) @map("is_active")
   isDeleted    Boolean         @default(false) @map("is_deleted")
   createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)

@@ -70,6 +70,8 @@ export const createRawMaterialSchema = z.object({
   reorderLevel: decimalString.default(0),
   currentStock: decimalString.default(0),
   costPerUnit: decimalString.default(0),
+  hsnCode: z.string().max(20).optional(),
+  taxPercent: z.coerce.number().min(0).max(100).default(0),
 });
 export const updateRawMaterialSchema = createRawMaterialSchema.partial().extend({
   isActive: z.boolean().optional(),
