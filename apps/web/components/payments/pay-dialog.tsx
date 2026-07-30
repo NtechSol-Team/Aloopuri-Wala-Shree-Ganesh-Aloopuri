@@ -26,7 +26,9 @@ export function PayDialog({ bill, onClose }: { bill: PayTarget | null; onClose: 
   const userName = useAuthStore((s) => s.user?.name);
   const userEmail = useAuthStore((s) => s.user?.email);
   const userPhone = useAuthStore((s) => s.user?.phone);
-  const isAdmin = role === 'SUPER_ADMIN';
+  // Matches the backend's own gate on POST /payments/cash — godown now fulfils
+  // orders too, so they're just as likely to be the one physically taking cash.
+  const canRecordCash = role === 'SUPER_ADMIN' || role === 'GODOWN_MANAGER';
   const balance = Number(bill?.balanceDue ?? 0);
 
   const [amount, setAmount] = useState(0);
@@ -85,7 +87,7 @@ export function PayDialog({ bill, onClose }: { bill: PayTarget | null; onClose: 
             <CreditCard className="h-4 w-4" /> Pay Online (UPI / Card / Net Banking)
           </Button>
 
-          {isAdmin && (
+          {canRecordCash && (
             <>
               <div className="flex items-center gap-3 text-caption text-muted-foreground">
                 <span className="h-px flex-1 bg-border" /> or record cash <span className="h-px flex-1 bg-border" />

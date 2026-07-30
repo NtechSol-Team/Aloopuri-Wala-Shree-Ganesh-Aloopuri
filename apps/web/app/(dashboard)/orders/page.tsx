@@ -29,6 +29,7 @@ import {
 import { PrinterSettingsDialog } from '@/components/printer-settings-dialog';
 import { OrderPaymentDialog } from '@/components/orders/order-payment-dialog';
 import { RejectOrderDialog } from '@/components/orders/reject-order-dialog';
+import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
 
 /**
  * The fulfiller's workflow, left to right. Only the first and last are real
@@ -65,6 +66,7 @@ export default function OrdersPage() {
   const [tab, setTab] = useState<Bucket>('CONFIRMED');
   const [placing, setPlacing] = useState(false);
   const [payFor, setPayFor] = useState<Order | null>(null);
+  const [payBillFor, setPayBillFor] = useState<PayTarget | null>(null);
   const [killFor, setKillFor] = useState<Order | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
   const fulfil = useFulfilOrder();
@@ -209,6 +211,16 @@ export default function OrdersPage() {
                                 <X className="h-3.5 w-3.5 text-danger" />
                               </Button>
                             </>
+                          ) : due > 0 && o.bill ? (
+                            // The outlet handed over cash (or is paying online in front of
+                            // you) — record it against the bill right from here, instead of
+                            // having to go find it on the Billing page.
+                            <Button
+                              size="sm"
+                              onClick={() => setPayBillFor({ id: o.bill!.id, billNumber: o.bill!.billNumber, balanceDue: o.bill!.balanceDue, outletName: o.outlet.name })}
+                            >
+                              <CreditCard className="h-3.5 w-3.5" /> Pay Now
+                            </Button>
                           ) : (
                             <span className="text-caption text-muted-foreground">—</span>
                           )
@@ -235,6 +247,7 @@ export default function OrdersPage() {
 
       <OrderStockDialog open={placing} onOpenChange={setPlacing} onPlaced={(o) => setPayFor(o)} />
       <OrderPaymentDialog order={payFor} onClose={() => setPayFor(null)} />
+      <PayDialog bill={payBillFor} onClose={() => setPayBillFor(null)} />
       <RejectOrderDialog order={killFor} mode="cancel" onClose={() => setKillFor(null)} />
       <PrinterSettingsDialog open={printerOpen} onOpenChange={setPrinterOpen} />
     </div>

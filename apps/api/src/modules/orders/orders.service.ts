@@ -471,7 +471,7 @@ export async function fulfilOrder(user: AuthUser, id: string) {
 
   const model = sourceStockModel(FulfillmentSource.GODOWN);
 
-  const { updated, bill } = await prisma.$transaction(async (tx) => {
+  const { updated, bill, isNewBill } = await prisma.$transaction(async (tx) => {
     // Check every line before moving anything, so a shortfall can't leave the
     // order half-fulfilled.
     for (const item of order.items) {
@@ -494,11 +494,18 @@ export async function fulfilOrder(user: AuthUser, id: string) {
       });
     }
 
-    const fullOrder = await tx.outletOrder.findUniqueOrThrow({
-      where: { id },
-      include: { items: { include: { product: true } }, outlet: true },
-    });
-    const raised = await billingService.createBillForOrderTx(tx, fullOrder, user.id);
+    // A handful of orders were already CONFIRMED — with a bill already raised under
+    // the old approve/pay-first flow — at the moment this workflow was simplified.
+    // Fulfilling one of those must not raise a second bill; reuse the one it already has.
+    const isNewBill = !order.bill;
+    const raised: { id: string; billNumber: string; grandTotal: Prisma.Decimal } = order.bill
+      ?? await (async () => {
+        const fullOrder = await tx.outletOrder.findUniqueOrThrow({
+          where: { id },
+          include: { items: { include: { product: true } }, outlet: true },
+        });
+        return billingService.createBillForOrderTx(tx, fullOrder, user.id);
+      })();
     await applyAdvancesToBillTx(tx, id, raised);
 
     const now = new Date();
@@ -514,14 +521,16 @@ export async function fulfilOrder(user: AuthUser, id: string) {
       },
       include: orderInclude,
     });
-    return { updated: row, bill: raised };
+    return { updated: row, bill: raised, isNewBill };
   });
 
   cache.invalidateTags(
     CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.BILLS, CacheTag.PAYMENTS,
     CacheTag.DASHBOARD, CacheTag.outlet(order.outletId),
   );
-  await billingService.afterBillGenerated(bill);
+  // Only a genuinely new bill needs its PDF generated / a "bill generated" notice —
+  // a reused legacy bill already went through this when it was first raised.
+  if (isNewBill) await billingService.afterBillGenerated({ ...bill, outletId: order.outletId });
   await emitRealtime(
     RealtimeEvent.ORDER_RECEIVED,
     {
@@ -547,6 +556,16 @@ export async function cancelOrder(user: AuthUser, id: string, input: RejectOrder
   const order = await loadForTransition(id);
   if (order.status !== OutletOrderStatus.CONFIRMED) {
     throw AppError.invalidState('Only an order awaiting fulfilment can be cancelled');
+  }
+  // A small population of orders were already CONFIRMED — with a bill already raised
+  // under the old approve/pay-first flow — at the moment this workflow was simplified.
+  // Cancelling one of those is a credit note, not a status flip: there is no bill-void
+  // path yet, so refuse rather than leave a real unpaid bill orphaned against a
+  // cancelled order.
+  if (order.bill) {
+    throw AppError.invalidState(
+      `${order.orderNumber} already has bill ${order.bill.billNumber} raised against it and cannot be cancelled here. Handle it via Billing instead.`,
+    );
   }
 
   const updated = await prisma.outletOrder.update({
