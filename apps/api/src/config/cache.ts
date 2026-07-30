@@ -81,6 +81,7 @@ export const CacheTag = {
   UNITS: 'units',
   ASSETS: 'assets',
   EMPLOYEES: 'employees',
+  PAYROLL: 'payroll',
   PRODUCTION: 'production',
   EXPENSES: 'expenses',
   POS: 'pos',

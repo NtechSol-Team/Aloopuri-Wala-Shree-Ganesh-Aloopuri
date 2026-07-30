@@ -12,7 +12,8 @@ export type DocCounterKey =
   | 'SUPPLIER_BILL'
   | 'SUPPLIER_PAYMENT'
   | 'ASSET'
-  | 'EMPLOYEE';
+  | 'EMPLOYEE'
+  | 'PAYROLL';
 
 const PREFIX: Record<DocCounterKey, string> = {
   BILL: 'BL',
@@ -29,6 +30,8 @@ const PREFIX: Record<DocCounterKey, string> = {
   // Deliberately EMPL, not EMP: USER_CODE above already mints EMP-prefixed codes off
   // its own counter, so sharing the prefix would produce duplicate-looking ids.
   EMPLOYEE: 'EMPL',
+  // PAY is already taken by PAYMENT, so payroll rows use PR.
+  PAYROLL: 'PR',
 };
 
 /**

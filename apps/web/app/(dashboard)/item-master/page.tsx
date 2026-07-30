@@ -22,8 +22,9 @@ import {
 import { useUnits, useSaveUnit, useDeleteUnit, type Unit } from '@/hooks/useUnits';
 import { ProductFormDialog } from '@/components/products/product-form-dialog';
 import { BomDialog } from '@/components/products/bom-dialog';
+import { AssetsTab } from '@/components/assets/assets-tab';
 
-type Tab = 'categories' | 'units' | 'products';
+type Tab = 'categories' | 'units' | 'products' | 'assets';
 
 export default function ItemMasterPage() {
   const role = useAuthStore((s) => s.user?.role);
@@ -35,6 +36,7 @@ export default function ItemMasterPage() {
     ['categories', 'Category Master'],
     ['units', 'Unit Master'],
     ...(showProducts ? [['products', 'Products'] as [Tab, string]] : []),
+    ['assets', 'Assets'],
   ];
 
   const [tab, setTab] = useState<Tab>('categories');
@@ -58,6 +60,7 @@ export default function ItemMasterPage() {
 
       {tab === 'categories' && <CategoriesTab />}
       {tab === 'units' && <UnitsTab />}
+      {tab === 'assets' && <AssetsTab />}
       {tab === 'products' && showProducts && <ProductsTab />}
     </div>
   );

@@ -29,7 +29,7 @@ const STATUS_BADGE: Record<AssetStatus, 'success' | 'warning' | 'neutral'> = {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-export default function AssetsPage() {
+export function AssetsTab() {
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
   const [status, setStatus] = useState<AssetStatus | ''>('');

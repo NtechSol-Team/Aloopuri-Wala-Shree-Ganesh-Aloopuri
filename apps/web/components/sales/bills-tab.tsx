@@ -17,7 +17,7 @@ import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
 import { apiErrorMessage } from '@/lib/api';
 import toast from 'react-hot-toast';
 
-export default function BillingPage() {
+export function BillsTab() {
   const isAdmin = useAuthStore((s) => s.user?.role) === 'SUPER_ADMIN';
   const [status, setStatus] = useState<BillStatus | ''>('');
   const [overdueOnly, setOverdueOnly] = useState(false);

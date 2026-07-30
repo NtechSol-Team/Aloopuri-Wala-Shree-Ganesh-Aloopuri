@@ -56,7 +56,7 @@ function inBucket(order: Order, bucket: Bucket): boolean {
   }
 }
 
-export default function OrdersPage() {
+export function OrdersTab() {
   const role = useAuthStore((s) => s.user?.role);
   // Main owner and godown both work the fulfilment queue; a franchise owner only
   // ever sees their own outlet's orders.

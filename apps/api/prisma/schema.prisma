@@ -176,6 +176,13 @@ enum SalaryType {
   SHIFT
 }
 
+/// A payroll row is a draft until the money actually goes out. Only PAID books the
+/// expense, so an unpaid draft never inflates the P&L.
+enum PayrollStatus {
+  PENDING
+  PAID
+}
+
 enum PosSessionStatus {
   OPEN
   CLOSED
@@ -1058,6 +1065,7 @@ model Expense {
 
   category     ExpenseCategory @relation(fields: [categoryId], references: [id])
   supplierBill SupplierBill?   @relation(fields: [supplierBillId], references: [id])
+  payroll      Payroll?
 
   @@index([categoryId, expenseDate])
   @@index([location, expenseDate])
@@ -1563,12 +1571,107 @@ model Employee {
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById String?  @map("created_by") @db.Uuid
 
-  shift Shift? @relation(fields: [shiftId], references: [id])
-  user  User?  @relation(fields: [userId], references: [id])
+  shift      Shift?       @relation(fields: [shiftId], references: [id])
+  user       User?        @relation(fields: [userId], references: [id])
+  attendance Attendance[]
+  payroll    Payroll[]
 
   @@index([status])
   @@index([shiftId])
   @@index([department])
   @@index([isDeleted])
   @@map("employees")
+}
+
+/// One employee's attendance for one calendar month, entered by hand. Deliberately a
+/// monthly summary rather than per-day rows: that's what the admin actually keys in
+/// today, and a future biometric/QR feed can populate the same totals.
+model Attendance {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId       String   @map("employee_id") @db.Uuid
+  /// Calendar month this covers.
+  year             Int
+  month            Int
+  /// Days the business actually operated this month — the divisor for monthly pay.
+  totalWorkingDays Decimal  @map("total_working_days") @db.Decimal(6, 2)
+  presentDays      Decimal  @default(0) @map("present_days") @db.Decimal(6, 2)
+  absentDays       Decimal  @default(0) @map("absent_days") @db.Decimal(6, 2)
+  halfDays         Decimal  @default(0) @map("half_days") @db.Decimal(6, 2)
+  paidLeave        Decimal  @default(0) @map("paid_leave") @db.Decimal(6, 2)
+  unpaidLeave      Decimal  @default(0) @map("unpaid_leave") @db.Decimal(6, 2)
+  overtimeHours    Decimal  @default(0) @map("overtime_hours") @db.Decimal(8, 2)
+  /// Only meaningful for hourly staff; ignored by the other structures.
+  workingHours     Decimal? @map("working_hours") @db.Decimal(8, 2)
+  notes            String?
+  isDeleted        Boolean  @default(false) @map("is_deleted")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById      String?  @map("created_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, year, month])
+  @@index([year, month])
+  @@map("attendance")
+}
+
+/// One employee's pay for one month. Every figure the calculation depended on is
+/// snapshotted here — the salary structure AND the attendance — so a later pay rise or
+/// attendance correction can never silently rewrite a payslip that has been issued.
+model Payroll {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payrollNo  String        @unique @map("payroll_no")
+  employeeId String        @map("employee_id") @db.Uuid
+  year       Int
+  month      Int
+
+  // ── Snapshot: salary structure as it stood when generated ──
+  salaryType         SalaryType @map("salary_type")
+  monthlySalary      Decimal?   @map("monthly_salary") @db.Decimal(12, 2)
+  perDaySalary       Decimal?   @map("per_day_salary") @db.Decimal(12, 2)
+  perHourSalary      Decimal?   @map("per_hour_salary") @db.Decimal(12, 2)
+  shiftSalary        Decimal?   @map("shift_salary") @db.Decimal(12, 2)
+  overtimeRate       Decimal    @default(0) @map("overtime_rate") @db.Decimal(12, 2)
+
+  // ── Snapshot: attendance the pay was computed from ──
+  totalWorkingDays Decimal @map("total_working_days") @db.Decimal(6, 2)
+  presentDays      Decimal @default(0) @map("present_days") @db.Decimal(6, 2)
+  halfDays         Decimal @default(0) @map("half_days") @db.Decimal(6, 2)
+  paidLeave        Decimal @default(0) @map("paid_leave") @db.Decimal(6, 2)
+  unpaidLeave      Decimal @default(0) @map("unpaid_leave") @db.Decimal(6, 2)
+  overtimeHours    Decimal @default(0) @map("overtime_hours") @db.Decimal(8, 2)
+  workingHours     Decimal @default(0) @map("working_hours") @db.Decimal(8, 2)
+  /// Days actually paid for: present + paid leave + half days at half weight.
+  payableDays      Decimal @default(0) @map("payable_days") @db.Decimal(6, 2)
+
+  // ── Earnings ──
+  grossSalary     Decimal @map("gross_salary") @db.Decimal(12, 2)
+  allowances      Decimal @default(0) @db.Decimal(12, 2)
+  overtimeAmount  Decimal @default(0) @map("overtime_amount") @db.Decimal(12, 2)
+  bonus           Decimal @default(0) @db.Decimal(12, 2)
+  incentives      Decimal @default(0) @db.Decimal(12, 2)
+  // ── Deductions ──
+  deductions      Decimal @default(0) @db.Decimal(12, 2)
+  advanceRecovery Decimal @default(0) @map("advance_recovery") @db.Decimal(12, 2)
+  loanRecovery    Decimal @default(0) @map("loan_recovery") @db.Decimal(12, 2)
+
+  netSalary   Decimal       @map("net_salary") @db.Decimal(12, 2)
+  status      PayrollStatus @default(PENDING)
+  paymentDate DateTime?     @map("payment_date") @db.Timestamptz(6)
+  /// The Expense this payout booked, created only when the row is marked PAID and
+  /// removed if it is reverted — that link is what keeps the P&L honest.
+  expenseId   String?       @unique @map("expense_id") @db.Uuid
+  notes       String?
+  isDeleted   Boolean       @default(false) @map("is_deleted")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?       @map("created_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+  expense  Expense? @relation(fields: [expenseId], references: [id])
+
+  @@unique([employeeId, year, month])
+  @@index([year, month])
+  @@index([status])
+  @@map("payroll")
 }
