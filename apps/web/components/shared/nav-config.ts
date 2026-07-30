@@ -27,18 +27,19 @@ export interface NavItem {
 
 const ALL: UserRole[] = ['SUPER_ADMIN', 'GODOWN_MANAGER', 'FRANCHISE_OWNER', 'CASHIER'];
 
-// Ordered to follow the day's work: what's made, what's held, what's sold, then what
-// it cost and what came in. Everything after Payments keeps its previous relative order.
+// Sidebar order, set by the owner. Roles filter this list without reordering it, so
+// every role sees these same modules in the same sequence. "Open POS" isn't here —
+// the sidebar renders it separately, always last.
 export const navItems: NavItem[] = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER', 'FRANCHISE_OWNER'] },
+  { label: 'Item Master', href: '/item-master', icon: Ruler, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Production', href: '/production', icon: Factory, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Inventory', href: '/inventory', icon: Boxes, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   // Sales holds Orders + Bills as tabs; a franchise owner still sees only their own outlet's.
   { label: 'Sales', href: '/sales', icon: ShoppingCart, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER', 'FRANCHISE_OWNER'] },
+  { label: 'Purchases', href: '/purchases', icon: ShoppingBag, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Expenses', href: '/expenses', icon: TrendingUp, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Payments', href: '/payments', icon: Wallet, roles: ['SUPER_ADMIN', 'FRANCHISE_OWNER', 'GODOWN_MANAGER'] },
-  { label: 'Item Master', href: '/item-master', icon: Ruler, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
-  { label: 'Purchases', href: '/purchases', icon: ShoppingBag, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Contacts', href: '/contacts', icon: Contact, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Accounting', href: '/accounting', icon: Landmark, roles: ['SUPER_ADMIN'] },
   { label: 'Analytics', href: '/analytics', icon: BarChart3, roles: ['SUPER_ADMIN', 'FRANCHISE_OWNER'] },
