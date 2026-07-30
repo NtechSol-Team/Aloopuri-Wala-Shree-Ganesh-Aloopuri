@@ -13,6 +13,7 @@ interface NewOrderPayload {
   isGstBill: boolean;
   orderDate: string;
   items: Array<{ name: string; unit: string; qty: number; price: number }>;
+  payment?: { status: 'PENDING' | 'PARTIAL' | 'PAID'; amountDue: number; method?: string | null };
 }
 
 /**
@@ -41,7 +42,7 @@ export function OrderPrintListener() {
       printedIds.current.add(d.orderId);
       beepNewOrder();
       printOrderPickList(
-        { orderNumber: d.orderNumber, outletName: d.outletName, isGstBill: d.isGstBill, orderDate: d.orderDate },
+        { orderNumber: d.orderNumber, outletName: d.outletName, isGstBill: d.isGstBill, orderDate: d.orderDate, payment: d.payment },
         d.items.map((i) => ({ name: i.name, unit: i.unit, approvedQty: i.qty, price: i.price })),
       );
     };

@@ -29,7 +29,19 @@ const orderInclude = {
     },
   },
   outlet: { select: { id: true, name: true, pricingMode: true, gstBilling: true, creditPeriodDays: true } },
-  bill: { select: { id: true, billNumber: true, grandTotal: true, status: true, isGstBill: true, balanceDue: true } },
+  bill: {
+    select: {
+      id: true, billNumber: true, grandTotal: true, status: true, isGstBill: true, balanceDue: true,
+      // Just the most recent payment — enough to print "paid by Cash/UPI" on a
+      // reprinted order slip without pulling the whole payment history.
+      payments: {
+        where: { isDeleted: false },
+        select: { method: true },
+        orderBy: { paymentDate: 'desc' },
+        take: 1,
+      },
+    },
+  },
 } satisfies Prisma.OutletOrderInclude;
 
 type OrderWithItems = Prisma.OutletOrderGetPayload<{ include: typeof orderInclude }>;
@@ -180,6 +192,9 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
         qty: Number(i.confirmedQuantity ?? i.requestedQuantity),
         price: Number(i.unitPriceSnapshot ?? i.product.mrp),
       })),
+      // A just-placed order has no bill and no payment yet, so the slip always
+      // prints "collect this much" — which is exactly what the packer needs.
+      payment: { status: 'PENDING' as const, amountDue: Number(orderTotals(order).grandTotal) },
     },
     { global: true, outletId },
   );

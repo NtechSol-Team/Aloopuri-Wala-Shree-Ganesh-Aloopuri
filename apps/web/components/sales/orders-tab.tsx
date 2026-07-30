@@ -23,9 +23,10 @@ import { stepFor } from '@/hooks/useUnits';
 import {
   useCreateOrder, useOrders, useFulfilOrder,
   ACTIVE_ORDER_STATUSES, ORDER_STATUS_BADGE, ORDER_STATUS_LABEL,
-  amountDue, isPendingPayment, isCompleted,
+  amountDue, isPendingPayment, isCompleted, paymentInfoFor,
   type Order,
 } from '@/hooks/useOrders';
+import { printOrderPickList } from '@/lib/print';
 import { PrinterSettingsDialog } from '@/components/printer-settings-dialog';
 import { OrderPaymentDialog } from '@/components/orders/order-payment-dialog';
 import { RejectOrderDialog } from '@/components/orders/reject-order-dialog';
@@ -83,6 +84,21 @@ export function OrdersTab() {
   const activeOrder = orders.find((o) => ACTIVE_ORDER_STATUSES.includes(o.status)) ?? null;
 
   const visible = isFulfiller ? orders.filter((o) => inBucket(o, tab)) : orders;
+
+  // Reprints the same slip the printer produced when the order landed — but with
+  // the payment state as it stands now, so a settled order prints as paid.
+  const reprint = (o: Order) => {
+    printOrderPickList(
+      { orderNumber: o.orderNumber, outletName: o.outlet.name, isGstBill: o.isGstBill, orderDate: o.orderDate, payment: paymentInfoFor(o) },
+      o.items.map((i) => ({
+        name: i.product.name,
+        unit: i.product.unit.name,
+        approvedQty: Number(i.confirmedQuantity ?? i.requestedQuantity),
+        price: Number(i.unitPriceSnapshot ?? i.product.mrp),
+      })),
+    );
+    toast.success(`Reprinting ${o.orderNumber}`);
+  };
 
   const doFulfil = (o: Order) =>
     fulfil.mutate(o.id, {
@@ -204,6 +220,9 @@ export function OrdersTab() {
                         {isFulfiller ? (
                           o.status === 'CONFIRMED' ? (
                             <>
+                              <Button variant="ghost" size="icon" title="Reprint order slip" onClick={() => reprint(o)}>
+                                <Printer className="h-4 w-4" />
+                              </Button>
                               <Button size="sm" loading={fulfil.isPending} onClick={() => doFulfil(o)}>
                                 <PackageCheck className="h-3.5 w-3.5" /> Fulfil
                               </Button>
@@ -215,14 +234,21 @@ export function OrdersTab() {
                             // The outlet handed over cash (or is paying online in front of
                             // you) — record it against the bill right from here, instead of
                             // having to go find it on the Billing page.
+                            <>
+                            <Button variant="ghost" size="icon" title="Reprint order slip" onClick={() => reprint(o)}>
+                              <Printer className="h-4 w-4" />
+                            </Button>
                             <Button
                               size="sm"
                               onClick={() => setPayBillFor({ id: o.bill!.id, billNumber: o.bill!.billNumber, balanceDue: o.bill!.balanceDue, outletName: o.outlet.name })}
                             >
                               <CreditCard className="h-3.5 w-3.5" /> Pay Now
                             </Button>
+                            </>
                           ) : (
-                            <span className="text-caption text-muted-foreground">—</span>
+                            <Button variant="ghost" size="icon" title="Reprint order slip" onClick={() => reprint(o)}>
+                              <Printer className="h-4 w-4" />
+                            </Button>
                           )
                         ) : due > 0 ? (
                           <Button size="sm" onClick={() => setPayFor(o)}>

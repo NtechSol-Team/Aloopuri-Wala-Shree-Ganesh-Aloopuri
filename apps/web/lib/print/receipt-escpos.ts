@@ -3,8 +3,9 @@
 import { format } from 'date-fns';
 import type { PosTxn } from '@/hooks/usePos';
 import {
-  DEFAULT_STORE, gstBreakup, PAYMENT_MODE_LABEL,
-  type BatchLabelData, type OrderPickListLine, type SessionPaymentModeRow, type StoreProfile,
+  DEFAULT_STORE, gstBreakup, PAYMENT_MODE_LABEL, PAYMENT_STATUS_TEXT,
+  type BatchLabelData, type OrderPaymentInfo, type OrderPickListLine,
+  type SessionPaymentModeRow, type StoreProfile,
 } from '@/lib/receipt-print';
 import { EscPosEncoder, wrapText, type MonoRaster } from './escpos-encoder';
 import { loadImageAsRaster, textToRaster } from './escpos-image';
@@ -320,7 +321,12 @@ export async function receiptBytes(
 
 /** Godown/admin order slip — mirrors `printOrderPickList` (new-order receipt or, once dispatched, a pick list). */
 export function pickListBytes(
-  order: { orderNumber: string; outletName: string; fulfillmentSource?: 'MAIN_BRANCH' | 'GODOWN' | null; isGstBill: boolean; orderDate?: string },
+  order: {
+    orderNumber: string; outletName: string;
+    fulfillmentSource?: 'MAIN_BRANCH' | 'GODOWN' | null;
+    isGstBill: boolean; orderDate?: string;
+    payment?: OrderPaymentInfo;
+  },
   lines: OrderPickListLine[],
   s: PrinterSettings,
 ): Uint8Array {
@@ -340,12 +346,29 @@ export function pickListBytes(
   let total = 0;
   for (const l of lines) {
     total += l.approvedQty * l.price;
-    smartLine(e, s, l.name, { bold: true });
-    e.leftRight(`  ${l.approvedQty} ${l.unit} x ${inr(l.price)}`, inr(l.approvedQty * l.price));
+    // Double-height (not double-width) keeps the name readable across the counter
+    // without halving how many characters fit on the line.
+    smartLine(e, s, l.name, { bold: true, tall: true });
+    // Quantity and line amount are what gets checked while packing, so both are bold.
+    e.bold(true).leftRight(`  ${l.approvedQty} ${l.unit} x ${inr(l.price)}`, inr(l.approvedQty * l.price)).bold(false);
   }
 
   e.divider();
   e.bold(true).leftRight('ESTIMATED TOTAL', inr(total)).bold(false);
+
+  if (order.payment) {
+    const p = order.payment;
+    e.divider();
+    smartLine(e, s, PAYMENT_STATUS_TEXT[p.status], { bold: true, center: true });
+    smartLine(
+      e, s,
+      p.status === 'PAID'
+        ? `Paid${p.method ? ` by ${p.method}` : ''}`
+        : `${inr(p.amountDue)} to collect${p.method ? ` (part paid by ${p.method})` : ''}`,
+      { center: true },
+    );
+  }
+
   e.feed(1).align('center').line(order.fulfillmentSource ? 'Pack & dispatch the quantities above.' : 'New order - start processing.');
   e.feed(4).cut();
   return e.encode();

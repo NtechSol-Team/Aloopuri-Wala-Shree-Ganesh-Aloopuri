@@ -264,6 +264,23 @@ export function printReceipt(txn: PosTxn, opts: { cashierName?: string; store?: 
 export interface OrderPickListLine { name: string; unit: string; approvedQty: number; price: number }
 
 /**
+ * What the outlet still owes on this order, printed at the foot of the slip so
+ * whoever packs or delivers knows whether to collect. `method` is only known once
+ * something has actually been paid.
+ */
+export interface OrderPaymentInfo {
+  status: 'PENDING' | 'PARTIAL' | 'PAID';
+  amountDue: number;
+  method?: string | null;
+}
+
+export const PAYMENT_STATUS_TEXT: Record<OrderPaymentInfo['status'], string> = {
+  PENDING: 'PAYMENT PENDING',
+  PARTIAL: 'PARTIALLY PAID',
+  PAID: 'PAYMENT RECEIVED',
+};
+
+/**
  * 80mm thermal order slip. Two moments print this, same layout:
  *  - the instant an order is placed (no fulfillmentSource yet) — an automatic
  *    "New Order Receipt" so godown/admin start processing immediately, without
@@ -272,7 +289,12 @@ export interface OrderPickListLine { name: string; unit: string; approvedQty: nu
  *    List" naming where the goods came from.
  */
 export function printOrderPickList(
-  order: { orderNumber: string; outletName: string; fulfillmentSource?: 'MAIN_BRANCH' | 'GODOWN' | null; isGstBill: boolean; orderDate?: string },
+  order: {
+    orderNumber: string; outletName: string;
+    fulfillmentSource?: 'MAIN_BRANCH' | 'GODOWN' | null;
+    isGstBill: boolean; orderDate?: string;
+    payment?: OrderPaymentInfo;
+  },
   lines: OrderPickListLine[],
 ): void {
   const total = lines.reduce((s, l) => s + l.approvedQty * l.price, 0);
@@ -280,12 +302,24 @@ export function printOrderPickList(
     .map(
       (l) => `
       <tr><td class="name" colspan="3">${esc(l.name)}</td></tr>
-      <tr class="sub"><td>${l.approvedQty} ${esc(l.unit)} × ${inr(l.price)}</td><td></td><td class="num">${inr(l.approvedQty * l.price)}</td></tr>`,
+      <tr class="sub"><td><b class="qty">${l.approvedQty} ${esc(l.unit)}</b> × ${inr(l.price)}</td><td></td><td class="num amt">${inr(l.approvedQty * l.price)}</td></tr>`,
     )
     .join('');
   const dateLabel = order.fulfillmentSource ? 'Confirmed' : 'Received';
   const dateValue = format(order.orderDate ? new Date(order.orderDate) : new Date(), 'dd MMM yyyy, hh:mm a');
   const footer = order.fulfillmentSource ? 'Pack &amp; dispatch the quantities above.' : 'New order — start processing.';
+
+  const pay = order.payment;
+  const paymentBlock = pay
+    ? `<div class="pay">
+        <div class="status">${PAYMENT_STATUS_TEXT[pay.status]}</div>
+        <div class="detail">${
+          pay.status === 'PAID'
+            ? `Paid${pay.method ? ` by ${esc(pay.method)}` : ''}`
+            : `${inr(pay.amountDue)} to collect${pay.method ? ` · part paid by ${esc(pay.method)}` : ''}`
+        }</div>
+      </div>`
+    : '';
 
   const html = `<!doctype html>
 <html>
@@ -302,8 +336,13 @@ export function printOrderPickList(
   .meta { font-size: 11px; }
   table { width: 100%; border-collapse: collapse; }
   td { padding: 1px 0; vertical-align: top; }
-  td.name { font-size: 16px; font-weight: 700; padding-top: 4px; line-height: 1.25; }
-  tr.sub td { font-size: 11px; }
+  td.name { font-size: 21px; font-weight: 800; padding-top: 5px; line-height: 1.2; }
+  tr.sub td { font-size: 13px; }
+  .qty { font-size: 15px; font-weight: 800; }
+  .amt { font-size: 15px; font-weight: 800; }
+  .pay { border: 2px solid #000; padding: 5px 6px; margin-top: 6px; text-align: center; }
+  .pay .status { font-size: 16px; font-weight: 800; letter-spacing: 0.5px; }
+  .pay .detail { font-size: 12px; margin-top: 2px; }
   .num { text-align: right; white-space: nowrap; }
   .row { display: flex; justify-content: space-between; padding: 1px 0; }
   .total { font-size: 15px; font-weight: 800; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 3px 0; margin: 4px 0; }
@@ -326,6 +365,7 @@ export function printOrderPickList(
   <table>${itemRows}</table>
   <hr />
   <div class="row total"><span>ESTIMATED TOTAL</span><span>${inr(total)}</span></div>
+  ${paymentBlock}
   <p class="center" style="margin-top:8px;font-size:11px;">${footer}</p>
 </body>
 </html>`;

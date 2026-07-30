@@ -8,6 +8,7 @@ import {
   printSessionPaymentModeReport as printSessionPaymentModeReportHtml,
   printBatchLabel as printBatchLabelHtml,
   type BatchLabelData,
+  type OrderPaymentInfo,
   type OrderPickListLine,
   type SessionPaymentModeRow,
   type StoreProfile,
@@ -60,7 +61,12 @@ export async function printOpenDrawer(): Promise<PrintResult> {
 }
 
 export function printOrderPickList(
-  order: { orderNumber: string; outletName: string; fulfillmentSource?: 'MAIN_BRANCH' | 'GODOWN' | null; isGstBill: boolean; orderDate?: string },
+  order: {
+    orderNumber: string; outletName: string;
+    fulfillmentSource?: 'MAIN_BRANCH' | 'GODOWN' | null;
+    isGstBill: boolean; orderDate?: string;
+    payment?: OrderPaymentInfo;
+  },
   lines: OrderPickListLine[],
 ): void {
   if (!resolveRawTransport()) return printOrderPickListHtml(order, lines);

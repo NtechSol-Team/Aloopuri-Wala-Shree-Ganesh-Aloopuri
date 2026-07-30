@@ -52,7 +52,7 @@ export interface Order {
   cancellationReason: string | null;
   items: OrderItem[];
   outlet: { id: string; name: string; pricingMode: 'GENERIC' | 'SPECIAL'; gstBilling: boolean; creditPeriodDays: number };
-  bill: { id: string; billNumber: string; grandTotal: string; status: string; isGstBill: boolean; balanceDue: string } | null;
+  bill: { id: string; billNumber: string; grandTotal: string; status: string; isGstBill: boolean; balanceDue: string; payments: Array<{ method: string }> } | null;
   /** What the outlet owes — computed server-side with the same maths as the bill. */
   totals: { subTotal: number; taxTotal: number; grandTotal: number };
 }
@@ -73,6 +73,19 @@ export function isPendingPayment(order: Order): boolean {
 
 export function isCompleted(order: Order): boolean {
   return order.status === 'DELIVERED' && amountDue(order) <= 0;
+}
+
+/** How this order's payment state should read on a printed slip. */
+export function paymentInfoFor(order: Order): { status: 'PENDING' | 'PARTIAL' | 'PAID'; amountDue: number; method?: string } {
+  const method = order.bill?.payments?.[0]?.method;
+  const pretty = method ? method.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : undefined;
+  if (!order.bill) {
+    // Not fulfilled yet, so nothing is billed — the whole order total is still to collect.
+    return { status: 'PENDING', amountDue: order.totals.grandTotal, method: pretty };
+  }
+  const due = Number(order.bill.balanceDue);
+  if (due <= 0) return { status: 'PAID', amountDue: 0, method: pretty };
+  return { status: pretty ? 'PARTIAL' : 'PENDING', amountDue: due, method: pretty };
 }
 
 export interface RazorpayOrderIntent { orderId: string; amount: number; currency: string; keyId: string }
