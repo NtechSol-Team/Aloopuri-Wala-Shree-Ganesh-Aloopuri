@@ -7,6 +7,7 @@ import { getDevKey } from '@/store/dev.store';
 import { useAuthStore } from '@/store/auth.store';
 import { DEFAULT_STORE, type StoreProfile } from '@/lib/print';
 import type { ApiSuccess } from '@/types/api';
+import type { ItemUnit } from './useProducts';
 
 export type PricingMode = 'GENERIC' | 'SPECIAL';
 
@@ -75,7 +76,7 @@ export interface OutletPriceRow {
   id: string;
   name: string;
   sku: string;
-  unit: string;
+  unit: ItemUnit;
   mrp: string;
   specialPrice: string | null;
   category: { name: string };

@@ -30,7 +30,7 @@ export async function getPayable(id: string) {
     where: { id, isDeleted: false },
     include: {
       payments: { where: { isDeleted: false }, orderBy: { paymentDate: 'desc' } },
-      intakeLines: { include: { rawMaterial: { select: { name: true, unit: true } } } },
+      intakeLines: { include: { rawMaterial: { select: { name: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } } } },
       expenseLines: { include: { category: { select: { name: true } } } },
     },
   });

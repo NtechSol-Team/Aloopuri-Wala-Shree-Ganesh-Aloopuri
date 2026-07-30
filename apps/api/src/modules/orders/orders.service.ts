@@ -582,6 +582,20 @@ export async function cancelOrder(user: AuthUser, id: string, input: RejectOrder
       `${order.orderNumber} already has bill ${order.bill.billNumber} raised against it and cannot be cancelled here. Handle it via Billing instead.`,
     );
   }
+  // An outlet may pay online at order time, before any bill exists. That money is
+  // held as an advance keyed to the order, and Fulfil is what moves it onto the
+  // bill — so cancelling here would strand a real payment against a dead order,
+  // attached to no bill and reconcilable by nothing. Refuse until it's refunded.
+  const advanced = await prisma.payment.aggregate({
+    where: { orderId: id, billId: null, isDeleted: false, status: PaymentStatus.SUCCESS },
+    _sum: { amount: true },
+  });
+  const advanceTotal = new Prisma.Decimal(advanced._sum.amount ?? 0);
+  if (advanceTotal.greaterThan(0)) {
+    throw AppError.invalidState(
+      `${order.orderNumber} has ₹${advanceTotal.toString()} already paid in advance. Refund that payment before cancelling the order.`,
+    );
+  }
 
   const updated = await prisma.outletOrder.update({
     where: { id },

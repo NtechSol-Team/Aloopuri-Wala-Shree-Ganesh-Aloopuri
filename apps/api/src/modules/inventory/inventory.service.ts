@@ -9,12 +9,12 @@ export async function getGodown() {
       prisma.godownStock.findMany({
         where: { isDeleted: false, product: { isDeleted: false } },
         orderBy: { product: { name: 'asc' } },
-        select: { quantity: true, product: { select: { id: true, name: true, sku: true, unit: true, reorderLevel: true } } },
+        select: { quantity: true, product: { select: { id: true, name: true, sku: true, unit: { select: { id: true, name: true, decimalPlaces: true } }, reorderLevel: true } } },
       }),
       prisma.rawMaterial.findMany({
         where: { isDeleted: false },
         orderBy: { name: 'asc' },
-        select: { id: true, name: true, unit: true, currentStock: true, reorderLevel: true, costPerUnit: true, supplierName: true },
+        select: { id: true, name: true, unit: { select: { id: true, name: true, decimalPlaces: true } }, currentStock: true, reorderLevel: true, costPerUnit: true, supplierName: true },
       }),
     ]);
     return { finishedGoods, rawMaterials };
@@ -27,7 +27,7 @@ export async function getMainBranch() {
     prisma.mainBranchStock.findMany({
       where: { isDeleted: false, product: { isDeleted: false } },
       orderBy: { product: { name: 'asc' } },
-      select: { quantity: true, product: { select: { id: true, name: true, sku: true, unit: true, reorderLevel: true } } },
+      select: { quantity: true, product: { select: { id: true, name: true, sku: true, unit: { select: { id: true, name: true, decimalPlaces: true } }, reorderLevel: true } } },
     }),
   );
 }
@@ -40,7 +40,7 @@ export async function getOutlet(outletId: string) {
     const items = await prisma.outletStock.findMany({
       where: { outletId, isDeleted: false, product: { isDeleted: false } },
       orderBy: { product: { name: 'asc' } },
-      select: { quantity: true, product: { select: { id: true, name: true, sku: true, unit: true } } },
+      select: { quantity: true, product: { select: { id: true, name: true, sku: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } } },
     });
     return { outlet, items };
   });

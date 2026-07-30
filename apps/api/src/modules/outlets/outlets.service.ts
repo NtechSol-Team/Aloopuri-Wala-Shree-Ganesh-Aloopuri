@@ -84,7 +84,7 @@ export async function getOutletPrices(outletId: string) {
     prisma.product.findMany({
       where: { isDeleted: false, isActive: true },
       orderBy: { name: 'asc' },
-      select: { id: true, name: true, sku: true, unit: true, mrp: true, category: { select: { name: true } } },
+      select: { id: true, name: true, sku: true, unit: { select: { id: true, name: true, decimalPlaces: true } }, mrp: true, category: { select: { name: true } } },
     }),
     prisma.outletProductPrice.findMany({ where: { outletId }, select: { productId: true, price: true } }),
   ]);

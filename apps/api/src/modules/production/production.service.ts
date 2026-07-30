@@ -107,7 +107,7 @@ export async function logBatch(input: LogBatchInput, userId: string) {
           ? { create: input.overheads.map((o) => ({ label: o.label, amount: o.amount })) }
           : undefined,
       },
-      include: { items: true, overheads: true, product: { select: { name: true, unit: true } } },
+      include: { items: true, overheads: true, product: { select: { name: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } } },
     });
 
     // Deduct consumed components from their respective stock ledgers.
@@ -160,7 +160,7 @@ export async function listBatches(query: ListBatchesQuery) {
       take,
       select: {
         id: true, batchNumber: true, quantityProduced: true, totalMaterialCost: true, overheadCost: true, costPerUnit: true, productionDate: true, notes: true,
-        product: { select: { id: true, name: true, unit: true } },
+        product: { select: { id: true, name: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } },
       },
     }),
     prisma.productionBatch.count({ where }),
@@ -172,9 +172,9 @@ export async function getBatch(id: string) {
   const batch = await prisma.productionBatch.findFirst({
     where: { id, isDeleted: false },
     include: {
-      items: { include: { rawMaterial: { select: { name: true, unit: true } }, componentProduct: { select: { name: true, unit: true } } } },
+      items: { include: { rawMaterial: { select: { name: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } }, componentProduct: { select: { name: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } } } },
       overheads: true,
-      product: { select: { name: true, unit: true } },
+      product: { select: { name: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } },
     },
   });
   if (!batch) throw AppError.notFound('Batch not found');
@@ -213,7 +213,7 @@ export async function logIntake(input: LogIntakeInput, userId: string) {
         notes: input.notes,
         createdById: userId,
       },
-      include: { rawMaterial: { select: { name: true, unit: true } } },
+      include: { rawMaterial: { select: { name: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } } },
     });
     await tx.rawMaterial.update({
       where: { id: input.rawMaterialId },
@@ -721,7 +721,7 @@ export async function listIntake(query: ListIntakeQuery) {
       orderBy: { intakeDate: 'desc' },
       skip,
       take,
-      include: { rawMaterial: { select: { name: true, unit: true } } },
+      include: { rawMaterial: { select: { name: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } } },
     }),
     prisma.rawMaterialIntake.count({ where }),
   ]);
@@ -735,7 +735,7 @@ export async function getGodownStock() {
     orderBy: { product: { name: 'asc' } },
     select: {
       quantity: true,
-      product: { select: { id: true, name: true, sku: true, unit: true, reorderLevel: true } },
+      product: { select: { id: true, name: true, sku: true, unit: { select: { id: true, name: true, decimalPlaces: true } }, reorderLevel: true } },
     },
   });
 }
