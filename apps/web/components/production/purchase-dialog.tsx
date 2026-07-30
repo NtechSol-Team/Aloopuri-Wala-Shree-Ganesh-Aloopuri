@@ -25,9 +25,9 @@ const CREDIT_DAY_OPTIONS = [7, 15, 30, 45, 60];
 const today = () => format(new Date(), 'yyyy-MM-dd');
 
 type Line =
-  | { kind: 'RAW_MATERIAL'; rawMaterialId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode: string }
-  | { kind: 'FINISHED_GOOD'; productId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode: string }
-  | { kind: 'OTHER'; categoryId: string; description: string; amount: number; taxRate: number; hsnCode: string };
+  | { kind: 'RAW_MATERIAL'; rawMaterialId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode: string; isAsset: boolean }
+  | { kind: 'FINISHED_GOOD'; productId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode: string; isAsset: boolean }
+  | { kind: 'OTHER'; categoryId: string; description: string; amount: number; taxRate: number; hsnCode: string; isAsset: boolean };
 
 const KIND_META: Record<Line['kind'], { label: string; icon: typeof Boxes }> = {
   RAW_MATERIAL: { label: 'Raw material', icon: Boxes },
@@ -69,9 +69,9 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
   const prodList = productsData?.rows ?? [];
   const catList = categories ?? [];
   const supplierList = suppliers ?? [];
-  const newRawLine = (): Line => { const f = rmList[0]; return { kind: 'RAW_MATERIAL', rawMaterialId: f?.id ?? '', quantity: 1, costPerUnit: Number(f?.costPerUnit ?? 0), taxRate: 5, hsnCode: '' }; };
-  const newFgLine = (): Line => { const f = prodList[0]; return { kind: 'FINISHED_GOOD', productId: f?.id ?? '', quantity: 1, costPerUnit: Number(f?.basePrice ?? 0), taxRate: Number(f?.taxPercent ?? 5), hsnCode: '' }; };
-  const newOtherLine = (): Line => ({ kind: 'OTHER', categoryId: catList[0]?.id ?? '', description: '', amount: 0, taxRate: 18, hsnCode: '' });
+  const newRawLine = (): Line => { const f = rmList[0]; return { kind: 'RAW_MATERIAL', rawMaterialId: f?.id ?? '', quantity: 1, costPerUnit: Number(f?.costPerUnit ?? 0), taxRate: 5, hsnCode: '', isAsset: false }; };
+  const newFgLine = (): Line => { const f = prodList[0]; return { kind: 'FINISHED_GOOD', productId: f?.id ?? '', quantity: 1, costPerUnit: Number(f?.basePrice ?? 0), taxRate: Number(f?.taxPercent ?? 5), hsnCode: '', isAsset: false }; };
+  const newOtherLine = (): Line => ({ kind: 'OTHER', categoryId: catList[0]?.id ?? '', description: '', amount: 0, taxRate: 18, hsnCode: '', isAsset: false });
 
   // Initialise the form exactly ONCE per open, not on every reference-data
   // change. Creating a category inline invalidates the categories query mid-
@@ -99,9 +99,9 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
       setNewCatLine(-1); setNewCatName('');
       setLines(
         editBill.items.map((it): Line => {
-          if (it.kind === 'RAW_MATERIAL') return { kind: 'RAW_MATERIAL', rawMaterialId: it.refId ?? '', quantity: Number(it.quantity ?? 0), costPerUnit: Number(it.unitCost ?? 0), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '' };
-          if (it.kind === 'FINISHED_GOOD') return { kind: 'FINISHED_GOOD', productId: it.refId ?? '', quantity: Number(it.quantity ?? 0), costPerUnit: Number(it.unitCost ?? 0), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '' };
-          return { kind: 'OTHER', categoryId: it.refId ?? '', description: '', amount: Number(it.taxableAmount), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '' };
+          if (it.kind === 'RAW_MATERIAL') return { kind: 'RAW_MATERIAL', rawMaterialId: it.refId ?? '', quantity: Number(it.quantity ?? 0), costPerUnit: Number(it.unitCost ?? 0), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '', isAsset: !!it.isAsset };
+          if (it.kind === 'FINISHED_GOOD') return { kind: 'FINISHED_GOOD', productId: it.refId ?? '', quantity: Number(it.quantity ?? 0), costPerUnit: Number(it.unitCost ?? 0), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '', isAsset: !!it.isAsset };
+          return { kind: 'OTHER', categoryId: it.refId ?? '', description: '', amount: Number(it.taxableAmount), taxRate: Number(it.taxRate), hsnCode: it.hsnCode ?? '', isAsset: !!it.isAsset };
         }),
       );
       return;
@@ -127,7 +127,13 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
   }, []);
 
   const update = (i: number, patch: Partial<Line>) => setLines((l) => l.map((row, idx) => (idx === i ? ({ ...row, ...patch } as Line) : row)));
-  const setKind = (i: number, kind: Line['kind']) => setLines((l) => l.map((row, idx) => (idx === i ? (kind === 'RAW_MATERIAL' ? newRawLine() : kind === 'FINISHED_GOOD' ? newFgLine() : newOtherLine()) : row)));
+  const setKind = (i: number, kind: Line['kind']) =>
+    setLines((l) => l.map((row, idx) => {
+      if (idx !== i) return row;
+      const fresh = kind === 'RAW_MATERIAL' ? newRawLine() : kind === 'FINISHED_GOOD' ? newFgLine() : newOtherLine();
+      // The factory resets the row, so preserve the asset tick the user already made.
+      return { ...fresh, isAsset: row.isAsset };
+    }));
   const onMaterial = (i: number, id: string) => { const m = rmList.find((r) => r.id === id); update(i, { rawMaterialId: id, costPerUnit: Number(m?.costPerUnit ?? 0) } as Partial<Line>); };
   const onProduct = (i: number, id: string) => { const p = prodList.find((x) => x.id === id); update(i, { productId: id, costPerUnit: Number(p?.basePrice ?? 0), taxRate: Number(p?.taxPercent ?? 5) } as Partial<Line>); };
   const remove = (i: number) => setLines((l) => l.filter((_, idx) => idx !== i));
@@ -193,10 +199,10 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
     }
     const items: PurchaseItemInput[] = lines.map((l) =>
       l.kind === 'RAW_MATERIAL'
-        ? { kind: 'RAW_MATERIAL', rawMaterialId: l.rawMaterialId, quantity: l.quantity, costPerUnit: l.costPerUnit, taxRate: l.taxRate, hsnCode: l.hsnCode || undefined }
+        ? { kind: 'RAW_MATERIAL', rawMaterialId: l.rawMaterialId, quantity: l.quantity, costPerUnit: l.costPerUnit, taxRate: l.taxRate, hsnCode: l.hsnCode || undefined, isAsset: l.isAsset }
         : l.kind === 'FINISHED_GOOD'
-          ? { kind: 'FINISHED_GOOD', productId: l.productId, quantity: l.quantity, costPerUnit: l.costPerUnit, taxRate: l.taxRate, hsnCode: l.hsnCode || undefined }
-          : { kind: 'OTHER', categoryId: l.categoryId, description: l.description || undefined, amount: l.amount, taxRate: l.taxRate, hsnCode: l.hsnCode || undefined },
+          ? { kind: 'FINISHED_GOOD', productId: l.productId, quantity: l.quantity, costPerUnit: l.costPerUnit, taxRate: l.taxRate, hsnCode: l.hsnCode || undefined, isAsset: l.isAsset }
+          : { kind: 'OTHER', categoryId: l.categoryId, description: l.description || undefined, amount: l.amount, taxRate: l.taxRate, hsnCode: l.hsnCode || undefined, isAsset: l.isAsset },
     );
     const payload = {
       supplierName: supplierName || undefined, supplierGstin: supplierGstin || undefined, supplierStateName: supplierState || undefined,
@@ -322,6 +328,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
                     </TD>
 
                     <TD className="px-1.5 py-1.5">
+                      <div className="space-y-1">
                       {line.kind === 'RAW_MATERIAL' ? (
                         <Select className="h-8" value={line.rawMaterialId} onChange={(e) => onMaterial(i, e.target.value)}>
                           {rmList.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit.name})</option>)}
@@ -356,6 +363,18 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
                           <Input className="h-7 text-caption" placeholder="Description (optional)" value={line.description} onChange={(e) => update(i, { description: e.target.value } as Partial<Line>)} />
                         </div>
                       )}
+                      {/* Ticking this sends the line to the asset register instead of
+                          stock/expense — a capital buy shouldn't hit this month's P&L. */}
+                      <label className="flex cursor-pointer items-center gap-1.5 text-caption text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5"
+                          checked={line.isAsset}
+                          onChange={(e) => update(i, { isAsset: e.target.checked } as Partial<Line>)}
+                        />
+                        Is Asset?
+                      </label>
+                      </div>
                     </TD>
 
                     <TD className="px-1.5 py-1.5"><Input className="h-8" placeholder="HSN" value={line.hsnCode} onChange={(e) => update(i, { hsnCode: e.target.value } as Partial<Line>)} /></TD>

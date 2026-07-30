@@ -17,6 +17,8 @@ import { inventoryRouter } from '../modules/inventory/inventory.routes';
 import { accountingRouter } from '../modules/accounting/accounting.routes';
 import { payablesRouter } from '../modules/payables/payables.routes';
 import { contactsRouter } from '../modules/contacts/contacts.routes';
+import { assetsRouter } from '../modules/assets/assets.routes';
+import { employeesRouter, shiftsRouter } from '../modules/employees/employees.routes';
 import { developerPaymentsRouter } from '../modules/developer-payments/developer-payments.routes';
 import { developerPresenceRouter } from '../modules/developer-presence/developer-presence.routes';
 import { developerMetricsRouter } from '../modules/developer-metrics/developer-metrics.routes';
@@ -51,6 +53,9 @@ export function buildApiRouter(): Router {
   router.use('/accounting', accountingRouter);
   router.use('/payables', payablesRouter);
   router.use('/contacts', contactsRouter);
+  router.use('/assets', assetsRouter);
+  router.use('/employees', employeesRouter);
+  router.use('/shifts', shiftsRouter);
   router.use('/developer-payments', developerPaymentsRouter);
   router.use('/developer-presence', developerPresenceRouter);
   router.use('/developer-metrics', developerMetricsRouter);

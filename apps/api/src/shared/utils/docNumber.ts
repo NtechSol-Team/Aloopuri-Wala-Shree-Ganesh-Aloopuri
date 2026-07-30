@@ -10,7 +10,9 @@ export type DocCounterKey =
   | 'POS_SESSION'
   | 'USER_CODE'
   | 'SUPPLIER_BILL'
-  | 'SUPPLIER_PAYMENT';
+  | 'SUPPLIER_PAYMENT'
+  | 'ASSET'
+  | 'EMPLOYEE';
 
 const PREFIX: Record<DocCounterKey, string> = {
   BILL: 'BL',
@@ -23,6 +25,10 @@ const PREFIX: Record<DocCounterKey, string> = {
   USER_CODE: 'EMP',
   SUPPLIER_BILL: 'PB',
   SUPPLIER_PAYMENT: 'SP',
+  ASSET: 'AST',
+  // Deliberately EMPL, not EMP: USER_CODE above already mints EMP-prefixed codes off
+  // its own counter, so sharing the prefix would produce duplicate-looking ids.
+  EMPLOYEE: 'EMPL',
 };
 
 /**

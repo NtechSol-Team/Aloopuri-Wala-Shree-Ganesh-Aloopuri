@@ -138,6 +138,44 @@ enum ExpenseLocation {
   GENERAL
 }
 
+/// Where a fixed asset currently stands. Depreciation/disposal are deliberately not
+/// modelled yet — this is a register, not a depreciation schedule.
+enum AssetStatus {
+  IN_USE
+  IN_REPAIR
+  RETIRED
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  TEMPORARY
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  RESIGNED
+  TERMINATED
+  ON_LEAVE
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+/// How an employee is paid. Exactly one structure is active per employee; the matching
+/// columns on Employee are validated per type in Zod, and payroll snapshots them so a
+/// later pay revision never rewrites history.
+enum SalaryType {
+  MONTHLY
+  DAILY
+  HOURLY
+  SHIFT
+}
+
 enum PosSessionStatus {
   OPEN
   CLOSED
@@ -197,6 +235,7 @@ model User {
   outlet             Outlet?                @relation("OutletMembers", fields: [outletId], references: [id])
   sessions           UserSession[]
   activityIntervals  UserActivityInterval[]
+  employee           Employee?
 
   @@index([role])
   @@index([outletId])
@@ -1194,6 +1233,7 @@ model SupplierBill {
   intakeLines  RawMaterialIntake[]
   expenseLines Expense[]
   items        SupplierBillItem[]
+  assets       Asset[]
 
   @@index([status, billDate])
   @@index([supplierName])
@@ -1215,6 +1255,9 @@ model SupplierBillItem {
   taxableAmount  Decimal          @map("taxable_amount") @db.Decimal(12, 2)
   taxAmount      Decimal          @default(0) @map("tax_amount") @db.Decimal(12, 2)
   lineTotal      Decimal          @map("line_total") @db.Decimal(12, 2)
+  /// Ticked "Is Asset?" at entry: this line went to the asset register instead of
+  /// stock or expense. Kept on the item so re-opening the bill shows the tick.
+  isAsset        Boolean          @default(false) @map("is_asset")
   isDeleted      Boolean          @default(false) @map("is_deleted")
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
 
@@ -1405,4 +1448,127 @@ model DeveloperExpense {
   @@index([category])
   @@index([incurredOn])
   @@map("developer_expenses")
+}
+
+// ─────────────────────────── ASSETS & PAYROLL ───────────────────────────────
+
+/// Fixed-asset register. An asset arrives either manually or from a purchase line
+/// ticked "Is Asset?", which diverts that line away from stock/expense so a capital
+/// purchase isn't written off into the month's P&L.
+model Asset {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assetCode      String          @unique @map("asset_code")
+  name           String
+  description    String?
+  serialNumber   String?         @map("serial_number")
+  quantity       Decimal         @default(1) @db.Decimal(12, 4)
+  purchaseCost   Decimal         @map("purchase_cost") @db.Decimal(12, 2)
+  purchaseDate   DateTime        @map("purchase_date") @db.Timestamptz(6)
+  supplierName   String?         @map("supplier_name")
+  invoiceNumber  String?         @map("invoice_number")
+  location       ExpenseLocation @default(GENERAL)
+  status         AssetStatus     @default(IN_USE)
+  /// Set when this asset came from a purchase bill. Points at the BILL, not the bill
+  /// item — item rows are hard-deleted and recreated on every bill edit, so an FK to
+  /// them would take the asset with it.
+  supplierBillId String?         @map("supplier_bill_id") @db.Uuid
+  notes          String?
+  isActive       Boolean         @default(true) @map("is_active")
+  isDeleted      Boolean         @default(false) @map("is_deleted")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById    String?         @map("created_by") @db.Uuid
+
+  supplierBill SupplierBill? @relation(fields: [supplierBillId], references: [id])
+
+  @@index([status])
+  @@index([supplierBillId])
+  @@index([isDeleted])
+  @@map("assets")
+}
+
+/// A working shift employees can be assigned to. Times are plain "HH:mm" strings —
+/// Prisma's @db.Time maps to a JS Date whose date half is meaningless, and the UI
+/// uses <input type="time"> which speaks exactly this format.
+model Shift {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name               String   @unique
+  startTime          String   @map("start_time")
+  endTime            String   @map("end_time")
+  breakMinutes       Int      @default(0) @map("break_minutes")
+  /// Derived from start/end minus break on save, but editable — some shifts are paid
+  /// for more or fewer hours than the clock says.
+  totalWorkingHours  Decimal  @map("total_working_hours") @db.Decimal(5, 2)
+  /// Minutes late still counted as on time.
+  graceMinutes       Int      @default(0) @map("grace_minutes")
+  /// Worked below this many hours counts as a half day.
+  halfDayHours       Decimal? @map("half_day_hours") @db.Decimal(5, 2)
+  /// Overtime accrues only past this many hours.
+  overtimeAfterHours Decimal? @map("overtime_after_hours") @db.Decimal(5, 2)
+  isActive           Boolean  @default(true) @map("is_active")
+  isDeleted          Boolean  @default(false) @map("is_deleted")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById        String?  @map("created_by") @db.Uuid
+
+  employees Employee[]
+
+  @@index([isDeleted])
+  @@map("shifts")
+}
+
+/// Everyone on the payroll. Deliberately separate from User (a login account): most
+/// staff never sign in, and User carries none of this. `userId` optionally ties an
+/// employee to their login when they do have one.
+model Employee {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Auto-generated, shown as "Employee ID". Prefix EMPL — NOT EMP, which the
+  /// USER_CODE counter already mints for User.userId.
+  employeeNo     String         @unique @map("employee_no")
+  /// The business's own optional code for this person.
+  employeeCode   String?        @map("employee_code")
+  name           String
+  mobile         String?
+  email          String?
+  dateOfBirth    DateTime?      @map("date_of_birth") @db.Timestamptz(6)
+  gender         Gender?
+  address        String?
+  joiningDate    DateTime       @map("joining_date") @db.Timestamptz(6)
+  employmentType EmploymentType @default(FULL_TIME) @map("employment_type")
+  status         EmployeeStatus @default(ACTIVE)
+  department     String?
+  shiftId        String?        @map("shift_id") @db.Uuid
+  /// Optional link to this person's login account, when they have one.
+  userId         String?        @unique @map("user_id") @db.Uuid
+
+  salaryType SalaryType @default(MONTHLY) @map("salary_type")
+  // MONTHLY
+  monthlySalary      Decimal? @map("monthly_salary") @db.Decimal(12, 2)
+  basicSalary        Decimal? @map("basic_salary") @db.Decimal(12, 2)
+  allowances         Decimal? @db.Decimal(12, 2)
+  deductions         Decimal? @db.Decimal(12, 2)
+  overtimeRate       Decimal? @map("overtime_rate") @db.Decimal(12, 2)
+  // DAILY
+  perDaySalary       Decimal? @map("per_day_salary") @db.Decimal(12, 2)
+  // HOURLY
+  perHourSalary      Decimal? @map("per_hour_salary") @db.Decimal(12, 2)
+  // SHIFT
+  shiftSalaryName    String?  @map("shift_salary_name")
+  shiftDurationHours Decimal? @map("shift_duration_hours") @db.Decimal(5, 2)
+  shiftSalary        Decimal? @map("shift_salary") @db.Decimal(12, 2)
+
+  isActive    Boolean  @default(true) @map("is_active")
+  isDeleted   Boolean  @default(false) @map("is_deleted")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?  @map("created_by") @db.Uuid
+
+  shift Shift? @relation(fields: [shiftId], references: [id])
+  user  User?  @relation(fields: [userId], references: [id])
+
+  @@index([status])
+  @@index([shiftId])
+  @@index([department])
+  @@index([isDeleted])
+  @@map("employees")
 }

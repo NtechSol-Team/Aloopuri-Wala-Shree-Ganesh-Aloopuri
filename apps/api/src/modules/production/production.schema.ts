@@ -44,6 +44,11 @@ export const listIntakeQuerySchema = paginationQuerySchema.extend({
 // A purchase bill: one supplier invoice with mixed lines —
 //  • RAW_MATERIAL → goods receipt into inventory (updates stock + avg cost)
 //  • OTHER        → non-inventory item booked to an expense category
+//
+// Any line can instead be flagged `isAsset`, which diverts it to the asset register:
+// no stock movement, no expense — a capital purchase shouldn't hit this month's P&L.
+const assetFlag = z.boolean().default(false);
+
 const rawMaterialLine = z.object({
   kind: z.literal('RAW_MATERIAL'),
   rawMaterialId: z.string().uuid(),
@@ -51,6 +56,7 @@ const rawMaterialLine = z.object({
   costPerUnit: z.coerce.number().nonnegative(),
   taxRate: z.coerce.number().min(0).max(100).default(0),
   hsnCode: z.string().max(12).optional(),
+  isAsset: assetFlag,
 });
 const finishedGoodLine = z.object({
   kind: z.literal('FINISHED_GOOD'),
@@ -59,6 +65,7 @@ const finishedGoodLine = z.object({
   costPerUnit: z.coerce.number().nonnegative(),
   taxRate: z.coerce.number().min(0).max(100).default(0),
   hsnCode: z.string().max(12).optional(),
+  isAsset: assetFlag,
 });
 const otherLine = z.object({
   kind: z.literal('OTHER'),
@@ -67,6 +74,7 @@ const otherLine = z.object({
   amount: z.coerce.number().positive('Amount must be greater than 0'),
   taxRate: z.coerce.number().min(0).max(100).default(0),
   hsnCode: z.string().max(12).optional(),
+  isAsset: assetFlag,
 });
 
 export const recordPurchaseSchema = z.object({

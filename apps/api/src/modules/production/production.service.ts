@@ -292,8 +292,13 @@ async function preparePurchase(input: PurchaseInput) {
   const fgIds = items.flatMap((i) => (i.kind === 'FINISHED_GOOD' ? [i.productId] : []));
   const catIds = items.flatMap((i) => (i.kind === 'OTHER' ? [i.categoryId] : []));
 
-  if (rmIds.length && (await prisma.rawMaterial.count({ where: { id: { in: rmIds }, isDeleted: false } })) !== new Set(rmIds).size)
-    throw AppError.badRequest('One or more raw materials are invalid');
+  const rawMaterials = rmIds.length
+    ? await prisma.rawMaterial.findMany({ where: { id: { in: rmIds }, isDeleted: false }, select: { id: true, name: true } })
+    : [];
+  if (rawMaterials.length !== new Set(rmIds).size) throw AppError.badRequest('One or more raw materials are invalid');
+  // Needed for the asset-line label, since an asset row snapshots a name rather than
+  // pointing at the material.
+  const rawMaterialName = new Map(rawMaterials.map((m) => [m.id, m.name]));
   if (catIds.length && (await prisma.expenseCategory.count({ where: { id: { in: catIds }, isDeleted: false } })) !== new Set(catIds).size)
     throw AppError.badRequest('One or more expense categories are invalid');
 
@@ -319,7 +324,7 @@ async function preparePurchase(input: PurchaseInput) {
   const supplierStateCode = input.supplierGstin ? gstinStateCode(input.supplierGstin) : null;
   const { cgst, sgst, igst } = splitGst(Number(taxTotal), supplierStateCode, env.HOME_STATE_CODE);
 
-  return { items, productName, categoryName, lineCalc, taxableTotal, taxTotal, roundOff, billTotal, paidNow, cgst, sgst, igst };
+  return { items, productName, categoryName, rawMaterialName, lineCalc, taxableTotal, taxTotal, roundOff, billTotal, paidNow, cgst, sgst, igst };
 }
 
 /** Shared by create + update: write each line's itemized row and apply its stock/expense side effect. */
@@ -330,15 +335,62 @@ async function applyPurchaseLines(
   input: PurchaseInput,
   userId: string,
 ) {
-  const { items, lineCalc, productName, categoryName } = prepared;
+  const { items, lineCalc, productName, categoryName, rawMaterialName } = prepared;
   let rawLineCount = 0;
   let fgLineCount = 0;
   let otherLineCount = 0;
+  let assetLineCount = 0;
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     const { base, tax } = lineCalc[i];
     const lineTotal = base.add(tax);
+
+    // "Is Asset?" wins over the line's own kind: a capital purchase goes to the asset
+    // register and must NOT move stock, touch weighted-average cost, or book an expense.
+    // Cost is the ex-GST base, matching how inventory cost is recorded elsewhere.
+    if (item.isAsset) {
+      const label =
+        item.kind === 'RAW_MATERIAL'
+          ? rawMaterialName.get(item.rawMaterialId) ?? 'Asset'
+          : item.kind === 'FINISHED_GOOD'
+            ? productName.get(item.productId) ?? 'Asset'
+            : item.description?.trim() || categoryName.get(item.categoryId) || 'Asset';
+      const qty = item.kind === 'OTHER' ? new Prisma.Decimal(1) : new Prisma.Decimal(item.quantity);
+      const assetCode = await nextDocNumber(tx, 'ASSET');
+      await tx.asset.create({
+        data: {
+          assetCode,
+          name: label,
+          quantity: qty,
+          purchaseCost: base,
+          purchaseDate: input.intakeDate,
+          supplierName: input.supplierName,
+          invoiceNumber: input.invoiceNumber,
+          notes: input.notes,
+          supplierBillId: billId,
+          createdById: userId,
+        },
+      });
+      await tx.supplierBillItem.create({
+        data: {
+          supplierBillId: billId,
+          kind: item.kind,
+          refId: item.kind === 'RAW_MATERIAL' ? item.rawMaterialId : item.kind === 'FINISHED_GOOD' ? item.productId : item.categoryId,
+          name: label,
+          hsnCode: item.hsnCode,
+          quantity: qty,
+          unitCost: item.kind === 'OTHER' ? base : new Prisma.Decimal(item.costPerUnit),
+          taxRate: item.taxRate,
+          taxableAmount: base,
+          taxAmount: tax,
+          lineTotal,
+          isAsset: true,
+        },
+      });
+      assetLineCount += 1;
+      continue;
+    }
 
     if (item.kind === 'RAW_MATERIAL') {
       const m = await tx.rawMaterial.findUniqueOrThrow({ where: { id: item.rawMaterialId } });
@@ -382,7 +434,7 @@ async function applyPurchaseLines(
     }
   }
 
-  return { rawLineCount, fgLineCount, otherLineCount };
+  return { rawLineCount, fgLineCount, otherLineCount, assetLineCount };
 }
 
 export async function logPurchase(input: PurchaseInput, userId: string) {
@@ -438,7 +490,7 @@ export async function logPurchase(input: PurchaseInput, userId: string) {
   });
 
   await upsertSupplierContact(input, userId);
-  cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
+  cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.ASSETS, CacheTag.DASHBOARD);
   return {
     billNumber: result.bill.billNumber,
     invoiceNumber: input.invoiceNumber,
@@ -481,6 +533,9 @@ async function reversePurchaseEffects(tx: Prisma.TransactionClient, billId: stri
 
   // Validate every reversal is safe BEFORE mutating anything.
   for (const item of bill.items) {
+    // An asset line never moved stock on the way in, so there is nothing to check
+    // (and decrementing here would eat stock this bill never added).
+    if (item.isAsset) continue;
     if (item.kind === 'RAW_MATERIAL' && item.refId) {
       const m = await tx.rawMaterial.findUniqueOrThrow({ where: { id: item.refId } });
       if (new Prisma.Decimal(m.currentStock).lessThan(item.quantity ?? 0)) {
@@ -496,6 +551,7 @@ async function reversePurchaseEffects(tx: Prisma.TransactionClient, billId: stri
 
   // Now actually reverse.
   for (const item of bill.items) {
+    if (item.isAsset) continue;
     if (item.kind === 'RAW_MATERIAL' && item.refId) {
       const m = await tx.rawMaterial.findUniqueOrThrow({ where: { id: item.refId } });
       const currentStock = new Prisma.Decimal(m.currentStock);
@@ -512,6 +568,9 @@ async function reversePurchaseEffects(tx: Prisma.TransactionClient, billId: stri
 
   await tx.expense.deleteMany({ where: { supplierBillId: billId } });
   await tx.rawMaterialIntake.deleteMany({ where: { supplierBillId: billId } });
+  // Assets raised by this bill go with it — re-applying the lines mints them again,
+  // so leaving them would duplicate the register on every edit.
+  await tx.asset.deleteMany({ where: { supplierBillId: billId } });
   await tx.supplierBillItem.deleteMany({ where: { supplierBillId: billId } });
 
   return bill;
@@ -569,7 +628,7 @@ export async function updatePurchase(id: string, input: PurchaseInput, userId: s
   });
 
   await upsertSupplierContact(input, userId);
-  cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
+  cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.ASSETS, CacheTag.DASHBOARD);
   return {
     billNumber: result.bill.billNumber,
     totalCost: billTotal,
@@ -614,7 +673,7 @@ export async function deletePurchase(id: string) {
       await tx.supplierBill.update({ where: { id }, data: { isDeleted: true } });
     }
   });
-  cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
+  cache.invalidateTags(CacheTag.INVENTORY, CacheTag.EXPENSES, CacheTag.PAYMENTS, CacheTag.ANALYTICS, CacheTag.ASSETS, CacheTag.DASHBOARD);
   return { deleted: true };
 }
 

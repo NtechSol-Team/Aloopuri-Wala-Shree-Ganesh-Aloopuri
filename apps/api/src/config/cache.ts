@@ -79,6 +79,8 @@ export const CacheTag = {
   OUTLETS: 'outlets',
   MENUS: 'menus',
   UNITS: 'units',
+  ASSETS: 'assets',
+  EMPLOYEES: 'employees',
   PRODUCTION: 'production',
   EXPENSES: 'expenses',
   POS: 'pos',

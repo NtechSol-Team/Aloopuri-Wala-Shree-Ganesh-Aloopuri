@@ -137,6 +137,8 @@ export interface PurchaseBillItem {
   taxableAmount: string;
   taxAmount: string;
   lineTotal: string;
+  /** This line went to the asset register instead of stock/expense. */
+  isAsset: boolean;
 }
 export interface PurchaseBillDetail extends Omit<PurchaseBill, '_count'> {
   cgst: string; sgst: string; igst: string; paymentMethod: string | null; notes: string | null;
@@ -145,9 +147,9 @@ export interface PurchaseBillDetail extends Omit<PurchaseBill, '_count'> {
 }
 
 export type PurchaseItemInput =
-  | { kind: 'RAW_MATERIAL'; rawMaterialId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode?: string }
-  | { kind: 'FINISHED_GOOD'; productId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode?: string }
-  | { kind: 'OTHER'; categoryId: string; description?: string; amount: number; taxRate: number; hsnCode?: string };
+  | { kind: 'RAW_MATERIAL'; rawMaterialId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode?: string; isAsset?: boolean }
+  | { kind: 'FINISHED_GOOD'; productId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode?: string; isAsset?: boolean }
+  | { kind: 'OTHER'; categoryId: string; description?: string; amount: number; taxRate: number; hsnCode?: string; isAsset?: boolean };
 
 export function usePurchases(params: { status?: string; search?: string } = {}) {
   return useQuery({
@@ -177,7 +179,7 @@ export function useRecordPurchase() {
     mutationFn: async (input: PurchaseInput) => (await api.post<ApiSuccess<PurchaseResult>>('/production/purchases', input)).data.data,
     onSuccess: () => {
       // 'contacts' so an auto-saved supplier shows up in the form's suggestions next time.
-      ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard', 'contacts'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard', 'contacts', 'assets'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
     },
   });
 }
@@ -187,7 +189,7 @@ export function useUpdatePurchase() {
   return useMutation({
     mutationFn: async ({ id, ...input }: PurchaseInput & { id: string }) => (await api.patch<ApiSuccess<PurchaseResult>>(`/production/purchases/${id}`, input)).data.data,
     onSuccess: () => {
-      ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard', 'contacts'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      ['production', 'raw-materials', 'expenses', 'expense-summary', 'accounting', 'dashboard', 'contacts', 'assets'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
     },
   });
 }
