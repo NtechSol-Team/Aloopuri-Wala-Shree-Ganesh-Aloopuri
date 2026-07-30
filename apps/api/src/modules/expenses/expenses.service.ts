@@ -123,7 +123,9 @@ export async function getSummary(query: ExpenseSummaryQuery, user: AuthUser) {
       ${outletId ? Prisma.sql`AND outlet_id = ${outletId}::uuid` : Prisma.sql`AND outlet_id IS NULL`}
       ${query.location ? Prisma.sql`AND location = ${query.location}::"ExpenseLocation"` : Prisma.empty}
       ${query.categoryId ? Prisma.sql`AND category_id = ${query.categoryId}::uuid` : Prisma.empty}
-      AND expense_date ${Prisma.raw(IST_AT)} >= date_trunc('month', now() ${Prisma.raw(IST_AT)}) - interval '5 months'
+      -- The bound is converted, not the column: wrapping expense_date in AT TIME
+      -- ZONE makes it non-sargable, so the index on it can no longer range-seek.
+      AND expense_date >= (date_trunc('month', now() ${Prisma.raw(IST_AT)}) - interval '5 months') ${Prisma.raw(IST_AT)}
     GROUP BY 1 ORDER BY 1`;
 
   return {
