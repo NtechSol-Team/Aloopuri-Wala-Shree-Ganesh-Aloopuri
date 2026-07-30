@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { formatINR, formatQty } from '@/lib/utils';
+import { formatINR, formatQty, ist, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import {
   useAssets, useSaveAsset, useDeleteAsset,
@@ -27,7 +27,7 @@ const STATUS_BADGE: Record<AssetStatus, 'success' | 'warning' | 'neutral'> = {
   RETIRED: 'neutral',
 };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayIso();
 
 export function AssetsTab() {
   const [search, setSearch] = useState('');
@@ -110,7 +110,7 @@ export function AssetsTab() {
                   <TD>{ASSET_LOCATION_LABEL[a.location]}</TD>
                   <TD className="text-right">{formatQty(a.quantity, 0)}</TD>
                   <TD className="text-right font-semibold">{formatINR(a.purchaseCost)}</TD>
-                  <TD className="whitespace-nowrap">{format(new Date(a.purchaseDate), 'dd MMM yyyy')}</TD>
+                  <TD className="whitespace-nowrap">{format(ist(a.purchaseDate), 'dd MMM yyyy')}</TD>
                   <TD><Badge variant={STATUS_BADGE[a.status]}>{ASSET_STATUS_LABEL[a.status]}</Badge></TD>
                   <TD>
                     {a.supplierBill ? (

@@ -8,6 +8,7 @@ import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
 import type { AuthUser } from '../../shared/types/api';
 import type { CreateTransactionInput, OpenSessionInput, UpdateKotInput, VoidTransactionInput } from './pos.schema';
+import { istDayString } from '../../shared/utils/date';
 
 /**
  * Reserve the next daily order-token for a POS location. Uses DocumentCounter
@@ -15,7 +16,8 @@ import type { CreateTransactionInput, OpenSessionInput, UpdateKotInput, VoidTran
  * every day (key: TOKEN:<outlet|MAIN>:<yyyymmdd>).
  */
 async function nextTokenNumber(tx: Prisma.TransactionClient, outletId: string | null): Promise<number> {
-  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  // IST day, so tokens roll over at local midnight rather than 05:30 the next morning.
+  const day = istDayString(new Date()).replace(/-/g, '');
   const key = `TOKEN:${outletId ?? 'MAIN'}:${day}`;
   const counter = await tx.documentCounter.upsert({
     where: { key },

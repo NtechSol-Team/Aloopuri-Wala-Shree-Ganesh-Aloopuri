@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { EmployeeStatus, EmploymentType, Gender, SalaryType } from '@prisma/client';
 import { paginationQuerySchema } from '../../shared/utils/pagination';
+import { istDate } from '../../shared/utils/date';
 
 // ─────────────────────────────── Shifts ─────────────────────────────────────
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -34,10 +35,10 @@ const employeeBase = z.object({
   name: z.string().min(2).max(120),
   mobile: z.string().max(20).optional(),
   email: z.string().email().max(120).optional().or(z.literal('')),
-  dateOfBirth: z.coerce.date().optional(),
+  dateOfBirth: istDate.optional(),
   gender: z.nativeEnum(Gender).optional(),
   address: z.string().max(300).optional(),
-  joiningDate: z.coerce.date().default(() => new Date()),
+  joiningDate: istDate.default(() => new Date()),
   employmentType: z.nativeEnum(EmploymentType).default(EmploymentType.FULL_TIME),
   status: z.nativeEnum(EmployeeStatus).default(EmployeeStatus.ACTIVE),
   department: z.string().max(80).optional(),

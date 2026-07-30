@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, ist } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { printReceipt, printSessionPaymentModeReport } from '@/lib/print';
 import { PAYMENT_MODE_LABEL } from '@/lib/receipt-print';
@@ -104,7 +104,7 @@ export function TxnsDrawer({ open, onOpenChange, sessionId, cashierName }: {
                         {t.orderType === 'PARCEL' && <Badge variant="warning">Parcel</Badge>}
                       </div>
                       <p className="truncate text-caption text-muted-foreground">
-                        {format(new Date(t.soldAt), 'hh:mm a')} · {t.items.length} item{t.items.length === 1 ? '' : 's'}
+                        {format(ist(t.soldAt), 'hh:mm a')} · {t.items.length} item{t.items.length === 1 ? '' : 's'}
                         {t.voidReason ? ` · ${t.voidReason}` : ''}
                       </p>
                     </div>

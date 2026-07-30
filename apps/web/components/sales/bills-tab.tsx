@@ -10,7 +10,7 @@ import { Badge, statusBadgeVariant } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, ist } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
 import { useBills, useBill, useOpenBillPdf, usePrintBillPdf, type BillStatus } from '@/hooks/useBilling';
 import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
@@ -70,8 +70,8 @@ export function BillsTab() {
                   <TR key={b.id}>
                     <TD className="font-medium">{b.billNumber}</TD>
                     {isAdmin && <TD>{b.outlet.name}</TD>}
-                    <TD>{format(new Date(b.billDate), 'dd MMM yyyy')}</TD>
-                    <TD className={cn(b.isOverdue && 'font-semibold text-danger')}>{format(new Date(b.dueDate), 'dd MMM yyyy')}</TD>
+                    <TD>{format(ist(b.billDate), 'dd MMM yyyy')}</TD>
+                    <TD className={cn(b.isOverdue && 'font-semibold text-danger')}>{format(ist(b.dueDate), 'dd MMM yyyy')}</TD>
                     <TD className="text-right">{formatINR(b.grandTotal)}</TD>
                     <TD className={cn('text-right', Number(b.balanceDue) > 0 && 'font-medium text-warning')}>{formatINR(b.balanceDue)}</TD>
                     <TD>
@@ -146,8 +146,8 @@ function BillDetailDialog({ id, onClose }: { id: string | null; onClose: () => v
                 {bill.outlet.address && <p className="text-muted-foreground">{bill.outlet.address}</p>}
               </div>
               <div className="text-right text-caption text-muted-foreground">
-                <p>Date: {format(new Date(bill.billDate), 'dd MMM yyyy')}</p>
-                <p>Due: {format(new Date(bill.dueDate), 'dd MMM yyyy')}</p>
+                <p>Date: {format(ist(bill.billDate), 'dd MMM yyyy')}</p>
+                <p>Due: {format(ist(bill.dueDate), 'dd MMM yyyy')}</p>
               </div>
             </div>
             <Table>

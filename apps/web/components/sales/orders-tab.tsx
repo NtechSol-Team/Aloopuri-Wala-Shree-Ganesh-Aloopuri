@@ -16,7 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiErrorMessage } from '@/lib/api';
-import { cn, formatINR, formatQty } from '@/lib/utils';
+import { cn, formatINR, formatQty, ist } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
 import { useProducts } from '@/hooks/useProducts';
 import { stepFor } from '@/hooks/useUnits';
@@ -200,7 +200,7 @@ export function OrdersTab() {
                         ))}
                       </div>
                     </TD>
-                    <TD>{format(new Date(o.orderDate), 'dd MMM')}</TD>
+                    <TD>{format(ist(o.orderDate), 'dd MMM')}</TD>
                     <TD className="text-right font-semibold">{formatINR(o.totals.grandTotal)}</TD>
                     <TD className="text-right">
                       {o.status !== 'DELIVERED' ? (

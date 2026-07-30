@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { PaymentMethod } from '@prisma/client';
 import { paginationQuerySchema } from '../../shared/utils/pagination';
+import { istDate } from '../../shared/utils/date';
 
 export const logBatchSchema = z.object({
   productId: z.string().uuid(),
   quantityProduced: z.coerce.number().positive('Quantity must be greater than 0'),
-  productionDate: z.coerce.date().default(() => new Date()),
+  productionDate: istDate.default(() => new Date()),
   batchNumber: z.string().max(40).optional(),
   // Non-material costs allocated to this run (electricity, gas, labour…). Costing-only.
   overheads: z
@@ -23,8 +24,8 @@ export const logBatchSchema = z.object({
 
 export const listBatchesQuerySchema = paginationQuerySchema.extend({
   productId: z.string().uuid().optional(),
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  from: istDate.optional(),
+  to: istDate.optional(),
 });
 
 export const logIntakeSchema = z.object({
@@ -33,7 +34,7 @@ export const logIntakeSchema = z.object({
   costPerUnit: z.coerce.number().nonnegative(),
   supplierName: z.string().max(120).optional(),
   invoiceNumber: z.string().max(80).optional(),
-  intakeDate: z.coerce.date().default(() => new Date()),
+  intakeDate: istDate.default(() => new Date()),
   notes: z.string().max(500).optional(),
 });
 
@@ -84,7 +85,7 @@ export const recordPurchaseSchema = z.object({
   // the auto-saved supplier contact so it's remembered next time.
   supplierStateName: z.string().max(60).optional(),
   invoiceNumber: z.string().max(80).optional(),
-  intakeDate: z.coerce.date().default(() => new Date()),
+  intakeDate: istDate.default(() => new Date()),
   // Some suppliers (unregistered / composition scheme) don't charge GST at all.
   isGstBill: z.boolean().default(true),
   paymentMethod: z.nativeEnum(PaymentMethod).default(PaymentMethod.CASH),

@@ -3,6 +3,7 @@ import path from 'node:path';
 import PDFDocument from 'pdfkit';
 import type { Prisma } from '@prisma/client';
 import { env } from '../../config/env';
+import { istDayString } from '../../shared/utils/date';
 
 export type BillWithRelations = Prisma.BillGetPayload<{
   include: { items: true; outlet: true };
@@ -58,8 +59,8 @@ export function renderBillPdf(bill: BillWithRelations, dest: NodeJS.WritableStre
     doc
       .fontSize(8.5)
       .fillColor(COLOR.muted)
-      .text(`Date: ${bill.billDate.toISOString().slice(0, 10)}`, PAGE.left, doc.y + 3, { align: 'right', width: PAGE.width })
-      .text(`Due:  ${bill.dueDate.toISOString().slice(0, 10)}`, PAGE.left, doc.y + 1, { align: 'right', width: PAGE.width });
+      .text(`Date: ${istDayString(bill.billDate)}`, PAGE.left, doc.y + 3, { align: 'right', width: PAGE.width })
+      .text(`Due:  ${istDayString(bill.dueDate)}`, PAGE.left, doc.y + 1, { align: 'right', width: PAGE.width });
     if (!bill.isGstBill) {
       doc.fontSize(8).fillColor(COLOR.faint).text('No GST charged on this invoice', PAGE.left, doc.y + 3, { align: 'right', width: PAGE.width });
     }

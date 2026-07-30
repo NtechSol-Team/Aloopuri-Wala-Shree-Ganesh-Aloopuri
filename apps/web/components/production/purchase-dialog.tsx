@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useRawMaterials, useProducts } from '@/hooks/useProducts';
 import { useExpenseCategories, useCreateExpenseCategory } from '@/hooks/useExpenses';
@@ -22,7 +22,7 @@ const METHODS = ['CASH', 'UPI', 'BANK_TRANSFER', 'CARD'];
 const HOME_STATE = '24'; // Gujarat
 const GST_RATES = [0, 5, 12, 18, 28];
 const CREDIT_DAY_OPTIONS = [7, 15, 30, 45, 60];
-const today = () => format(new Date(), 'yyyy-MM-dd');
+const today = () => todayIso();
 
 type Line =
   | { kind: 'RAW_MATERIAL'; rawMaterialId: string; quantity: number; costPerUnit: number; taxRate: number; hsnCode: string; isAsset: boolean }

@@ -8,6 +8,7 @@ import { authGuard } from '../../shared/guards/authGuard';
 import { requireSuperAdmin } from '../../shared/guards/roleGuard';
 import { ok } from '../../shared/utils/apiResponse';
 import { accountingService } from './accounting.service';
+import { istDate } from '../../shared/utils/date';
 
 const router = Router();
 router.use(authGuard, requireSuperAdmin); // the owner's finance hub
@@ -16,7 +17,7 @@ router.get('/position', asyncHandler(async (_req: Request, res: Response) => ok(
 
 router.get(
   '/daybook',
-  validate({ query: z.object({ from: z.coerce.date().optional(), to: z.coerce.date().optional() }) }),
+  validate({ query: z.object({ from: istDate.optional(), to: istDate.optional() }) }),
   asyncHandler(async (req: Request, res: Response) => {
     const to = (req.query.to as unknown as Date) ?? new Date();
     const from = (req.query.from as unknown as Date) ?? subDays(to, 30);

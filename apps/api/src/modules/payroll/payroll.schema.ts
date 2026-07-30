@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { PayrollStatus } from '@prisma/client';
+import { istDate } from '../../shared/utils/date';
 
 const money = z.coerce.number().nonnegative();
 const days = z.coerce.number().min(0).max(366);
@@ -52,7 +53,7 @@ export const updatePayrollSchema = z.object({
 });
 
 export const markPaidSchema = z.object({
-  paymentDate: z.coerce.date().default(() => new Date()),
+  paymentDate: istDate.default(() => new Date()),
 });
 
 export const listPayrollQuerySchema = z.object({

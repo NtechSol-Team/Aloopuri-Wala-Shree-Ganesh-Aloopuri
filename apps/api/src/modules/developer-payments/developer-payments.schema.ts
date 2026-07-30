@@ -1,14 +1,15 @@
 import { z } from 'zod';
 import { DeveloperPaymentScope, PaymentMethod } from '@prisma/client';
+import { istDate } from '../../shared/utils/date';
 
 const base = z.object({
   scope: z.nativeEnum(DeveloperPaymentScope),
   outletId: z.string().uuid().optional(),
   amount: z.coerce.number().positive('Amount must be greater than 0'),
   method: z.nativeEnum(PaymentMethod).optional(),
-  paidOn: z.coerce.date(),
+  paidOn: istDate,
   // Optional on input — the service defaults it to paidOn + 1 year when omitted.
-  renewalDate: z.coerce.date().optional(),
+  renewalDate: istDate.optional(),
   notes: z.string().max(500).optional(),
 });
 
@@ -20,8 +21,8 @@ export const createDeveloperPaymentSchema = base.refine(
 export const updateDeveloperPaymentSchema = z.object({
   amount: z.coerce.number().positive().optional(),
   method: z.nativeEnum(PaymentMethod).optional(),
-  paidOn: z.coerce.date().optional(),
-  renewalDate: z.coerce.date().optional(),
+  paidOn: istDate.optional(),
+  renewalDate: istDate.optional(),
   notes: z.string().max(500).optional(),
 });
 

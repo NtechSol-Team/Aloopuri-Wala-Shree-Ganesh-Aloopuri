@@ -1,6 +1,7 @@
 import PgBoss from 'pg-boss';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
+import { IST_TZ } from '../config/timezone';
 
 export const JobName = {
   REFRESH_ANALYTICS: 'refresh-analytics-views',
@@ -56,11 +57,12 @@ export async function startJobs(): Promise<void> {
   await boss.work(JobName.SERVER_METRICS_SAMPLE, serverMetricsSampleHandler);
 
   // Schedule recurring analytics refresh + daily supplier-bill due-date sweep.
+  // The two interval schedules (*/15, */5) are timezone-agnostic; the ones with a
+  // wall-clock hour are pinned to IST so "8am" and "midnight" mean the business's,
+  // not the server's — a UTC droplet would otherwise fire them at 13:30 and 05:30.
   await boss.schedule(JobName.REFRESH_ANALYTICS, env.MATERIALIZED_VIEW_REFRESH_CRON, {});
-  await boss.schedule(JobName.SUPPLIER_BILL_REMINDERS, env.SUPPLIER_BILL_REMINDER_CRON, {});
-  // Pinned to IST regardless of the server's own system timezone — this is the
-  // one schedule where "midnight" must mean the business's midnight, not UTC's.
-  await boss.schedule(JobName.POS_SESSION_ROLLOVER, env.POS_SESSION_ROLLOVER_CRON, {}, { tz: 'Asia/Kolkata' });
+  await boss.schedule(JobName.SUPPLIER_BILL_REMINDERS, env.SUPPLIER_BILL_REMINDER_CRON, {}, { tz: IST_TZ });
+  await boss.schedule(JobName.POS_SESSION_ROLLOVER, env.POS_SESSION_ROLLOVER_CRON, {}, { tz: IST_TZ });
   // Whole-server telemetry for the developer console (one tiny row per run).
   await boss.schedule(JobName.SERVER_METRICS_SAMPLE, env.SERVER_METRICS_SAMPLE_CRON, {});
 

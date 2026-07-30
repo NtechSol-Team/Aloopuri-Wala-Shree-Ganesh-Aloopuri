@@ -12,7 +12,7 @@ import { Badge, statusBadgeVariant } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, ist } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { usePurchases, usePurchaseDetail, useDeletePurchase, type PurchaseBillDetail } from '@/hooks/useProduction';
 import { PurchaseDialog } from '@/components/production/purchase-dialog';
@@ -27,11 +27,11 @@ const KIND_META: Record<string, { label: string; icon: typeof Boxes }> = {
 /** Due-date pill: red once overdue, amber inside the 5-day reminder window, muted otherwise. */
 function DueCell({ dueDate }: { dueDate: string | null }) {
   if (!dueDate) return <span className="text-muted-foreground">—</span>;
-  const days = differenceInCalendarDays(new Date(dueDate), new Date());
+  const days = differenceInCalendarDays(ist(dueDate), ist());
   const cls = days < 0 ? 'text-danger font-semibold' : days <= 5 ? 'text-warning font-semibold' : 'text-muted-foreground';
   return (
     <span className={cls}>
-      {format(new Date(dueDate), 'dd MMM yyyy')}
+      {format(ist(dueDate), 'dd MMM yyyy')}
       {days < 0 ? ` · ${Math.abs(days)}d overdue` : days <= 10 ? ` · ${days}d left` : ''}
     </span>
   );
@@ -88,7 +88,7 @@ export default function PurchasesPage() {
                   <TD className="font-medium text-primary">{b.billNumber}</TD>
                   <TD>{b.supplierName ?? '—'}</TD>
                   <TD className="text-muted-foreground">{b.supplierGstin ?? '—'}</TD>
-                  <TD>{format(new Date(b.billDate), 'dd MMM yyyy')}</TD>
+                  <TD>{format(ist(b.billDate), 'dd MMM yyyy')}</TD>
                   <TD><Badge variant={b.isGstBill ? 'info' : 'neutral'}>{b.isGstBill ? 'GST' : 'No GST'}</Badge></TD>
                   <TD className="text-right">{formatINR(b.taxableAmount)}</TD>
                   <TD className="text-right text-muted-foreground">{formatINR(b.taxAmount)}</TD>
@@ -214,7 +214,7 @@ function PurchaseDetailDialog({ id, onClose, onPay, onEdit, onDelete }: {
                 <p className="mb-1 text-caption font-semibold uppercase text-muted-foreground">Payments</p>
                 {bill.payments.map((p) => (
                   <div key={p.id} className="flex justify-between text-caption text-muted-foreground">
-                    <span>{p.paymentNumber} · {p.method.replace('_', ' ')} · {format(new Date(p.paymentDate), 'dd MMM yyyy')}</span>
+                    <span>{p.paymentNumber} · {p.method.replace('_', ' ')} · {format(ist(p.paymentDate), 'dd MMM yyyy')}</span>
                     <span className="text-success">{formatINR(p.amount)}</span>
                   </div>
                 ))}

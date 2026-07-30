@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { StockTransferStatus, TransferDestination } from '@prisma/client';
 import { paginationQuerySchema } from '../../shared/utils/pagination';
+import { istDate } from '../../shared/utils/date';
 
 export const createTransferSchema = z
   .object({
     destinationType: z.nativeEnum(TransferDestination).default(TransferDestination.MAIN_BRANCH),
     destinationOutletId: z.string().uuid().optional(),
-    transferDate: z.coerce.date().default(() => new Date()),
+    transferDate: istDate.default(() => new Date()),
     vehicleNumber: z.string().max(40).optional(),
     notes: z.string().max(500).optional(),
     items: z
@@ -31,8 +32,8 @@ export const updateTransferStatusSchema = z.object({
 export const listTransfersQuerySchema = paginationQuerySchema.extend({
   status: z.nativeEnum(StockTransferStatus).optional(),
   productId: z.string().uuid().optional(),
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  from: istDate.optional(),
+  to: istDate.optional(),
 });
 
 export type CreateTransferInput = z.infer<typeof createTransferSchema>;

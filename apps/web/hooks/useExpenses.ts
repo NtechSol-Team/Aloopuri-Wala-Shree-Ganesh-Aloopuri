@@ -22,9 +22,19 @@ export interface Expense {
 
 export interface ExpenseSummary {
   total: number;
-  byCategory: Array<{ category: string; total: number }>;
+  count: number;
+  byCategory: Array<{ categoryId: string; category: string; total: number }>;
   byLocation: Array<{ location: string; total: number }>;
   monthly: Array<{ month: string; total: number }>;
+}
+
+/** Everything the Expenses screen filters by, in one object. */
+export interface ExpenseFilters {
+  location?: ExpenseLocation;
+  categoryId?: string;
+  /** Inclusive ISO dates (yyyy-MM-dd). */
+  from?: string;
+  to?: string;
 }
 
 export function useExpenseCategories() {
@@ -53,16 +63,19 @@ export function useUpdateExpenseCategory() {
   });
 }
 
-export function useExpenses(params: { location?: ExpenseLocation; categoryId?: string } = {}) {
+export function useExpenses(params: ExpenseFilters = {}) {
   return useQuery({
     queryKey: ['expenses', params],
+    // 100 is the server's MAX_LIMIT; the headline figures come from /summary, which
+    // aggregates over the whole window, so a truncated table never skews them.
     queryFn: async () => (await api.get<ApiSuccess<Expense[]>>('/expenses', { params: { limit: 100, ...params } })).data.data,
   });
 }
 
-export function useExpenseSummary(params: { location?: ExpenseLocation } = {}) {
+export function useExpenseSummary(params: ExpenseFilters = {}, enabled = true) {
   return useQuery({
     queryKey: ['expense-summary', params],
+    enabled,
     queryFn: async () => (await api.get<ApiSuccess<ExpenseSummary>>('/expenses/summary', { params })).data.data,
   });
 }

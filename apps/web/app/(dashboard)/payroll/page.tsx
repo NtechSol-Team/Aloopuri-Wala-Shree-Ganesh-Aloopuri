@@ -17,7 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, ist, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useEmployees, SALARY_TYPE_LABEL } from '@/hooks/useEmployees';
 import {
@@ -36,8 +36,8 @@ const TABS: Array<[Tab, string, typeof Users]> = [
   ['reports', 'Reports', FileText],
 ];
 
-const now = new Date();
-const today = () => new Date().toISOString().slice(0, 10);
+const now = ist();
+const today = () => todayIso();
 
 export default function PayrollPage() {
   const [tab, setTab] = useState<Tab>('dashboard');
@@ -441,7 +441,7 @@ function SalaryTab({ period }: { period: Period }) {
                     <TD className="text-right font-semibold">{formatINR(r.netSalary)}</TD>
                     <TD>
                       <Badge variant={isPaid ? 'success' : 'warning'}>{isPaid ? 'Paid' : 'Pending'}</Badge>
-                      {r.paymentDate && <span className="ml-1.5 text-caption text-muted-foreground">{format(new Date(r.paymentDate), 'dd MMM')}</span>}
+                      {r.paymentDate && <span className="ml-1.5 text-caption text-muted-foreground">{format(ist(r.paymentDate), 'dd MMM')}</span>}
                     </TD>
                     <TD>
                       <div className="flex justify-end gap-1">
@@ -616,7 +616,7 @@ function EmployeeMasterReport() {
               <TD>{r.department ?? '—'}</TD>
               <TD className="text-caption">{r.employmentType.replace('_', ' ')}</TD>
               <TD><Badge variant={r.status === 'ACTIVE' ? 'success' : 'neutral'}>{r.status.replace('_', ' ')}</Badge></TD>
-              <TD className="whitespace-nowrap">{format(new Date(r.joiningDate), 'dd MMM yyyy')}</TD>
+              <TD className="whitespace-nowrap">{format(ist(r.joiningDate), 'dd MMM yyyy')}</TD>
               <TD className="text-caption">{SALARY_TYPE_LABEL[r.salaryType]}</TD>
               <TD className="text-right font-semibold">{formatINR(salaryOf(r))}</TD>
             </TR>

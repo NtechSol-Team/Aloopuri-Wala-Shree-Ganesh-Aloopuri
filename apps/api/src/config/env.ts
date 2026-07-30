@@ -1,3 +1,5 @@
+// Must be first: pins the process to IST before any Date is constructed.
+import './timezone';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { z } from 'zod';

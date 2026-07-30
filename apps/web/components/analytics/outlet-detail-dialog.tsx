@@ -6,7 +6,7 @@ import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveCont
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, ist } from '@/lib/utils';
 import { useOutletDetail } from '@/hooks/useAnalytics';
 
 export function OutletDetailDialog({ outletId, onClose }: { outletId: string | null; onClose: () => void }) {
@@ -77,7 +77,7 @@ export function OutletDetailDialog({ outletId, onClose }: { outletId: string | n
             </div>
 
             {data.summary.lastOrderDate && (
-              <p className="text-caption text-muted-foreground">Last order: {format(new Date(data.summary.lastOrderDate), 'dd MMM yyyy')}</p>
+              <p className="text-caption text-muted-foreground">Last order: {format(ist(data.summary.lastOrderDate), 'dd MMM yyyy')}</p>
             )}
           </div>
         )}

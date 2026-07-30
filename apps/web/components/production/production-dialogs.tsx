@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { apiErrorMessage } from '@/lib/api';
-import { formatINR } from '@/lib/utils';
+import { formatINR, ist } from '@/lib/utils';
 import { useProducts, useRawMaterials, useBom, type BomItem } from '@/hooks/useProducts';
 import { useLogBatch, useLogIntake } from '@/hooks/useProduction';
 import { stepFor } from '@/hooks/useUnits';
@@ -48,7 +48,7 @@ export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const [productId, setProductId] = useState('');
   const [quantity, setQuantity] = useState(100);
   // Local datetime-local value ("yyyy-MM-ddTHH:mm"); defaults to now, editable.
-  const [producedAt, setProducedAt] = useState(() => format(new Date(), "yyyy-MM-dd'T'HH:mm"));
+  const [producedAt, setProducedAt] = useState(() => format(ist(), "yyyy-MM-dd'T'HH:mm"));
   const [notes, setNotes] = useState('');
   const [overheads, setOverheads] = useState<Overhead[]>([]);
   const [rows, setRows] = useState<IngredientRow[]>([]);
@@ -62,7 +62,7 @@ export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   }, [open, products, productId]);
 
   // Reset the production timestamp to "now" each time the dialog opens.
-  useEffect(() => { if (open) setProducedAt(format(new Date(), "yyyy-MM-dd'T'HH:mm")); }, [open]);
+  useEffect(() => { if (open) setProducedAt(format(ist(), "yyyy-MM-dd'T'HH:mm")); }, [open]);
 
   // Recipe (re)loaded — e.g. product changed. Fresh rows, clear manual-edit tracking.
   useEffect(() => {

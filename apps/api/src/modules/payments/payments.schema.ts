@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { paginationQuerySchema } from '../../shared/utils/pagination';
+import { istDate } from '../../shared/utils/date';
 
 export const cashPaymentSchema = z.object({
   billId: z.string().uuid(),
   amount: z.coerce.number().positive('Amount must be greater than 0'),
-  paymentDate: z.coerce.date().default(() => new Date()),
+  paymentDate: istDate.default(() => new Date()),
   notes: z.string().max(500).optional(),
   receiptPhotoUrl: z.string().max(300).optional(),
 });

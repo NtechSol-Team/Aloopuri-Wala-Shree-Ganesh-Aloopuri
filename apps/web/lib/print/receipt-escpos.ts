@@ -10,6 +10,7 @@ import {
 import { EscPosEncoder, wrapText, type MonoRaster } from './escpos-encoder';
 import { loadImageAsRaster, textToRaster } from './escpos-image';
 import { colsFor, dotsFor, type PrinterSettings } from './printer-settings';
+import { ist } from '@/lib/utils';
 
 /** True when every character is printable ASCII the thermal font can render. */
 const isAscii = (s: string) => !/[^\x00-\x7f]/.test(s);
@@ -237,7 +238,7 @@ export async function receiptBytes(
   }
   e.align('left').divider();
   e.leftRight('Receipt', txn.receiptNumber);
-  e.leftRight('Date', format(new Date(txn.soldAt), 'dd MMM yyyy, hh:mm a'));
+  e.leftRight('Date', format(ist(txn.soldAt), 'dd MMM yyyy, hh:mm a'));
   if (opts.cashierName) labelLine(e, s, 'Cashier', opts.cashierName);
   if (txn.customerName) labelLine(e, s, 'Customer', txn.customerName);
   e.divider();
@@ -339,7 +340,7 @@ export function pickListBytes(
   e.leftRight('Order', order.orderNumber);
   e.leftRight('Outlet', order.outletName);
   if (order.fulfillmentSource) e.leftRight('Fulfil from', order.fulfillmentSource === 'GODOWN' ? 'Godown' : 'Main Branch');
-  e.leftRight(order.fulfillmentSource ? 'Confirmed' : 'Received', format(order.orderDate ? new Date(order.orderDate) : new Date(), 'dd MMM yyyy, hh:mm a'));
+  e.leftRight(order.fulfillmentSource ? 'Confirmed' : 'Received', format(ist(order.orderDate), 'dd MMM yyyy, hh:mm a'));
   e.leftRight('Bill type', order.isGstBill ? 'With GST' : 'No GST');
   e.divider();
 
@@ -388,7 +389,7 @@ export function batchLabelBytes(b: BatchLabelData, s: PrinterSettings): Uint8Arr
 
   e.align('left').divider();
   e.leftRight('Batch', b.batchNumber);
-  e.leftRight('Date & time', format(new Date(b.productionDate), 'dd MMM yyyy, hh:mm a'));
+  e.leftRight('Date & time', format(ist(b.productionDate), 'dd MMM yyyy, hh:mm a'));
   e.divider();
 
   if (b.ingredients.length) {
@@ -421,9 +422,9 @@ export function sessionPaymentModeReportBytes(
 
   e.align('left').divider();
   e.leftRight('Session', meta.sessionNumber);
-  e.leftRight('Opened', format(new Date(meta.openedAt), 'dd MMM yyyy, hh:mm a'));
+  e.leftRight('Opened', format(ist(meta.openedAt), 'dd MMM yyyy, hh:mm a'));
   if (meta.cashierName) e.leftRight('Cashier', meta.cashierName);
-  e.leftRight('Printed', format(new Date(), 'hh:mm a'));
+  e.leftRight('Printed', format(ist(), 'hh:mm a'));
   e.divider();
 
   if (!rows.length) {
@@ -452,7 +453,7 @@ export async function testSlipBytes(s: PrinterSettings): Promise<Uint8Array> {
   await header(e, { ...s, printLogo: true }, DEFAULT_STORE, 'Printer test page');
   e.align('left').divider();
   e.leftRight('Paper width', `${s.paperWidthMm}mm (${colsFor(s)} cols)`);
-  e.leftRight('Time', format(new Date(), 'dd MMM yyyy, hh:mm:ss a'));
+  e.leftRight('Time', format(ist(), 'dd MMM yyyy, hh:mm:ss a'));
   e.divider();
   e.line('Normal text 0123456789');
   e.bold(true).line('Bold text').bold(false);

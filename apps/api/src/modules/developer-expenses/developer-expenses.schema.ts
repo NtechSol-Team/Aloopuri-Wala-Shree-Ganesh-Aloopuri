@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DeveloperExpenseCategory } from '@prisma/client';
+import { istDate } from '../../shared/utils/date';
 
 export const createDeveloperExpenseSchema = z
   .object({
@@ -7,8 +8,8 @@ export const createDeveloperExpenseSchema = z
     label: z.string().max(80).optional(),
     amount: z.coerce.number().positive('Amount must be greater than 0'),
     isRecurring: z.boolean().default(false),
-    incurredOn: z.coerce.date(),
-    endedOn: z.coerce.date().optional(),
+    incurredOn: istDate,
+    endedOn: istDate.optional(),
     notes: z.string().max(500).optional(),
   })
   .refine((v) => !v.endedOn || v.endedOn >= v.incurredOn, {
@@ -25,9 +26,9 @@ export const updateDeveloperExpenseSchema = z.object({
   label: z.string().max(80).nullable().optional(),
   amount: z.coerce.number().positive().optional(),
   isRecurring: z.boolean().optional(),
-  incurredOn: z.coerce.date().optional(),
+  incurredOn: istDate.optional(),
   // Nullable so an ongoing subscription can be re-opened after being ended.
-  endedOn: z.coerce.date().nullable().optional(),
+  endedOn: istDate.nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
 });
 

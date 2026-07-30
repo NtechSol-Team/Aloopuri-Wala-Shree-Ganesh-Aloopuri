@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useDashboard } from '@/hooks/useDashboard';
 import { useAuthStore } from '@/store/auth.store';
 import { ORDER_STATUS_BADGE, ORDER_STATUS_LABEL, type OrderStatus } from '@/hooks/useOrders';
-import { formatINR } from '@/lib/utils';
+import { formatINR, ist } from '@/lib/utils';
 
 export default function DashboardPage() {
   const { data, isLoading } = useDashboard();
@@ -67,7 +67,7 @@ export default function DashboardPage() {
                 <div key={o.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
                   <div>
                     <p className="text-body font-medium">{o.orderNumber}</p>
-                    <p className="text-caption text-muted-foreground">{o.outletName} · {format(new Date(o.orderDate), 'dd MMM')}</p>
+                    <p className="text-caption text-muted-foreground">{o.outletName} · {format(ist(o.orderDate), 'dd MMM')}</p>
                   </div>
                   <Badge variant={ORDER_STATUS_BADGE[o.status as OrderStatus] ?? 'neutral'}>
                     {ORDER_STATUS_LABEL[o.status as OrderStatus] ?? o.status}
@@ -94,7 +94,7 @@ export default function DashboardPage() {
                     <p className="text-body font-medium">{formatINR(p.amount)}</p>
                     <p className="text-caption text-muted-foreground">{p.outletName} · {p.method}</p>
                   </div>
-                  <span className="text-caption text-muted-foreground">{format(new Date(p.paymentDate), 'dd MMM')}</span>
+                  <span className="text-caption text-muted-foreground">{format(ist(p.paymentDate), 'dd MMM')}</span>
                 </div>
               ))
             ) : (

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { KotStatus, PosOrderType, PosPaymentMode } from '@prisma/client';
+import { istDate } from '../../shared/utils/date';
 
 export const openSessionSchema = z.object({
   openingCash: z.coerce.number().nonnegative().default(0),
@@ -20,7 +21,7 @@ export const createTransactionSchema = z.object({
   paymentMode: z.nativeEnum(PosPaymentMode),
   cashReceived: z.coerce.number().nonnegative().optional(),
   split: z.object({ cash: z.coerce.number().nonnegative(), card: z.coerce.number().nonnegative(), upi: z.coerce.number().nonnegative() }).optional(),
-  soldAt: z.coerce.date().optional(), // for offline-synced sales
+  soldAt: istDate.optional(), // for offline-synced sales
   items: z
     .array(
       z.object({

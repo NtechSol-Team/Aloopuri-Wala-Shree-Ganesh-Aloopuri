@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { apiErrorMessage } from '@/lib/api';
+import { ist } from '@/lib/utils';
 import {
   useOutletDocuments, useUploadOutletDocument, useDeleteOutletDocument, openOutletDocument,
   DOCUMENT_CATEGORIES, DOCUMENT_CATEGORY_LABEL,
@@ -130,7 +131,7 @@ export function OutletDocumentsDialog({ outlet, onClose }: { outlet: Outlet | nu
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-body font-medium">{d.title}</p>
                   <p className="truncate text-caption text-muted-foreground">
-                    {d.fileName} · {prettySize(d.sizeBytes)} · added {format(new Date(d.createdAt), 'dd MMM yyyy')}
+                    {d.fileName} · {prettySize(d.sizeBytes)} · added {format(ist(d.createdAt), 'dd MMM yyyy')}
                   </p>
                 </div>
                 <Badge variant="info">{DOCUMENT_CATEGORY_LABEL[d.category]}</Badge>

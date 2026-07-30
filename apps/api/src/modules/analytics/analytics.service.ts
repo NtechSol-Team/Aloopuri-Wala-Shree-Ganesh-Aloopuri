@@ -4,6 +4,7 @@ import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import type { AuthUser } from '../../shared/types/api';
+import { istDayString } from '../../shared/utils/date';
 
 export interface DashboardKpis {
   todaySales: number;
@@ -354,23 +355,22 @@ export async function getPosAnalytics(
   const outletFilter = '(outlet_id IS NOT DISTINCT FROM $1::uuid)';
   const outletFilterT = '(t.outlet_id IS NOT DISTINCT FROM $1::uuid)';
 
-  // UTC calendar-day arithmetic throughout this range logic — matching
-  // Postgres's own current_date/now()/date_trunc, which run in UTC on both
-  // the managed prod DB and local dev's docker Postgres. Mixing that with
-  // Node's *local* timezone (via date-fns startOfDay/endOfDay, which follow
-  // the server process's zone) shifted `from`/`to` by a day whenever Node's
-  // zone wasn't UTC — reproduced locally (Node defaults to IST here) even
-  // though prod's Node process happens to run in UTC already.
+  // IST calendar-day arithmetic throughout this range logic. Both sides of the
+  // query now agree on IST — the Node process is pinned via config/timezone.ts and
+  // the Postgres session via the connection's `-c timezone=` option — so plain
+  // local-time construction is the *matching* choice here. (This block used to be
+  // forced to UTC to line up with a UTC database session; keeping that now would
+  // reintroduce the same one-day shift in the opposite direction.)
   const now = new Date();
-  const last30From = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 29));
-  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const last30From = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const parseDateOnly = (s: string) => {
     const [y, m, d] = s.split('-').map(Number);
-    return new Date(Date.UTC(y, m - 1, d));
+    return new Date(y, m - 1, d);
   };
   const endOfDateOnly = (s: string) => {
     const [y, m, d] = s.split('-').map(Number);
-    return new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+    return new Date(y, m - 1, d, 23, 59, 59, 999);
   };
 
   // A date filter is "on" the moment either side is given — every section
@@ -548,7 +548,7 @@ export async function getPosAnalytics(
     byCashier: byCashier.map((c) => ({ cashier: c.cashier, revenue: c.revenue, transactions: c.txns })),
     // Non-null only once a date filter is actually applied — every drill-down
     // section above then shares exactly this range (see hasFilter).
-    appliedRange: hasFilter ? { from: dailyFrom.toISOString().slice(0, 10), to: dailyTo.toISOString().slice(0, 10) } : null,
+    appliedRange: hasFilter ? { from: istDayString(dailyFrom), to: istDayString(dailyTo) } : null,
   };
 }
 

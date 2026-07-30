@@ -20,7 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { apiErrorMessage } from '@/lib/api';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, ist, todayIso } from '@/lib/utils';
 import { useDevStore } from '@/store/dev.store';
 import { useOutlets, useSaveOutlet, useVerifyDeveloperKey, type Outlet } from '@/hooks/useOutlets';
 import {
@@ -363,8 +363,8 @@ function CostsProfitTab() {
                       : <Badge variant="neutral">One-off</Badge>}
                   </TD>
                   <TD className="text-muted-foreground">
-                    {format(new Date(e.incurredOn), 'MMM yyyy')}
-                    {e.isRecurring && ` → ${e.endedOn ? format(new Date(e.endedOn), 'MMM yyyy') : 'ongoing'}`}
+                    {format(ist(e.incurredOn), 'MMM yyyy')}
+                    {e.isRecurring && ` → ${e.endedOn ? format(ist(e.endedOn), 'MMM yyyy') : 'ongoing'}`}
                   </TD>
                   <TD className="text-right font-semibold">
                     {formatINR(e.amount)}{e.isRecurring && <span className="text-caption font-normal text-muted-foreground">/mo</span>}
@@ -397,7 +397,7 @@ function CostsProfitTab() {
 }
 
 const CATEGORIES: ExpenseCategory[] = ['DROPLET', 'DATABASE', 'AI', 'DOMAIN', 'OTHER'];
-const monthInput = (iso?: string | null) => (iso ? format(new Date(iso), 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd'));
+const monthInput = (iso?: string | null) => (iso ? format(ist(iso), 'yyyy-MM-dd') : format(ist(), 'yyyy-MM-dd'));
 
 function ExpenseFormDialog({ open, expense, onOpenChange }: {
   open: boolean; expense: DeveloperExpense | null; onOpenChange: (v: boolean) => void;
@@ -541,9 +541,9 @@ function PaymentsTab() {
                   </span>
                 </TD>
                 <TD className="text-right text-slate-300">
-                  {c.lastPayment ? `${formatINR(c.lastPayment.amount)} · ${format(new Date(c.lastPayment.paidOn), 'dd MMM yyyy')}` : '—'}
+                  {c.lastPayment ? `${formatINR(c.lastPayment.amount)} · ${format(ist(c.lastPayment.paidOn), 'dd MMM yyyy')}` : '—'}
                 </TD>
-                <TD className="text-slate-300">{c.lastPayment ? format(new Date(c.lastPayment.renewalDate), 'dd MMM yyyy') : '—'}</TD>
+                <TD className="text-slate-300">{c.lastPayment ? format(ist(c.lastPayment.renewalDate), 'dd MMM yyyy') : '—'}</TD>
                 <TD><Badge variant={STATUS_META[c.status].variant}>{STATUS_META[c.status].label}</Badge></TD>
                 <TD className="text-right">
                   <div className="flex justify-end gap-1">
@@ -564,7 +564,7 @@ function PaymentsTab() {
 }
 
 const METHODS = ['CASH', 'CARD', 'UPI', 'NET_BANKING', 'RAZORPAY', 'BANK_TRANSFER'];
-const today = () => format(new Date(), 'yyyy-MM-dd');
+const today = () => todayIso();
 
 function RecordPaymentDialog({ client, onClose }: { client: DeveloperPaymentClient | null; onClose: () => void }) {
   const save = useSaveDeveloperPayment();
@@ -645,9 +645,9 @@ function PaymentHistoryDialog({ client, onClose }: { client: DeveloperPaymentCli
             <TBody>
               {client.history.map((h) => (
                 <TR key={h.id}>
-                  <TD>{format(new Date(h.paidOn), 'dd MMM yyyy')}</TD>
+                  <TD>{format(ist(h.paidOn), 'dd MMM yyyy')}</TD>
                   <TD className="text-right font-medium">{formatINR(h.amount)}</TD>
-                  <TD>{format(new Date(h.renewalDate), 'dd MMM yyyy')}</TD>
+                  <TD>{format(ist(h.renewalDate), 'dd MMM yyyy')}</TD>
                   <TD className="text-muted-foreground">{h.method?.replace('_', ' ') ?? '—'}</TD>
                   <TD>
                     <Button
@@ -730,7 +730,7 @@ function PresenceTab() {
                 <TR key={u.userId}>
                   <TD className="font-medium">{u.name}</TD>
                   <TD><Badge variant="info">{ROLE_LABEL[u.role]}</Badge></TD>
-                  <TD className="text-muted-foreground">{format(new Date(u.onlineSince), 'hh:mm a')}</TD>
+                  <TD className="text-muted-foreground">{format(ist(u.onlineSince), 'hh:mm a')}</TD>
                   <TD className="text-right font-semibold tabular-nums text-success">
                     {formatDuration((now - new Date(u.onlineSince).getTime()) / 1000)}
                   </TD>
@@ -785,7 +785,7 @@ function ServerHealthTab() {
   const totalRxMb = (points ?? []).reduce((s, p) => s + toMb(p.netRxBytes), 0);
   const totalTxMb = (points ?? []).reduce((s, p) => s + toMb(p.netTxBytes), 0);
   const chartData = (points ?? []).map((p) => ({
-    at: format(new Date(p.at), hours > 48 ? 'dd MMM' : 'HH:mm'),
+    at: format(ist(p.at), hours > 48 ? 'dd MMM' : 'HH:mm'),
     load: Number(p.loadAvg1.toFixed(2)),
     mem: Number(p.memUsedPct.toFixed(1)),
     rx: Number(toMb(p.netRxBytes).toFixed(2)),

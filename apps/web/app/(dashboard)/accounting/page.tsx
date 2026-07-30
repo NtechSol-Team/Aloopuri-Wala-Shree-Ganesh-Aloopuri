@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, ist } from '@/lib/utils';
 import { usePosition, useDayBook, useProfitability, type ProductProfit } from '@/hooks/useAccounting';
 
 type Tab = 'position' | 'daybook' | 'profit';
@@ -129,7 +129,7 @@ function DayBookTab() {
                 const m = TYPE_META[e.type];
                 return (
                   <TR key={i}>
-                    <TD className="whitespace-nowrap text-muted-foreground">{format(new Date(e.date), 'dd MMM')}</TD>
+                    <TD className="whitespace-nowrap text-muted-foreground">{format(ist(e.date), 'dd MMM')}</TD>
                     <TD><Badge variant={m.variant}>{m.label}</Badge></TD>
                     <TD className="font-medium">{e.party ?? '—'}</TD>
                     <TD className="text-muted-foreground">{e.reference ?? '—'}</TD>

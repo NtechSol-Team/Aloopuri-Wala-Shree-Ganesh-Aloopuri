@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, ist, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import {
   useEmployees, useSaveEmployee, useDeleteEmployee,
@@ -30,7 +30,7 @@ const TABS: Array<[Tab, string]> = [
   ['shifts', 'Shifts'],
 ];
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayIso();
 
 export default function EmployeesPage() {
   const [tab, setTab] = useState<Tab>('employees');
@@ -133,7 +133,7 @@ function EmployeesTab() {
                     <span className="font-semibold">{formatINR(pay.amount)}</span>
                     <span className="ml-1 text-caption text-muted-foreground">{pay.label}</span>
                   </TD>
-                  <TD className="whitespace-nowrap">{format(new Date(e.joiningDate), 'dd MMM yyyy')}</TD>
+                  <TD className="whitespace-nowrap">{format(ist(e.joiningDate), 'dd MMM yyyy')}</TD>
                   <TD><Badge variant={EMPLOYEE_STATUS_BADGE[e.status]}>{EMPLOYEE_STATUS_LABEL[e.status]}</Badge></TD>
                   <TD>
                     <div className="flex justify-end gap-1">

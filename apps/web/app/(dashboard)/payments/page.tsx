@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, ist } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
 import { usePaymentSummary, usePayments } from '@/hooks/usePayments';
 import { usePayables, usePayablesSummary, type PayableBill } from '@/hooks/usePayables';
@@ -21,11 +21,11 @@ const AGING_LABEL: Record<string, string> = { current: 'Not due', '0-7': '0–7 
 /** Due-date pill: red once overdue, amber inside the 5-day reminder window, muted otherwise. */
 function DueCell({ dueDate }: { dueDate: string | null }) {
   if (!dueDate) return <span className="text-muted-foreground">—</span>;
-  const days = differenceInCalendarDays(new Date(dueDate), new Date());
+  const days = differenceInCalendarDays(ist(dueDate), ist());
   const cls = days < 0 ? 'text-danger font-semibold' : days <= 5 ? 'text-warning font-semibold' : 'text-muted-foreground';
   return (
     <span className={cls}>
-      {format(new Date(dueDate), 'dd MMM yyyy')}
+      {format(ist(dueDate), 'dd MMM yyyy')}
       {days < 0 ? ` · ${Math.abs(days)}d overdue` : days <= 10 ? ` · ${days}d left` : ''}
     </span>
   );
@@ -105,7 +105,7 @@ function ReceivablesView() {
                     <TD className="text-muted-foreground">{p.bill?.billNumber ?? '—'}</TD>
                     <TD><Badge variant={p.channel === 'DIGITAL' ? 'info' : 'neutral'}>{p.method}</Badge></TD>
                     <TD className="text-right font-medium text-success">{formatINR(p.amount)}</TD>
-                    <TD>{format(new Date(p.paymentDate), 'dd MMM yyyy')}</TD>
+                    <TD>{format(ist(p.paymentDate), 'dd MMM yyyy')}</TD>
                   </TR>
                 ))}
               </TBody>
@@ -170,7 +170,7 @@ function PayablesView() {
                   <TD className="font-medium">{b.billNumber}</TD>
                   <TD>{b.supplierName ?? '—'}</TD>
                   <TD className="text-muted-foreground">{b.invoiceNumber ?? '—'}</TD>
-                  <TD>{format(new Date(b.billDate), 'dd MMM yyyy')}</TD>
+                  <TD>{format(ist(b.billDate), 'dd MMM yyyy')}</TD>
                   <TD className="text-right">{formatINR(b.totalAmount)}</TD>
                   <TD className={cn('text-right', Number(b.balanceDue) > 0 && 'font-medium text-danger')}>{formatINR(b.balanceDue)}</TD>
                   <TD><DueCell dueDate={b.dueDate} /></TD>

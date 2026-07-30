@@ -3,9 +3,16 @@ import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
+import { IST_AT, istRange } from '../../shared/utils/date';
 import type { CreateExpenseInput, ExpenseSummaryQuery, ListExpensesQuery, UpdateExpenseInput } from './expenses.schema';
 
 const invalidate = () => cache.invalidateTags(CacheTag.EXPENSES, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
+
+/** IST calendar window for expenseDate — half-open, so the final day isn't clipped. */
+function dateWindow(from?: Date, to?: Date): Prisma.ExpenseWhereInput {
+  const expenseDate = istRange(from, to);
+  return expenseDate ? { expenseDate } : {};
+}
 
 export async function listCategories() {
   return prisma.expenseCategory.findMany({
@@ -38,9 +45,7 @@ export async function listExpenses(query: ListExpensesQuery) {
     isDeleted: false,
     ...(query.categoryId ? { categoryId: query.categoryId } : {}),
     ...(query.location ? { location: query.location } : {}),
-    ...(query.from || query.to
-      ? { expenseDate: { ...(query.from ? { gte: query.from } : {}), ...(query.to ? { lte: query.to } : {}) } }
-      : {}),
+    ...dateWindow(query.from, query.to),
   };
   const { skip, take } = toSkipTake(query);
   const [rows, total] = await Promise.all([
@@ -81,33 +86,42 @@ export async function getSummary(query: ExpenseSummaryQuery) {
   const where: Prisma.ExpenseWhereInput = {
     isDeleted: false,
     ...(query.location ? { location: query.location } : {}),
-    ...(query.from || query.to
-      ? { expenseDate: { ...(query.from ? { gte: query.from } : {}), ...(query.to ? { lte: query.to } : {}) } }
-      : {}),
+    ...(query.categoryId ? { categoryId: query.categoryId } : {}),
+    ...dateWindow(query.from, query.to),
   };
 
-  const [byCategoryRaw, byLocationRaw, totalAgg] = await Promise.all([
+  const [byCategoryRaw, byLocationRaw, totalAgg, countAgg] = await Promise.all([
     prisma.expense.groupBy({ by: ['categoryId'], _sum: { amount: true }, where }),
     prisma.expense.groupBy({ by: ['location'], _sum: { amount: true }, where }),
     prisma.expense.aggregate({ _sum: { amount: true }, where }),
+    prisma.expense.count({ where }),
   ]);
 
   const categoryIds = byCategoryRaw.map((c) => c.categoryId);
   const cats = await prisma.expenseCategory.findMany({ where: { id: { in: categoryIds } }, select: { id: true, name: true } });
   const nameOf = new Map(cats.map((c) => [c.id, c.name]));
 
-  // Monthly trend (last 6 months) for the same filter.
+  // Rolling 6-month trend. Deliberately ignores from/to — the point of a trend is
+  // the months either side of whatever window is selected — but it does honour the
+  // location and category filters so the line matches what's being looked at.
+  // Months are IST months: an expense at 02:00 IST on 1 Aug belongs to August, not
+  // to July, which is where a UTC date_trunc would file it.
   const monthly = await prisma.$queryRaw<Array<{ month: string; total: number }>>`
-    SELECT to_char(date_trunc('month', expense_date), 'YYYY-MM') AS month, COALESCE(SUM(amount), 0)::float AS total
+    SELECT to_char(date_trunc('month', expense_date ${Prisma.raw(IST_AT)}), 'YYYY-MM') AS month,
+           COALESCE(SUM(amount), 0)::float AS total
     FROM expenses
-    WHERE is_deleted = false ${query.location ? Prisma.sql`AND location = ${query.location}::"ExpenseLocation"` : Prisma.empty}
-      AND expense_date >= date_trunc('month', now()) - interval '5 months'
+    WHERE is_deleted = false
+      ${query.location ? Prisma.sql`AND location = ${query.location}::"ExpenseLocation"` : Prisma.empty}
+      ${query.categoryId ? Prisma.sql`AND category_id = ${query.categoryId}::uuid` : Prisma.empty}
+      AND expense_date ${Prisma.raw(IST_AT)} >= date_trunc('month', now() ${Prisma.raw(IST_AT)}) - interval '5 months'
     GROUP BY 1 ORDER BY 1`;
 
   return {
     total: Number(totalAgg._sum.amount ?? 0),
+    count: countAgg,
     byCategory: byCategoryRaw
-      .map((c) => ({ category: nameOf.get(c.categoryId) ?? 'Unknown', total: Number(c._sum.amount ?? 0) }))
+      // categoryId rides along so the UI can turn a bar into a filter.
+      .map((c) => ({ categoryId: c.categoryId, category: nameOf.get(c.categoryId) ?? 'Unknown', total: Number(c._sum.amount ?? 0) }))
       .sort((a, b) => b.total - a.total),
     byLocation: byLocationRaw.map((l) => ({ location: l.location, total: Number(l._sum.amount ?? 0) })),
     monthly,

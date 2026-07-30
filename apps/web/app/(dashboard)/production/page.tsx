@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR, formatQty } from '@/lib/utils';
+import { cn, formatINR, formatQty, ist } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useRawMaterials, type RawMaterial } from '@/hooks/useProducts';
 import { useBatches, useGodownStock, fetchBatchDetail } from '@/hooks/useProduction';
@@ -121,7 +121,7 @@ function ProductionTab() {
                   <TD className="text-right">{formatINR(b.totalMaterialCost)}</TD>
                   <TD className="text-right text-muted-foreground">{Number(b.overheadCost) > 0 ? formatINR(b.overheadCost) : '—'}</TD>
                   <TD className="text-right font-semibold text-primary">{formatINR(b.costPerUnit)}/{b.product.unit.name.toLowerCase()}</TD>
-                  <TD className="whitespace-nowrap">{format(new Date(b.productionDate), 'dd MMM yyyy, hh:mm a')}</TD>
+                  <TD className="whitespace-nowrap">{format(ist(b.productionDate), 'dd MMM yyyy, hh:mm a')}</TD>
                   <TD className="text-right"><BatchPrintButton batchId={b.id} /></TD>
                 </TR>
               ))}

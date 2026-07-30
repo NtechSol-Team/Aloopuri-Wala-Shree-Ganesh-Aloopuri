@@ -1,6 +1,7 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import { env, isDev } from './env';
 import { logger } from './logger';
+import { IST_TZ } from './timezone';
 
 /**
  * Prisma's default pool size is derived from CPU count, which on a small
@@ -15,6 +16,11 @@ function poolSizedDatabaseUrl(): string {
   const url = new URL(env.DATABASE_URL);
   if (!url.searchParams.has('connection_limit')) url.searchParams.set('connection_limit', String(env.DB_POOL_SIZE));
   if (!url.searchParams.has('pool_timeout')) url.searchParams.set('pool_timeout', String(env.DB_POOL_TIMEOUT_SECONDS));
+  // Pin the session to IST so date_trunc(), now() and current_date bucket by the
+  // Indian calendar day, matching the Node process (see config/timezone.ts). A
+  // managed Postgres defaults to UTC, which used to roll "today" over at 05:30
+  // IST and file the first few hours of each morning under the previous day.
+  if (!url.searchParams.has('options')) url.searchParams.set('options', `-c timezone=${IST_TZ}`);
   return url.toString();
 }
 

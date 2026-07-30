@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { ExpenseLocation, PaymentMethod } from '@prisma/client';
 import { paginationQuerySchema } from '../../shared/utils/pagination';
+import { istDate } from '../../shared/utils/date';
 
 export const createExpenseSchema = z.object({
   categoryId: z.string().uuid(),
   amount: z.coerce.number().positive('Amount must be greater than 0'),
-  expenseDate: z.coerce.date().default(() => new Date()),
+  expenseDate: istDate.default(() => new Date()),
   paymentMethod: z.nativeEnum(PaymentMethod),
   paidTo: z.string().max(120).optional(),
   location: z.nativeEnum(ExpenseLocation).default(ExpenseLocation.GENERAL),
@@ -17,14 +18,15 @@ export const updateExpenseSchema = createExpenseSchema.partial();
 export const listExpensesQuerySchema = paginationQuerySchema.extend({
   categoryId: z.string().uuid().optional(),
   location: z.nativeEnum(ExpenseLocation).optional(),
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  from: istDate.optional(),
+  to: istDate.optional(),
 });
 
 export const expenseSummaryQuerySchema = z.object({
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  from: istDate.optional(),
+  to: istDate.optional(),
   location: z.nativeEnum(ExpenseLocation).optional(),
+  categoryId: z.string().uuid().optional(),
 });
 
 export const createExpenseCategorySchema = z.object({ name: z.string().min(2).max(80) });

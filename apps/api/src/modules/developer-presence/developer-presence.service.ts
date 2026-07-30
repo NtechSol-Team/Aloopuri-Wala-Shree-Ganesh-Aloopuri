@@ -1,5 +1,6 @@
 import { UserRole } from '@prisma/client';
 import { prisma } from '../../config/prisma';
+import { startOfIstDay } from '../../shared/utils/date';
 
 /**
  * Live presence tracking for the developer console.
@@ -117,12 +118,11 @@ export function listOnline(): OnlineUser[] {
 /**
  * Total active time per user for today, combining completed intervals from the
  * DB with any span still open in memory (so the numbers don't jump the moment
- * someone logs off). UTC calendar day, matching the convention used across
- * analytics.service.ts.
+ * someone logs off). IST calendar day, matching the convention used across the API.
  */
 export async function getTodaySummary() {
   const now = new Date();
-  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const dayStart = startOfIstDay(now);
 
   const grouped = await prisma.userActivityInterval.groupBy({
     by: ['userId'],

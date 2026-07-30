@@ -7,7 +7,7 @@ type ExpenseRow = Prisma.DeveloperExpenseGetPayload<Record<string, never>>;
 
 /** Month index since year 0 — lets month spans be compared with plain arithmetic. */
 function monthIndex(d: Date): number {
-  return d.getUTCFullYear() * 12 + d.getUTCMonth();
+  return d.getFullYear() * 12 + d.getMonth();
 }
 
 /**
@@ -46,7 +46,7 @@ export async function listExpenses() {
   });
 
   const now = new Date();
-  const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  const yearStart = new Date(now.getFullYear(), 0, 1);
   // Everything ever: from the earliest record (or now, if there are none).
   const earliest = rows.reduce<Date>((min, e) => (e.incurredOn < min ? e.incurredOn : min), now);
 
