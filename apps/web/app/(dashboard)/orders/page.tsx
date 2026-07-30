@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
-  Plus, Trash2, ShoppingCart, X, Truck, PackageCheck, CreditCard, Landmark,
-  CheckCircle2, Ban, Clock, Info, Printer,
+  Plus, Trash2, ShoppingCart, X, PackageCheck, CreditCard,
+  CheckCircle2, Ban, Clock, Info, Printer, Wallet,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -21,88 +21,108 @@ import { useAuthStore } from '@/store/auth.store';
 import { useProducts } from '@/hooks/useProducts';
 import { stepFor } from '@/hooks/useUnits';
 import {
-  useCreateOrder, useOrders, useReceiveOrder,
+  useCreateOrder, useOrders, useFulfilOrder,
   ACTIVE_ORDER_STATUSES, ORDER_STATUS_BADGE, ORDER_STATUS_LABEL,
-  type Order, type OrderStatus,
+  amountDue, isPendingPayment, isCompleted,
+  type Order,
 } from '@/hooks/useOrders';
 import { PrinterSettingsDialog } from '@/components/printer-settings-dialog';
 import { OrderPaymentDialog } from '@/components/orders/order-payment-dialog';
-import { ApproveOrderDialog } from '@/components/orders/approve-order-dialog';
-import { DispatchOrderDialog } from '@/components/orders/dispatch-order-dialog';
 import { RejectOrderDialog } from '@/components/orders/reject-order-dialog';
 
-/** The main owner's workflow, left to right. Each order sits in exactly one of these. */
-const TABS: Array<{ status: OrderStatus; icon: typeof Clock }> = [
-  { status: 'PAYMENT_PENDING', icon: Clock },
-  { status: 'CREDIT_APPROVAL_PENDING', icon: Landmark },
-  { status: 'CONFIRMED', icon: CheckCircle2 },
-  { status: 'DISPATCHED', icon: Truck },
-  { status: 'DELIVERED', icon: PackageCheck },
-  { status: 'CANCELLED', icon: Ban },
+/**
+ * The fulfiller's workflow, left to right. Only the first and last are real
+ * statuses — "Pending Payment" and "Completed" both live inside DELIVERED and are
+ * told apart by whether the bill still has a balance.
+ */
+type Bucket = 'CONFIRMED' | 'DELIVERED' | 'PENDING_PAYMENT' | 'COMPLETED' | 'CANCELLED';
+
+const TABS: Array<{ bucket: Bucket; label: string; icon: typeof Clock }> = [
+  { bucket: 'CONFIRMED', label: 'Confirm Orders', icon: Clock },
+  { bucket: 'DELIVERED', label: 'Delivered', icon: PackageCheck },
+  { bucket: 'PENDING_PAYMENT', label: 'Pending Payment', icon: Wallet },
+  { bucket: 'COMPLETED', label: 'Completed', icon: CheckCircle2 },
+  { bucket: 'CANCELLED', label: 'Cancelled', icon: Ban },
 ];
+
+function inBucket(order: Order, bucket: Bucket): boolean {
+  switch (bucket) {
+    case 'CONFIRMED': return order.status === 'CONFIRMED';
+    case 'DELIVERED': return order.status === 'DELIVERED';
+    case 'PENDING_PAYMENT': return isPendingPayment(order);
+    case 'COMPLETED': return isCompleted(order);
+    case 'CANCELLED': return order.status === 'CANCELLED';
+  }
+}
 
 export default function OrdersPage() {
   const role = useAuthStore((s) => s.user?.role);
-  const isAdmin = role === 'SUPER_ADMIN';
+  // Main owner and godown both work the fulfilment queue; a franchise owner only
+  // ever sees their own outlet's orders.
+  const isFulfiller = role === 'SUPER_ADMIN' || role === 'GODOWN_MANAGER';
   const { data, isLoading } = useOrders();
 
-  const [tab, setTab] = useState<OrderStatus>('CREDIT_APPROVAL_PENDING');
+  const [tab, setTab] = useState<Bucket>('CONFIRMED');
   const [placing, setPlacing] = useState(false);
   const [payFor, setPayFor] = useState<Order | null>(null);
-  const [approveFor, setApproveFor] = useState<Order | null>(null);
-  const [dispatchFor, setDispatchFor] = useState<Order | null>(null);
   const [killFor, setKillFor] = useState<Order | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
-  const receive = useReceiveOrder();
+  const fulfil = useFulfilOrder();
 
   const orders = data ?? [];
   const counts = useMemo(() => {
-    const c = {} as Record<OrderStatus, number>;
-    for (const t of TABS) c[t.status] = orders.filter((o) => o.status === t.status).length;
+    const c = {} as Record<Bucket, number>;
+    for (const t of TABS) c[t.bucket] = orders.filter((o) => inBucket(o, t.bucket)).length;
     return c;
   }, [orders]);
 
-  // An outlet may only have one order in flight; the "Order Stock" button stays
-  // disabled until they receive (or cancel) it.
+  // An outlet may only have one order awaiting fulfilment; "Order Stock" stays
+  // disabled until it ships.
   const activeOrder = orders.find((o) => ACTIVE_ORDER_STATUSES.includes(o.status)) ?? null;
 
-  const visible = isAdmin ? orders.filter((o) => o.status === tab) : orders;
+  const visible = isFulfiller ? orders.filter((o) => inBucket(o, tab)) : orders;
+
+  const doFulfil = (o: Order) =>
+    fulfil.mutate(o.id, {
+      onSuccess: () => toast.success(`${o.orderNumber} fulfilled — delivered to ${o.outlet.name}`),
+      onError: (e) => toast.error(apiErrorMessage(e)),
+    });
 
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-body text-muted-foreground">
-          {isAdmin ? 'Incoming stock orders from all outlets, by stage.' : 'Order stock from the main branch.'}
+          {isFulfiller ? 'Incoming stock orders from all outlets, by stage.' : 'Order stock from the main branch.'}
         </p>
-        {isAdmin ? (
+        {isFulfiller ? (
           <Button variant="secondary" onClick={() => setPrinterOpen(true)}>
             <Printer className="h-4 w-4" /> Printer Settings
           </Button>
         ) : (
-          <Button onClick={() => setPlacing(true)} disabled={!!activeOrder} title={activeOrder ? 'You already have an active order' : undefined}>
+          <Button onClick={() => setPlacing(true)} disabled={!!activeOrder} title={activeOrder ? 'You already have an order awaiting fulfilment' : undefined}>
             <Plus className="h-4 w-4" /> Order Stock
           </Button>
         )}
       </div>
 
-      {!isAdmin && activeOrder && <OutletActiveBanner order={activeOrder} onPay={() => setPayFor(activeOrder)} />}
+      {!isFulfiller && activeOrder && <OutletActiveBanner order={activeOrder} onPay={() => setPayFor(activeOrder)} />}
 
-      {isAdmin && (
+      {isFulfiller && (
         <div className="flex gap-1 overflow-x-auto rounded-lg border border-border bg-card p-1 scrollbar-thin">
-          {TABS.map(({ status, icon: Icon }) => (
+          {TABS.map(({ bucket, label, icon: Icon }) => (
             <button
-              key={status}
-              onClick={() => setTab(status)}
+              key={bucket}
+              onClick={() => setTab(bucket)}
               className={cn(
                 'flex shrink-0 items-center gap-1.5 rounded-md px-3 py-2 text-caption font-medium transition-colors',
-                tab === status ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface',
+                tab === bucket ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-surface',
               )}
             >
               <Icon className="h-3.5 w-3.5" />
-              {ORDER_STATUS_LABEL[status]}
-              {counts[status] > 0 && (
-                <span className={cn('rounded px-1.5 text-caption tabular-nums', tab === status ? 'bg-primary-foreground/20' : 'bg-surface')}>
-                  {counts[status]}
+              {label}
+              {counts[bucket] > 0 && (
+                <span className={cn('rounded px-1.5 text-caption tabular-nums', tab === bucket ? 'bg-primary-foreground/20' : 'bg-surface')}>
+                  {counts[bucket]}
                 </span>
               )}
             </button>
@@ -116,9 +136,9 @@ export default function OrdersPage() {
         <Card className="flex flex-col items-center gap-3 py-16 text-center">
           <ShoppingCart className="h-8 w-8 text-muted-foreground" />
           <p className="text-body text-muted-foreground">
-            {isAdmin ? `No orders in ${ORDER_STATUS_LABEL[tab].toLowerCase()}.` : 'No orders yet.'}
+            {isFulfiller ? `Nothing in ${TABS.find((t) => t.bucket === tab)?.label.toLowerCase()}.` : 'No orders yet.'}
           </p>
-          {!isAdmin && !activeOrder && <Button onClick={() => setPlacing(true)}><Plus className="h-4 w-4" /> Place your first order</Button>}
+          {!isFulfiller && !activeOrder && <Button onClick={() => setPlacing(true)}><Plus className="h-4 w-4" /> Place your first order</Button>}
         </Card>
       ) : (
         <Card className="overflow-hidden">
@@ -126,121 +146,88 @@ export default function OrdersPage() {
             <THead>
               <TR>
                 <TH>Order #</TH>
-                {isAdmin && <TH>Outlet</TH>}
+                {isFulfiller && <TH>Outlet</TH>}
                 <TH>Items</TH>
                 <TH>Date</TH>
                 <TH className="text-right">Amount</TH>
-                <TH>Payment</TH>
+                <TH className="text-right">Due</TH>
                 <TH>Bill</TH>
-                {!isAdmin && <TH>Status</TH>}
+                {!isFulfiller && <TH>Status</TH>}
                 <TH className="text-right">Action</TH>
               </TR>
             </THead>
             <TBody>
-              {visible.map((o) => (
-                <TR key={o.id}>
-                  <TD className="font-medium">
-                    {o.orderNumber}
-                    {o.status === 'CANCELLED' && o.cancellationReason && (
-                      <span className="mt-0.5 flex items-start gap-1 text-caption font-normal text-danger">
-                        <Info className="mt-0.5 h-3 w-3 shrink-0" />{o.cancellationReason}
-                      </span>
-                    )}
-                  </TD>
-                  {isAdmin && <TD>{o.outlet.name}</TD>}
-                  <TD className="max-w-xs">
-                    <div className="space-y-0.5">
-                      {o.items.map((i) => {
-                        const requested = Number(i.requestedQuantity);
-                        const approved = i.confirmedQuantity != null ? Number(i.confirmedQuantity) : null;
-                        const trimmed = approved != null && approved < requested;
-                        return (
+              {visible.map((o) => {
+                const due = amountDue(o);
+                return (
+                  <TR key={o.id}>
+                    <TD className="font-medium">
+                      {o.orderNumber}
+                      {o.status === 'CANCELLED' && o.cancellationReason && (
+                        <span className="mt-0.5 flex items-start gap-1 text-caption font-normal text-danger">
+                          <Info className="mt-0.5 h-3 w-3 shrink-0" />{o.cancellationReason}
+                        </span>
+                      )}
+                    </TD>
+                    {isFulfiller && <TD>{o.outlet.name}</TD>}
+                    <TD className="max-w-xs">
+                      <div className="space-y-0.5">
+                        {o.items.map((i) => (
                           <div key={i.id} className="truncate text-caption">
                             <span className="text-foreground">{i.product.name}</span>{' '}
-                            <span className={cn(trimmed ? 'font-medium text-warning' : 'text-muted-foreground')}>
-                              {formatQty(approved ?? requested, i.product.unit.decimalPlaces)} {i.product.unit.name}
+                            <span className="text-muted-foreground">
+                              {formatQty(i.confirmedQuantity ?? i.requestedQuantity, i.product.unit.decimalPlaces)} {i.product.unit.name}
                             </span>
-                            {trimmed && <span className="text-muted-foreground"> (of {requested})</span>}
                           </div>
-                        );
-                      })}
-                    </div>
-                  </TD>
-                  <TD>{format(new Date(o.orderDate), 'dd MMM')}</TD>
-                  <TD className="text-right font-semibold">{formatINR(o.totals.grandTotal)}</TD>
-                  <TD>
-                    {o.paymentMode === 'ONLINE' ? (
-                      <Badge variant={o.bill?.status === 'PAID' ? 'success' : 'warning'}>
-                        <CreditCard className="mr-1 -ml-0.5 inline h-3 w-3" />
-                        {o.bill?.status === 'PAID' ? 'Paid online' : 'Online — unpaid'}
-                      </Badge>
-                    ) : o.paymentMode === 'CREDIT' ? (
-                      <Badge variant="info"><Landmark className="mr-1 -ml-0.5 inline h-3 w-3" />Credit</Badge>
-                    ) : (
-                      <span className="text-caption text-muted-foreground">Not chosen</span>
-                    )}
-                  </TD>
-                  <TD>{o.bill ? <Badge variant={o.bill.status === 'PAID' ? 'success' : 'warning'}>{o.bill.billNumber}</Badge> : <span className="text-muted-foreground">—</span>}</TD>
-                  {!isAdmin && (
-                    <TD><Badge variant={ORDER_STATUS_BADGE[o.status]}>{ORDER_STATUS_LABEL[o.status]}</Badge></TD>
-                  )}
-                  <TD className="text-right">
-                    <div className="flex justify-end gap-1">
-                      {isAdmin ? (
-                        <>
-                          {o.status === 'CREDIT_APPROVAL_PENDING' && (
-                            <>
-                              <Button size="sm" onClick={() => setApproveFor(o)}>Approve</Button>
-                              <Button size="sm" variant="ghost" onClick={() => setKillFor(o)}><X className="h-3.5 w-3.5 text-danger" /></Button>
-                            </>
-                          )}
-                          {o.status === 'CONFIRMED' && (
-                            <Button size="sm" variant="secondary" onClick={() => setDispatchFor(o)}>
-                              <Truck className="h-3.5 w-3.5" /> Dispatch
-                            </Button>
-                          )}
-                          {o.status === 'DISPATCHED' && (
-                            <span className="text-caption text-muted-foreground">Waiting on outlet</span>
-                          )}
-                          {(o.status === 'PAYMENT_PENDING' || o.status === 'DELIVERED' || o.status === 'CANCELLED') && (
-                            <span className="text-caption text-muted-foreground">—</span>
-                          )}
-                        </>
+                        ))}
+                      </div>
+                    </TD>
+                    <TD>{format(new Date(o.orderDate), 'dd MMM')}</TD>
+                    <TD className="text-right font-semibold">{formatINR(o.totals.grandTotal)}</TD>
+                    <TD className="text-right">
+                      {o.status !== 'DELIVERED' ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : due > 0 ? (
+                        <span className="font-semibold text-warning">{formatINR(due)}</span>
                       ) : (
-                        <>
-                          {o.status === 'PAYMENT_PENDING' && (
-                            <>
-                              <Button size="sm" onClick={() => setPayFor(o)}><CreditCard className="h-3.5 w-3.5" /> Pay now</Button>
-                              <Button size="sm" variant="ghost" onClick={() => setKillFor(o)}><X className="h-3.5 w-3.5 text-danger" /></Button>
-                            </>
-                          )}
-                          {o.status === 'CREDIT_APPROVAL_PENDING' && (
-                            <>
-                              <span className="self-center text-caption text-muted-foreground">Awaiting approval</span>
-                              <Button size="sm" variant="ghost" onClick={() => setKillFor(o)}><X className="h-3.5 w-3.5 text-danger" /></Button>
-                            </>
-                          )}
-                          {o.status === 'DISPATCHED' && (
-                            <Button
-                              size="sm"
-                              loading={receive.isPending}
-                              onClick={() => receive.mutate(o.id, {
-                                onSuccess: () => toast.success('Order received — stock added to your outlet'),
-                                onError: (e) => toast.error(apiErrorMessage(e)),
-                              })}
-                            >
-                              <PackageCheck className="h-3.5 w-3.5" /> Receive Order
-                            </Button>
-                          )}
-                          {(o.status === 'CONFIRMED' || o.status === 'DELIVERED' || o.status === 'CANCELLED') && (
-                            <span className="text-caption text-muted-foreground">—</span>
-                          )}
-                        </>
+                        <Badge variant="success">Paid</Badge>
                       )}
-                    </div>
-                  </TD>
-                </TR>
-              ))}
+                    </TD>
+                    <TD>{o.bill ? <Badge variant={o.bill.status === 'PAID' ? 'success' : 'warning'}>{o.bill.billNumber}</Badge> : <span className="text-muted-foreground">—</span>}</TD>
+                    {!isFulfiller && (
+                      <TD><Badge variant={ORDER_STATUS_BADGE[o.status]}>{ORDER_STATUS_LABEL[o.status]}</Badge></TD>
+                    )}
+                    <TD className="text-right">
+                      <div className="flex justify-end gap-1">
+                        {isFulfiller ? (
+                          o.status === 'CONFIRMED' ? (
+                            <>
+                              <Button size="sm" loading={fulfil.isPending} onClick={() => doFulfil(o)}>
+                                <PackageCheck className="h-3.5 w-3.5" /> Fulfil
+                              </Button>
+                              <Button size="sm" variant="ghost" title="Cancel order" onClick={() => setKillFor(o)}>
+                                <X className="h-3.5 w-3.5 text-danger" />
+                              </Button>
+                            </>
+                          ) : (
+                            <span className="text-caption text-muted-foreground">—</span>
+                          )
+                        ) : due > 0 ? (
+                          <Button size="sm" onClick={() => setPayFor(o)}>
+                            <CreditCard className="h-3.5 w-3.5" /> Pay {formatINR(due)}
+                          </Button>
+                        ) : o.status === 'CONFIRMED' ? (
+                          <Button size="sm" variant="secondary" onClick={() => setPayFor(o)}>
+                            <CreditCard className="h-3.5 w-3.5" /> Pay now
+                          </Button>
+                        ) : (
+                          <span className="text-caption text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </TD>
+                  </TR>
+                );
+              })}
             </TBody>
           </Table>
         </Card>
@@ -248,23 +235,14 @@ export default function OrdersPage() {
 
       <OrderStockDialog open={placing} onOpenChange={setPlacing} onPlaced={(o) => setPayFor(o)} />
       <OrderPaymentDialog order={payFor} onClose={() => setPayFor(null)} />
-      <ApproveOrderDialog order={approveFor} onClose={() => setApproveFor(null)} />
-      <DispatchOrderDialog order={dispatchFor} onClose={() => setDispatchFor(null)} />
-      <RejectOrderDialog order={killFor} mode={isAdmin ? 'reject' : 'cancel'} onClose={() => setKillFor(null)} />
+      <RejectOrderDialog order={killFor} mode="cancel" onClose={() => setKillFor(null)} />
       <PrinterSettingsDialog open={printerOpen} onOpenChange={setPrinterOpen} />
     </div>
   );
 }
 
-/** Tells the outlet exactly where their in-flight order stands, and what to do next. */
+/** Tells the outlet where their in-flight order stands, and what they can do now. */
 function OutletActiveBanner({ order, onPay }: { order: Order; onPay: () => void }) {
-  const copy: Record<string, string> = {
-    PAYMENT_PENDING: 'Your order is placed but not confirmed — pay online or request credit to confirm it.',
-    CREDIT_APPROVAL_PENDING: 'Your credit request is with the main owner. You’ll be notified once it’s approved.',
-    CONFIRMED: 'Confirmed! The main branch is preparing your order for dispatch.',
-    DISPATCHED: 'Your order is on the way. Tap “Receive Order” once the goods physically arrive.',
-  };
-
   return (
     <Card className="flex flex-col gap-3 border-l-4 border-l-primary p-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
@@ -273,12 +251,11 @@ function OutletActiveBanner({ order, onPay }: { order: Order; onPay: () => void 
           <Badge variant={ORDER_STATUS_BADGE[order.status]}>{ORDER_STATUS_LABEL[order.status]}</Badge>
         </p>
         <p className="mt-0.5 text-caption text-muted-foreground">
-          {copy[order.status]} You can place a new order once this one is received.
+          Your order is with the main branch for fulfilment. You can pay now or once it&apos;s delivered —
+          either way, you can place a new order after this one ships.
         </p>
       </div>
-      {order.status === 'PAYMENT_PENDING' && (
-        <Button onClick={onPay}><CreditCard className="h-4 w-4" /> Complete payment · {formatINR(order.totals.grandTotal)}</Button>
-      )}
+      <Button onClick={onPay}><CreditCard className="h-4 w-4" /> Pay now · {formatINR(order.totals.grandTotal)}</Button>
     </Card>
   );
 }

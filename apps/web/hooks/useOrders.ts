@@ -5,41 +5,26 @@ import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
 import type { ItemUnit } from './useProducts';
 
-export type OrderStatus =
-  | 'PAYMENT_PENDING'
-  | 'CREDIT_APPROVAL_PENDING'
-  | 'CONFIRMED'
-  | 'DISPATCHED'
-  | 'DELIVERED'
-  | 'CANCELLED';
+export type OrderStatus = 'CONFIRMED' | 'DELIVERED' | 'CANCELLED';
 
 export type FulfillmentSource = 'MAIN_BRANCH' | 'GODOWN';
 export type OrderPaymentMode = 'ONLINE' | 'CREDIT';
 
-/** Statuses that count as "in flight" — an outlet may only have one at a time. */
-export const ACTIVE_ORDER_STATUSES: OrderStatus[] = [
-  'PAYMENT_PENDING', 'CREDIT_APPROVAL_PENDING', 'CONFIRMED', 'DISPATCHED',
-];
+/** An order still in flight — an outlet may only have one awaiting fulfilment. */
+export const ACTIVE_ORDER_STATUSES: OrderStatus[] = ['CONFIRMED'];
 
 /**
- * Human labels for the workflow. DISPATCHED reads as "Awaiting Receipt" because
- * that is what it means to both sides: the goods have left, and the order sits
- * there until the outlet confirms they physically arrived.
+ * CONFIRMED reads as "Confirm Orders" because that is the queue it represents:
+ * placed orders waiting for the main owner or godown to fulfil them.
  */
 export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
-  PAYMENT_PENDING: 'Payment Pending',
-  CREDIT_APPROVAL_PENDING: 'Credit Approval Pending',
-  CONFIRMED: 'Confirmed',
-  DISPATCHED: 'Awaiting Receipt',
+  CONFIRMED: 'Confirm Orders',
   DELIVERED: 'Delivered',
   CANCELLED: 'Cancelled',
 };
 
 export const ORDER_STATUS_BADGE: Record<OrderStatus, 'warning' | 'info' | 'success' | 'danger' | 'neutral'> = {
-  PAYMENT_PENDING: 'warning',
-  CREDIT_APPROVAL_PENDING: 'warning',
-  CONFIRMED: 'info',
-  DISPATCHED: 'info',
+  CONFIRMED: 'warning',
   DELIVERED: 'success',
   CANCELLED: 'danger',
 };
@@ -72,6 +57,24 @@ export interface Order {
   totals: { subTotal: number; taxTotal: number; grandTotal: number };
 }
 
+/**
+ * Whether a delivered order still owes money. "Pending Payment" and "Completed" are
+ * not statuses — they are the two halves of DELIVERED, split on the bill's balance,
+ * so settling a bill moves an order between them without any status change.
+ */
+export function amountDue(order: Order): number {
+  if (order.status !== 'DELIVERED' || !order.bill) return 0;
+  return Number(order.bill.balanceDue);
+}
+
+export function isPendingPayment(order: Order): boolean {
+  return amountDue(order) > 0;
+}
+
+export function isCompleted(order: Order): boolean {
+  return order.status === 'DELIVERED' && amountDue(order) <= 0;
+}
+
 export interface RazorpayOrderIntent { orderId: string; amount: number; currency: string; keyId: string }
 
 export function useOrders(params: { status?: OrderStatus } = {}) {
@@ -102,12 +105,7 @@ export function useCreateOrder() {
   );
 }
 
-/** Outlet: settle this order on credit → goes to the main owner for approval. */
-export function useRequestCredit() {
-  return useOrderMutation(async (id: string) => (await api.post<ApiSuccess<Order>>(`/orders/${id}/credit`, {})).data.data);
-}
-
-/** Outlet: open (or retry) an online checkout for this order. */
+/** Outlet: open (or retry) an online checkout — allowed before or after fulfilment. */
 export function useOrderPaymentIntent() {
   return useMutation({
     mutationFn: async (id: string) => (await api.post<ApiSuccess<RazorpayOrderIntent>>(`/orders/${id}/razorpay/order`, {})).data.data,
@@ -120,30 +118,12 @@ export function useVerifyOrderPayment() {
   );
 }
 
-/** Main owner: approve a credit order (optionally trimming quantities / repricing). */
-export function useApproveOrder() {
-  return useOrderMutation(async ({ id, isGstBill, items }: {
-    id: string;
-    isGstBill: boolean;
-    items?: Array<{ itemId: string; confirmedQuantity: number; unitPrice?: number }>;
-  }) => (await api.post<ApiSuccess<Order>>(`/orders/${id}/approve`, { isGstBill, items })).data.data);
-}
-
-export function useRejectOrder() {
-  return useOrderMutation(async ({ id, reason }: { id: string; reason?: string }) =>
-    (await api.post<ApiSuccess<Order>>(`/orders/${id}/reject`, { reason })).data.data,
-  );
-}
-
-export function useDispatchOrder() {
-  return useOrderMutation(async ({ id, fulfillmentSource }: { id: string; fulfillmentSource: FulfillmentSource }) =>
-    (await api.post<ApiSuccess<Order>>(`/orders/${id}/dispatch`, { fulfillmentSource })).data.data,
-  );
-}
-
-/** Outlet: the goods physically arrived. */
-export function useReceiveOrder() {
-  return useOrderMutation(async (id: string) => (await api.post<ApiSuccess<Order>>(`/orders/${id}/receive`, {})).data.data);
+/**
+ * Main owner / godown: send the order out. One action — stock leaves the godown,
+ * lands at the outlet, and the bill is raised.
+ */
+export function useFulfilOrder() {
+  return useOrderMutation(async (id: string) => (await api.post<ApiSuccess<Order>>(`/orders/${id}/fulfil`, {})).data.data);
 }
 
 export function useCancelOrder() {

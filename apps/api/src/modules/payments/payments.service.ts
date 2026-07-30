@@ -73,7 +73,7 @@ async function recordPayment(args: RecordPaymentArgs) {
     return { payment, bill: updatedBill };
   });
 
-  cache.invalidateTags(CacheTag.PAYMENTS, CacheTag.BILLS, CacheTag.DASHBOARD, CacheTag.outlet(result.bill.outletId));
+  cache.invalidateTags(CacheTag.PAYMENTS, CacheTag.BILLS, CacheTag.ORDERS, CacheTag.DASHBOARD, CacheTag.outlet(result.bill.outletId));
   await emitRealtime(
     RealtimeEvent.PAYMENT_RECEIVED,
     { paymentNumber: result.payment.paymentNumber, amount: Number(result.payment.amount), billNumber: result.bill.billNumber, billStatus: result.bill.status },

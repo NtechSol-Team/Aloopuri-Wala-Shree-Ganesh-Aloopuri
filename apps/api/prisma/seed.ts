@@ -226,7 +226,7 @@ async function main(): Promise<void> {
     { outlet: adajan, owner: owner1, status: OutletOrderStatus.DELIVERED, daysOld: 10, items: [['SKU-ALOOPURI', 20], ['SKU-KHAMAN', 10], ['SKU-JALEBI', 5]], bill: { paid: 0, channel: PaymentChannel.CASH, method: PaymentMethod.CASH } },
     { outlet: vesu, owner: owner2, status: OutletOrderStatus.DELIVERED, daysOld: 8, items: [['SKU-ALOOBHUJIA', 15], ['SKU-GATHIYA', 15], ['SKU-PENDA', 8]], bill: { paid: 1500, channel: PaymentChannel.CASH, method: PaymentMethod.CASH } },
     { outlet: katargam, owner: owner3, status: OutletOrderStatus.DELIVERED, daysOld: 3, items: [['SKU-SAMOSA', 50], ['SKU-KACHORI', 50], ['SKU-LASSI', 20]], bill: { paid: 9999, channel: PaymentChannel.DIGITAL, method: PaymentMethod.RAZORPAY } },
-    { outlet: adajan, owner: owner1, status: OutletOrderStatus.PENDING, daysOld: 1, items: [['SKU-FAFDA', 10], ['SKU-MATHIYA', 10]] },
+    { outlet: adajan, owner: owner1, status: OutletOrderStatus.CONFIRMED, daysOld: 1, items: [['SKU-FAFDA', 10], ['SKU-MATHIYA', 10]] },
     { outlet: vesu, owner: owner2, status: OutletOrderStatus.CONFIRMED, daysOld: 0, items: [['SKU-MOHANTHAL', 6], ['SKU-GULABJAMUN', 6]] },
   ];
 
@@ -237,7 +237,7 @@ async function main(): Promise<void> {
     orderSeq += 1;
     const orderItems = spec.items.map(([sku, qty]) => {
       const p = prod(sku);
-      return { productId: p.id, requestedQuantity: qty, confirmedQuantity: spec.status === OutletOrderStatus.PENDING ? null : qty, unitPriceSnapshot: Number(p.basePrice) };
+      return { productId: p.id, requestedQuantity: qty, confirmedQuantity: qty, unitPriceSnapshot: Number(p.basePrice) };
     });
     const order = await prisma.outletOrder.create({
       data: {
@@ -245,7 +245,7 @@ async function main(): Promise<void> {
         outletId: spec.outlet.id,
         status: spec.status,
         orderDate: daysAgo(spec.daysOld),
-        confirmedAt: spec.status === OutletOrderStatus.PENDING ? null : daysAgo(spec.daysOld),
+        confirmedAt: daysAgo(spec.daysOld),
         deliveredAt: spec.status === OutletOrderStatus.DELIVERED ? daysAgo(spec.daysOld - 1) : null,
         createdById: spec.owner.id,
         items: { create: orderItems },

@@ -70,7 +70,7 @@ export async function createBillForOrderTx(tx: Prisma.TransactionClient, order: 
 
 /** Post-commit side effects: async PDF generation + realtime notification. */
 export async function afterBillGenerated(bill: { id: string; billNumber: string; outletId: string; grandTotal: Prisma.Decimal }) {
-  cache.invalidateTags(CacheTag.BILLS, CacheTag.DASHBOARD, CacheTag.outlet(bill.outletId));
+  cache.invalidateTags(CacheTag.BILLS, CacheTag.ORDERS, CacheTag.DASHBOARD, CacheTag.outlet(bill.outletId));
   await enqueue(JobName.GENERATE_BILL_PDF, { billId: bill.id });
   await emitRealtime(
     RealtimeEvent.BILL_GENERATED,

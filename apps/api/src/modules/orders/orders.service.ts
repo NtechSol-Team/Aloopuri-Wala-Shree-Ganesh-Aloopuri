@@ -15,8 +15,7 @@ import { env } from '../../config/env';
 import { billingService } from '../billing/billing.service';
 import type { AuthUser } from '../../shared/types/api';
 import type {
-  ApproveOrderInput, CreateOrderInput, DispatchOrderInput, ListOrdersQuery,
-  RejectOrderInput, VerifyOrderPaymentInput,
+  CreateOrderInput, ListOrdersQuery, RejectOrderInput, VerifyOrderPaymentInput,
 } from './orders.schema';
 
 const orderInclude = {
@@ -40,12 +39,7 @@ type OrderWithItems = Prisma.OutletOrderGetPayload<{ include: typeof orderInclud
  * exist, the outlet cannot place another one — they must receive the current
  * order first (or cancel it, if it hasn't been confirmed yet).
  */
-export const ACTIVE_ORDER_STATUSES = [
-  OutletOrderStatus.PAYMENT_PENDING,
-  OutletOrderStatus.CREDIT_APPROVAL_PENDING,
-  OutletOrderStatus.CONFIRMED,
-  OutletOrderStatus.DISPATCHED,
-] as const;
+export const ACTIVE_ORDER_STATUSES = [OutletOrderStatus.CONFIRMED] as const;
 
 /** Where confirmed stock is decremented from at dispatch — chosen by the admin when dispatching. */
 function sourceStockModel(source: FulfillmentSource) {
@@ -97,13 +91,14 @@ export function orderTotals(order: OrderWithItems) {
 }
 
 /**
- * Place an order. Unlike before, the order is NOT confirmed here: it lands in
- * PAYMENT_PENDING and the outlet then either pays online or requests credit.
+ * Place an order. It goes straight into the fulfilment queue (CONFIRMED) — there
+ * is no payment or credit-approval gate in front of it.
  *
- * Because the outlet pays before anyone reviews the order, prices have to be
- * resolved now — using the same fallback chain the confirmation step used to
- * apply (outlet special price → catalog base price) — and GST comes from the
- * outlet's billing preference.
+ * Prices are still resolved and snapshotted now (outlet special price → catalog
+ * MRP), and GST comes from the outlet's billing preference, so the amount the
+ * outlet will owe is fixed at placement even though the bill is only raised at
+ * Fulfil. The outlet may pay any time from here on: before fulfilment the money
+ * is held as an advance against the order, after it against the bill.
  */
 export async function createOrder(user: AuthUser, input: CreateOrderInput) {
   const outletId = resolveOutletId(user, input.outletId);
@@ -115,7 +110,7 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
   });
   if (blocking) {
     throw AppError.invalidState(
-      `You already have an active order (${blocking.orderNumber}). Please receive your current order before placing a new one.`,
+      `You already have an order awaiting fulfilment (${blocking.orderNumber}). Please wait for it to be fulfilled before placing a new one.`,
     );
   }
 
@@ -143,7 +138,8 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
       data: {
         orderNumber,
         outletId,
-        status: OutletOrderStatus.PAYMENT_PENDING,
+        status: OutletOrderStatus.CONFIRMED,
+        confirmedAt: new Date(),
         isGstBill: outlet.gstBilling,
         notes: input.notes,
         createdById: user.id,
@@ -231,102 +227,92 @@ async function loadForTransition(id: string): Promise<OrderWithItems> {
   return order;
 }
 
+
 /**
- * Generate the order's bill and flip it to CONFIRMED, inside one transaction.
- * Shared by both confirmation routes (online payment verified / credit approved).
- * When `paidWith` is present the bill is settled immediately by an inserted
- * payment row — that is how an online-paid order arrives already PAID.
+ * Attach any advance payments taken against this order to its freshly-raised bill,
+ * and roll the bill's paid/outstanding figures forward.
+ *
+ * An outlet may pay before its order is fulfilled, at which point no bill exists —
+ * the money is recorded against the order instead (Payment.orderId, billId null).
+ * Fulfil raises the bill, so this is where that money finally lands on it, and why
+ * a prepaid order never shows up under Pending Payment.
  */
-async function confirmWithBillTx(
+async function applyAdvancesToBillTx(
   tx: Prisma.TransactionClient,
-  id: string,
-  userId: string,
-  paidWith?: { razorpayOrderId: string; razorpayPaymentId: string; razorpaySignature: string },
+  orderId: string,
+  bill: { id: string; grandTotal: Prisma.Decimal },
 ) {
-  const fullOrder = await tx.outletOrder.findUniqueOrThrow({
-    where: { id },
-    include: { items: { include: { product: true } }, outlet: true },
+  const advances = await tx.payment.findMany({
+    where: { orderId, billId: null, isDeleted: false, status: PaymentStatus.SUCCESS },
+    select: { id: true, amount: true },
   });
-  const bill = await billingService.createBillForOrderTx(tx, fullOrder, userId);
+  if (advances.length === 0) return;
 
-  if (paidWith) {
-    const paymentNumber = await nextDocNumber(tx, 'PAYMENT');
-    await tx.payment.create({
-      data: {
-        paymentNumber,
-        billId: bill.id,
-        outletId: bill.outletId,
-        channel: PaymentChannel.DIGITAL,
-        method: PaymentMethod.RAZORPAY,
-        amount: bill.grandTotal,
-        status: PaymentStatus.SUCCESS,
-        createdById: userId,
-        razorpayOrderId: paidWith.razorpayOrderId,
-        razorpayPaymentId: paidWith.razorpayPaymentId,
-        razorpaySignature: paidWith.razorpaySignature,
-        notes: `Online payment for order ${fullOrder.orderNumber}`,
-      },
-    });
-    await tx.bill.update({
-      where: { id: bill.id },
-      data: { amountPaid: bill.grandTotal, balanceDue: 0, status: BillStatus.PAID },
-    });
-  }
+  await tx.payment.updateMany({ where: { id: { in: advances.map((a) => a.id) } }, data: { billId: bill.id } });
 
-  const order = await tx.outletOrder.update({
-    where: { id },
-    data: { status: OutletOrderStatus.CONFIRMED, confirmedAt: new Date() },
-    include: orderInclude,
-  });
-  return { order, bill };
-}
-
-/** The outlet chooses to settle this order on credit → main owner must approve it. */
-export async function requestCredit(user: AuthUser, id: string) {
-  const order = await loadForTransition(id);
-  assertOwnOutlet(user, order.outletId);
-  if (order.status !== OutletOrderStatus.PAYMENT_PENDING) {
-    throw AppError.invalidState('Only an unpaid, unconfirmed order can be sent for credit approval');
-  }
-
-  const updated = await prisma.outletOrder.update({
-    where: { id },
-    data: { status: OutletOrderStatus.CREDIT_APPROVAL_PENDING, paymentMode: OrderPaymentMode.CREDIT },
-    include: orderInclude,
-  });
-
-  cache.invalidateTags(CacheTag.ORDERS, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
-  await emitRealtime(
-    RealtimeEvent.ORDER_CREDIT_REQUESTED,
-    {
-      orderId: id,
-      orderNumber: order.orderNumber,
-      outletName: order.outlet.name,
-      amount: Number(orderTotals(order).grandTotal),
+  const paid = advances.reduce((sum, a) => sum.add(new Prisma.Decimal(a.amount)), new Prisma.Decimal(0));
+  const balance = new Prisma.Decimal(bill.grandTotal).sub(paid);
+  await tx.bill.update({
+    where: { id: bill.id },
+    data: {
+      amountPaid: paid,
+      // Never go negative: an overpayment leaves the bill settled, and the surplus
+      // stays visible as payments exceeding the bill total rather than a bogus credit.
+      balanceDue: balance.lessThan(0) ? new Prisma.Decimal(0) : balance,
+      status: balance.lessThanOrEqualTo(0) ? BillStatus.PAID : BillStatus.PARTIALLY_PAID,
     },
-    { global: true, outletId: order.outletId },
-  );
-  return { ...updated, totals: numericTotals(updated) };
+  });
 }
 
-/** Start (or retry) an online checkout: a Razorpay order for exactly what the bill will total. */
+/** The outlet's outstanding bill for this order, if it has been fulfilled and still owes. */
+async function outstandingBillFor(orderId: string) {
+  return prisma.bill.findFirst({
+    where: { orderId, isDeleted: false, status: { in: [BillStatus.UNPAID, BillStatus.PARTIALLY_PAID] } },
+    select: { id: true, billNumber: true, grandTotal: true, amountPaid: true, balanceDue: true },
+  });
+}
+
+/**
+ * What this order still needs paying, and where that money should attach.
+ *
+ * Before Fulfil there is no bill, so the whole order total is payable as an advance.
+ * After Fulfil the bill is the source of truth, so only its remaining balance is.
+ */
+async function payableFor(order: OrderWithItems): Promise<{ amount: Prisma.Decimal; billId: string | null }> {
+  if (order.status === OutletOrderStatus.CONFIRMED) {
+    const alreadyAdvanced = await prisma.payment.aggregate({
+      where: { orderId: order.id, billId: null, isDeleted: false, status: PaymentStatus.SUCCESS },
+      _sum: { amount: true },
+    });
+    const paid = new Prisma.Decimal(alreadyAdvanced._sum.amount ?? 0);
+    return { amount: orderTotals(order).grandTotal.sub(paid), billId: null };
+  }
+  const bill = await outstandingBillFor(order.id);
+  if (!bill) return { amount: new Prisma.Decimal(0), billId: null };
+  return { amount: new Prisma.Decimal(bill.balanceDue), billId: bill.id };
+}
+
+/**
+ * Start (or retry) an online checkout for an order.
+ *
+ * Allowed both before fulfilment (paying up front) and after it while the bill is
+ * still outstanding — the outlet chooses when to settle.
+ */
 export async function createOrderPaymentIntent(user: AuthUser, id: string) {
   const order = await loadForTransition(id);
   assertOwnOutlet(user, order.outletId);
-  if (order.status !== OutletOrderStatus.PAYMENT_PENDING) {
-    throw AppError.invalidState('This order is not awaiting payment');
-  }
+  if (order.status === OutletOrderStatus.CANCELLED) throw AppError.invalidState('This order was cancelled');
 
-  const { grandTotal } = orderTotals(order);
-  const amountPaise = Math.round(Number(grandTotal) * 100);
-  if (amountPaise <= 0) throw AppError.badRequest('Order total must be greater than zero');
+  const { amount } = await payableFor(order);
+  const amountPaise = Math.round(Number(amount) * 100);
+  if (amountPaise <= 0) throw AppError.invalidState('This order is already fully paid');
 
   try {
     const rzpOrder = await razorpay.orders.create({
       amount: amountPaise,
       currency: 'INR',
       receipt: order.orderNumber,
-      // orderId lets the webhook confirm the order even if the browser dies mid-payment.
+      // orderId lets the webhook record the payment even if the browser dies mid-checkout.
       notes: { orderId: order.id, outletId: order.outletId },
     });
     await prisma.outletOrder.update({
@@ -340,10 +326,58 @@ export async function createOrderPaymentIntent(user: AuthUser, id: string) {
 }
 
 /**
- * Verify the Razorpay checkout signature and confirm the order. A failed, cancelled
- * or abandoned payment simply never reaches here: the order stays PAYMENT_PENDING
- * and the outlet can retry.
+ * Record a verified online payment for an order.
+ *
+ * Where the money lands depends on how far the order has got: against the bill if
+ * it has been fulfilled, otherwise held against the order as an advance that Fulfil
+ * will apply. Either way the order's own status is untouched — paying no longer
+ * gates anything.
  */
+async function recordOrderPaymentTx(
+  tx: Prisma.TransactionClient,
+  order: OrderWithItems,
+  userId: string | null,
+  amount: Prisma.Decimal,
+  billId: string | null,
+  paidWith: { razorpayOrderId: string; razorpayPaymentId: string; razorpaySignature: string },
+) {
+  const paymentNumber = await nextDocNumber(tx, 'PAYMENT');
+  await tx.payment.create({
+    data: {
+      paymentNumber,
+      billId,
+      orderId: order.id,
+      outletId: order.outletId,
+      channel: PaymentChannel.DIGITAL,
+      method: PaymentMethod.RAZORPAY,
+      amount,
+      status: PaymentStatus.SUCCESS,
+      createdById: userId,
+      razorpayOrderId: paidWith.razorpayOrderId,
+      razorpayPaymentId: paidWith.razorpayPaymentId,
+      razorpaySignature: paidWith.razorpaySignature,
+      notes: billId
+        ? `Online payment for order ${order.orderNumber}`
+        : `Advance online payment for order ${order.orderNumber} (before fulfilment)`,
+    },
+  });
+
+  if (billId) {
+    const bill = await tx.bill.findUniqueOrThrow({ where: { id: billId }, select: { grandTotal: true, amountPaid: true } });
+    const paid = new Prisma.Decimal(bill.amountPaid).add(amount);
+    const balance = new Prisma.Decimal(bill.grandTotal).sub(paid);
+    await tx.bill.update({
+      where: { id: billId },
+      data: {
+        amountPaid: paid,
+        balanceDue: balance.lessThan(0) ? new Prisma.Decimal(0) : balance,
+        status: balance.lessThanOrEqualTo(0) ? BillStatus.PAID : BillStatus.PARTIALLY_PAID,
+      },
+    });
+  }
+}
+
+/** Verify the Razorpay checkout signature and bank the payment. */
 export async function verifyOrderPayment(user: AuthUser, id: string, input: VerifyOrderPaymentInput) {
   const order = await loadForTransition(id);
   assertOwnOutlet(user, order.outletId);
@@ -355,40 +389,39 @@ export async function verifyOrderPayment(user: AuthUser, id: string, input: Veri
   });
   if (!valid) throw AppError.payment('Payment signature verification failed');
 
-  // The signature only proves the payment is authentic — this proves it belongs to THIS order.
+  // The signature proves the payment is authentic; this proves it belongs to THIS order.
   if (order.razorpayOrderId !== input.razorpayOrderId) {
     throw AppError.payment('This payment does not belong to this order');
   }
 
-  // Idempotency: the webhook may have confirmed it first (or the user double-submitted).
-  if (order.status !== OutletOrderStatus.PAYMENT_PENDING) {
-    if (order.status === OutletOrderStatus.CONFIRMED) return { ...order, totals: numericTotals(order) };
-    throw AppError.invalidState('This order is no longer awaiting payment');
-  }
+  // Idempotency: the webhook may have banked it first, or the user double-submitted.
   const already = await prisma.payment.findFirst({ where: { razorpayPaymentId: input.razorpayPaymentId } });
   if (already) return { ...order, totals: numericTotals(order) };
 
-  const { order: confirmed, bill } = await prisma.$transaction((tx) =>
-    confirmWithBillTx(tx, id, user.id, {
+  const { amount, billId } = await payableFor(order);
+  if (Number(amount) <= 0) return { ...order, totals: numericTotals(order) };
+
+  await prisma.$transaction((tx) =>
+    recordOrderPaymentTx(tx, order, user.id, amount, billId, {
       razorpayOrderId: input.razorpayOrderId,
       razorpayPaymentId: input.razorpayPaymentId,
       razorpaySignature: input.razorpaySignature,
     }),
   );
 
+  const updated = await loadForTransition(id);
   cache.invalidateTags(CacheTag.ORDERS, CacheTag.BILLS, CacheTag.PAYMENTS, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
-  await billingService.afterBillGenerated(bill);
   await emitRealtime(
     RealtimeEvent.ORDER_STATUS_CHANGED,
-    { orderId: id, orderNumber: confirmed.orderNumber, status: confirmed.status, outletName: order.outlet.name, paid: true },
+    { orderId: id, orderNumber: order.orderNumber, status: updated.status, outletName: order.outlet.name, paid: true },
     { global: true, outletId: order.outletId },
   );
-  return { ...confirmed, totals: numericTotals(confirmed) };
+  return { ...updated, totals: numericTotals(updated) };
 }
 
 /**
- * Confirm an online order straight from the Razorpay webhook — the safety net for
- * when the payment succeeds but the browser never comes back to verify it.
+ * Bank an online order payment straight from the Razorpay webhook — the safety net
+ * for when the payment succeeds but the browser never comes back to verify it.
  * Called by the payments webhook handler; there is no authenticated user here.
  */
 export async function confirmPaidOrderFromWebhook(
@@ -396,11 +429,17 @@ export async function confirmPaidOrderFromWebhook(
   paidWith: { razorpayOrderId: string; razorpayPaymentId: string },
 ) {
   const order = await prisma.outletOrder.findFirst({ where: { id: orderId, isDeleted: false }, include: orderInclude });
-  if (!order || order.status !== OutletOrderStatus.PAYMENT_PENDING) return { ignored: true };
+  if (!order || order.status === OutletOrderStatus.CANCELLED) return { ignored: true };
   if (order.razorpayOrderId !== paidWith.razorpayOrderId) return { ignored: true };
 
-  const { order: confirmed, bill } = await prisma.$transaction((tx) =>
-    confirmWithBillTx(tx, orderId, order.createdById ?? '', {
+  const already = await prisma.payment.findFirst({ where: { razorpayPaymentId: paidWith.razorpayPaymentId } });
+  if (already) return { ignored: true };
+
+  const { amount, billId } = await payableFor(order);
+  if (Number(amount) <= 0) return { ignored: true };
+
+  await prisma.$transaction((tx) =>
+    recordOrderPaymentTx(tx, order, order.createdById ?? null, amount, billId, {
       razorpayOrderId: paidWith.razorpayOrderId,
       razorpayPaymentId: paidWith.razorpayPaymentId,
       razorpaySignature: 'webhook',
@@ -408,169 +447,106 @@ export async function confirmPaidOrderFromWebhook(
   );
 
   cache.invalidateTags(CacheTag.ORDERS, CacheTag.BILLS, CacheTag.PAYMENTS, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
-  await billingService.afterBillGenerated(bill);
   await emitRealtime(
     RealtimeEvent.ORDER_STATUS_CHANGED,
-    { orderId, orderNumber: confirmed.orderNumber, status: confirmed.status, outletName: order.outlet.name, paid: true },
+    { orderId, orderNumber: order.orderNumber, status: order.status, outletName: order.outlet.name, paid: true },
     { global: true, outletId: order.outletId },
   );
   return { confirmed: true };
 }
 
 /**
- * Main owner approves a credit order → CONFIRMED, with the bill raised on credit
- * (unpaid, due per the outlet's credit period). Quantities, prices and the GST
- * flag can still be adjusted here — this is the last point before money is owed.
+ * Fulfil an order: the single action that sends it out and completes delivery.
+ *
+ * Replaces the old dispatch-then-outlet-confirms-receipt pair. Stock leaves the
+ * godown and lands at the outlet in one transaction, the bill is raised (this is
+ * the point the outlet genuinely owes money), and any advance already paid is
+ * applied to it. What remains outstanding is what Pending Payment tracks.
  */
-export async function approveOrder(user: AuthUser, id: string, input: ApproveOrderInput) {
+export async function fulfilOrder(user: AuthUser, id: string) {
   const order = await loadForTransition(id);
-  if (order.status !== OutletOrderStatus.CREDIT_APPROVAL_PENDING) {
-    throw AppError.invalidState('Only orders awaiting credit approval can be approved');
+  if (order.status !== OutletOrderStatus.CONFIRMED) {
+    throw AppError.invalidState('Only an order awaiting fulfilment can be fulfilled');
   }
 
-  const overrides = new Map((input.items ?? []).map((i) => [i.itemId, i]));
+  const model = sourceStockModel(FulfillmentSource.GODOWN);
 
-  const { order: confirmed, bill } = await prisma.$transaction(async (tx) => {
-    for (const item of order.items) {
-      const override = overrides.get(item.id);
-      if (!override) continue;
-      await tx.outletOrderItem.update({
-        where: { id: item.id },
-        data: {
-          confirmedQuantity: override.confirmedQuantity,
-          ...(override.unitPrice != null ? { unitPriceSnapshot: override.unitPrice } : {}),
-        },
-      });
-    }
-    await tx.outletOrder.update({
-      where: { id },
-      data: { isGstBill: input.isGstBill, approvedAt: new Date(), approvedById: user.id },
-    });
-    return confirmWithBillTx(tx, id, user.id);
-  });
-
-  cache.invalidateTags(CacheTag.ORDERS, CacheTag.BILLS, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
-  await billingService.afterBillGenerated(bill);
-  await emitRealtime(
-    RealtimeEvent.ORDER_STATUS_CHANGED,
-    { orderId: id, orderNumber: confirmed.orderNumber, status: confirmed.status, outletName: order.outlet.name, approved: true },
-    { global: true, outletId: order.outletId },
-  );
-  return { ...confirmed, totals: numericTotals(confirmed) };
-}
-
-/** Main owner rejects a credit order → CANCELLED, with an optional reason shown to the outlet. */
-export async function rejectOrder(user: AuthUser, id: string, input: RejectOrderInput) {
-  const order = await loadForTransition(id);
-  if (order.status !== OutletOrderStatus.CREDIT_APPROVAL_PENDING) {
-    throw AppError.invalidState('Only orders awaiting credit approval can be rejected');
-  }
-
-  const updated = await prisma.outletOrder.update({
-    where: { id },
-    data: {
-      status: OutletOrderStatus.CANCELLED,
-      cancelledAt: new Date(),
-      cancelledById: user.id,
-      cancellationReason: input.reason,
-    },
-    include: orderInclude,
-  });
-
-  cache.invalidateTags(CacheTag.ORDERS, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
-  await emitRealtime(
-    RealtimeEvent.ORDER_STATUS_CHANGED,
-    { orderId: id, orderNumber: order.orderNumber, status: updated.status, outletName: order.outlet.name, reason: input.reason ?? null },
-    { global: true, outletId: order.outletId },
-  );
-  return { ...updated, totals: numericTotals(updated) };
-}
-
-/**
- * CONFIRMED → DISPATCHED. Stock leaves the chosen source here, when the goods
- * physically leave, and lands in the outlet only once they confirm receipt — so
- * a stock shortfall surfaces to the dispatcher (who can fix it) instead of to the
- * outlet at receipt time. The bill already exists (raised at confirmation).
- */
-export async function dispatchOrder(_user: AuthUser, id: string, input: DispatchOrderInput) {
-  const order = await loadForTransition(id);
-  if (order.status !== OutletOrderStatus.CONFIRMED) throw AppError.invalidState('Only confirmed orders can be dispatched');
-
-  const model = sourceStockModel(input.fulfillmentSource);
-
-  const updated = await prisma.$transaction(async (tx) => {
+  const { updated, bill } = await prisma.$transaction(async (tx) => {
+    // Check every line before moving anything, so a shortfall can't leave the
+    // order half-fulfilled.
     for (const item of order.items) {
       const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
       const stock = await model.find(tx, item.productId);
       if (!stock || new Prisma.Decimal(stock.quantity).lessThan(qty)) {
-        throw AppError.insufficientStock(`Not enough ${model.label} stock for ${item.product.name}: need ${qty}, have ${stock?.quantity ?? 0}`);
+        throw AppError.insufficientStock(
+          `Not enough ${model.label} stock for ${item.product.name}: need ${qty}, have ${stock?.quantity ?? 0}`,
+        );
       }
     }
+
     for (const item of order.items) {
       const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
       await model.dec(tx, item.productId, qty);
-    }
-    return tx.outletOrder.update({
-      where: { id },
-      data: { status: OutletOrderStatus.DISPATCHED, dispatchedAt: new Date(), fulfillmentSource: input.fulfillmentSource },
-      include: orderInclude,
-    });
-  });
-
-  cache.invalidateTags(CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
-  await emitRealtime(
-    RealtimeEvent.ORDER_STATUS_CHANGED,
-    { orderId: id, orderNumber: order.orderNumber, status: updated.status, outletName: order.outlet.name },
-    { global: true, outletId: order.outletId },
-  );
-  return { ...updated, totals: numericTotals(updated) };
-}
-
-/**
- * DISPATCHED → DELIVERED, triggered by the outlet once the goods are physically
- * in hand. Stock (already out of the source since dispatch) lands in the outlet.
- */
-export async function receiveOrder(user: AuthUser, id: string) {
-  const order = await loadForTransition(id);
-  assertOwnOutlet(user, order.outletId);
-  if (order.status !== OutletOrderStatus.DISPATCHED) throw AppError.invalidState('Only dispatched orders can be received');
-
-  const updated = await prisma.$transaction(async (tx) => {
-    for (const item of order.items) {
-      const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
       await tx.outletStock.upsert({
         where: { outletId_productId: { outletId: order.outletId, productId: item.productId } },
         create: { outletId: order.outletId, productId: item.productId, quantity: qty },
         update: { quantity: { increment: qty } },
       });
     }
-    return tx.outletOrder.update({
+
+    const fullOrder = await tx.outletOrder.findUniqueOrThrow({
       where: { id },
-      data: { status: OutletOrderStatus.DELIVERED, deliveredAt: new Date() },
+      include: { items: { include: { product: true } }, outlet: true },
+    });
+    const raised = await billingService.createBillForOrderTx(tx, fullOrder, user.id);
+    await applyAdvancesToBillTx(tx, id, raised);
+
+    const now = new Date();
+    const row = await tx.outletOrder.update({
+      where: { id },
+      data: {
+        status: OutletOrderStatus.DELIVERED,
+        // Goods leaving and arriving are the same event now; both stamps are kept
+        // so historical orders and new ones read consistently.
+        dispatchedAt: now,
+        deliveredAt: now,
+        fulfillmentSource: FulfillmentSource.GODOWN,
+      },
       include: orderInclude,
     });
+    return { updated: row, bill: raised };
   });
 
-  cache.invalidateTags(CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
+  cache.invalidateTags(
+    CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.BILLS, CacheTag.PAYMENTS,
+    CacheTag.DASHBOARD, CacheTag.outlet(order.outletId),
+  );
+  await billingService.afterBillGenerated(bill);
   await emitRealtime(
     RealtimeEvent.ORDER_RECEIVED,
-    { orderId: id, orderNumber: order.orderNumber, status: updated.status, outletName: order.outlet.name, receivedAt: updated.deliveredAt },
+    {
+      orderId: id,
+      orderNumber: order.orderNumber,
+      status: updated.status,
+      outletName: order.outlet.name,
+      receivedAt: updated.deliveredAt,
+    },
     { global: true, outletId: order.outletId },
   );
   return { ...updated, totals: numericTotals(updated) };
 }
 
 /**
- * The outlet backs out of an order they haven't settled yet. Deliberately limited
- * to the pre-confirmation states: once an order is CONFIRMED it has been paid for
- * or approved on credit and a bill exists, so cancelling would mean a refund/credit
- * note rather than a status flip.
+ * Call off an order before it ships. Whoever works the fulfilment queue (main owner
+ * or godown) can do this; the outlet that placed it cannot withdraw it themselves.
+ *
+ * Deliberately limited to unfulfilled orders: once Fulfil has run, stock has moved
+ * and a bill exists, so undoing it is a credit note rather than a status flip.
  */
 export async function cancelOrder(user: AuthUser, id: string, input: RejectOrderInput) {
   const order = await loadForTransition(id);
-  assertOwnOutlet(user, order.outletId);
-  if (order.status !== OutletOrderStatus.PAYMENT_PENDING && order.status !== OutletOrderStatus.CREDIT_APPROVAL_PENDING) {
-    throw AppError.invalidState('Only orders awaiting payment or credit approval can be cancelled');
+  if (order.status !== OutletOrderStatus.CONFIRMED) {
+    throw AppError.invalidState('Only an order awaiting fulfilment can be cancelled');
   }
 
   const updated = await prisma.outletOrder.update({
@@ -595,7 +571,6 @@ export async function cancelOrder(user: AuthUser, id: string, input: RejectOrder
 
 export const ordersService = {
   createOrder, listOrders, getOrder,
-  requestCredit, createOrderPaymentIntent, verifyOrderPayment, confirmPaidOrderFromWebhook,
-  approveOrder, rejectOrder,
-  dispatchOrder, receiveOrder, cancelOrder,
+  createOrderPaymentIntent, verifyOrderPayment, confirmPaidOrderFromWebhook,
+  fulfilOrder, cancelOrder,
 };

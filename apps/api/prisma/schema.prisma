@@ -70,11 +70,12 @@ enum BomComponentType {
 ///   CONFIRMED               → paid or credit-approved; bill generated
 ///   DISPATCHED              → goods left the source; awaiting outlet receipt
 ///   DELIVERED               → outlet confirmed receipt; stock is theirs
+/// A placed order awaits fulfilment (CONFIRMED), has been fulfilled (DELIVERED —
+/// stock left the godown and landed at the outlet in one step), or was called off
+/// before fulfilment (CANCELLED). Whether a delivered order is still owed for is a
+/// property of its bill, not a status — see the Pending Payment view.
 enum OutletOrderStatus {
-  PAYMENT_PENDING
-  CREDIT_APPROVAL_PENDING
   CONFIRMED
-  DISPATCHED
   DELIVERED
   CANCELLED
 }
@@ -765,22 +766,25 @@ model OutletOrder {
   id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orderNumber        String             @unique @map("order_number")
   outletId           String             @map("outlet_id") @db.Uuid
-  status             OutletOrderStatus  @default(PAYMENT_PENDING)
+  // A placed order goes straight to the fulfilment queue — there is no payment or
+  // credit-approval gate before it.
+  status             OutletOrderStatus  @default(CONFIRMED)
   orderDate          DateTime           @default(now()) @map("order_date") @db.Timestamptz(6)
   confirmedAt        DateTime?          @map("confirmed_at") @db.Timestamptz(6)
+  // Both set at Fulfil: goods leave the godown and reach the outlet in one action.
   dispatchedAt       DateTime?          @map("dispatched_at") @db.Timestamptz(6)
   deliveredAt        DateTime?          @map("delivered_at") @db.Timestamptz(6)
-  // How the outlet chose to settle this order — picked right after placing it.
+  // How the outlet settled this order, once they have.
   paymentMode        OrderPaymentMode?  @map("payment_mode")
-  // Razorpay order id of the in-flight/last checkout attempt (online orders only).
+  // Razorpay order id of the in-flight/last checkout attempt (online payments only).
   razorpayOrderId    String?            @map("razorpay_order_id")
-  // Set at dispatch: which location the stock was pulled from.
+  // Where the stock was pulled from at Fulfil. Retained for historical orders;
+  // fulfilment now always draws on the godown.
   fulfillmentSource  FulfillmentSource? @map("fulfillment_source")
-  // Whether the resulting bill carries GST — seeded from the outlet's billing
-  // preference at placement (the price the outlet pays depends on it), and still
-  // adjustable by the main owner while approving a credit order.
+  // Whether the resulting bill carries GST — taken from the outlet's billing
+  // preference at placement, since that determines the price the outlet pays.
   isGstBill          Boolean            @default(true) @map("is_gst_bill")
-  // Credit approval / rejection trail.
+  // Legacy credit-approval trail, kept so historical orders keep their audit record.
   approvedAt         DateTime?          @map("approved_at") @db.Timestamptz(6)
   approvedById       String?            @map("approved_by") @db.Uuid
   cancelledAt        DateTime?          @map("cancelled_at") @db.Timestamptz(6)
@@ -792,9 +796,11 @@ model OutletOrder {
   updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById        String?            @map("created_by") @db.Uuid
 
-  outlet Outlet            @relation(fields: [outletId], references: [id])
-  items  OutletOrderItem[]
-  bill   Bill?
+  outlet   Outlet            @relation(fields: [outletId], references: [id])
+  items    OutletOrderItem[]
+  bill     Bill?
+  // Advance payments taken before this order was fulfilled.
+  payments Payment[]
 
   @@index([outletId, status])
   @@index([status, orderDate])
@@ -898,6 +904,10 @@ model Payment {
   id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   paymentNumber     String         @unique @map("payment_number")
   billId            String?        @map("bill_id") @db.Uuid
+  // Set when an outlet pays for an order before it is fulfilled: the bill does not
+  // exist yet, so the money is held against the order and applied to the bill the
+  // moment Fulfil raises it (at which point billId is filled in too).
+  orderId           String?        @map("order_id") @db.Uuid
   outletId          String         @map("outlet_id") @db.Uuid
   channel           PaymentChannel
   method            PaymentMethod
@@ -915,10 +925,12 @@ model Payment {
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById       String?        @map("created_by") @db.Uuid
 
-  bill   Bill?  @relation(fields: [billId], references: [id])
-  outlet Outlet @relation(fields: [outletId], references: [id])
+  bill   Bill?        @relation(fields: [billId], references: [id])
+  order  OutletOrder? @relation(fields: [orderId], references: [id])
+  outlet Outlet       @relation(fields: [outletId], references: [id])
 
   @@index([billId])
+  @@index([orderId])
   @@index([outletId, paymentDate])
   @@index([razorpayPaymentId])
   @@index([status])
