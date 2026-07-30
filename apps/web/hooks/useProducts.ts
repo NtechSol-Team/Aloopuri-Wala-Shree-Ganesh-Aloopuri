@@ -110,9 +110,10 @@ export function useDeleteCategory() {
 }
 
 // ── Products ──
-export function useProducts(params: { search?: string; categoryId?: string; page?: number; isPosEnabled?: boolean } = {}) {
+export function useProducts(params: { search?: string; categoryId?: string; page?: number; isPosEnabled?: boolean } = {}, enabled = true) {
   return useQuery({
     queryKey: ['products', params],
+    enabled,
     queryFn: async () => {
       const { data } = await api.get<ApiSuccess<Product[]>>('/products', { params: { limit: 100, ...params } });
       return { rows: data.data, meta: data.meta };
@@ -200,9 +201,10 @@ export function useSaveBom(productId: string) {
 }
 
 // ── Raw materials ──
-export function useRawMaterials(params: { search?: string; lowStockOnly?: boolean } = {}) {
+export function useRawMaterials(params: { search?: string; lowStockOnly?: boolean } = {}, enabled = true) {
   return useQuery({
     queryKey: ['raw-materials', params],
+    enabled,
     queryFn: async () => {
       const { data } = await api.get<ApiSuccess<RawMaterial[]>>('/raw-materials', { params: { limit: 100, ...params } });
       return { rows: data.data, meta: data.meta };

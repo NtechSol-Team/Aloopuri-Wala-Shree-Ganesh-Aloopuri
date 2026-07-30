@@ -23,7 +23,7 @@ export async function getPosition() {
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(card_amount+upi_amount),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(grand_total),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(grand_total),0)::float v FROM bills WHERE is_deleted=false AND status<>'CANCELLED' AND bill_date >= ${monthStart}`,
-      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM expenses WHERE is_deleted=false AND expense_date >= ${monthStart}`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM expenses WHERE is_deleted=false AND outlet_id IS NULL AND expense_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(total_cost),0)::float v FROM raw_material_intake WHERE is_deleted=false AND intake_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(balance_due),0)::float v FROM bills WHERE is_deleted=false AND status IN ('UNPAID','PARTIALLY_PAID')`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(current_stock*cost_per_unit),0)::float v FROM raw_materials WHERE is_deleted=false`,
@@ -34,7 +34,7 @@ export async function getPosition() {
           (SELECT COALESCE(SUM(o.quantity*p.base_price),0) FROM outlet_stock o JOIN products p ON p.id=o.product_id WHERE o.is_deleted=false)
         )::float v`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(total_material_cost),0)::float v FROM production_batches WHERE is_deleted=false AND production_date >= ${monthStart}`,
-      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(balance_due),0)::float v FROM supplier_bills WHERE is_deleted=false AND status IN ('UNPAID','PARTIALLY_PAID')`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(balance_due),0)::float v FROM supplier_bills WHERE is_deleted=false AND outlet_id IS NULL AND status IN ('UNPAID','PARTIALLY_PAID')`,
     ]);
 
     const moneyInCash = num(cashIn) + num(posCash);
@@ -101,7 +101,7 @@ export async function getDayBook(from: Date, to: Date) {
     UNION ALL
     SELECT 'EXPENSE', e.expense_date, e.paid_to, e.payment_method::text, ec.name, 0::float, e.amount::float
       FROM expenses e JOIN expense_categories ec ON ec.id=e.category_id
-      WHERE e.is_deleted=false AND e.expense_date BETWEEN $1::timestamptz AND $2::timestamptz
+      WHERE e.is_deleted=false AND e.outlet_id IS NULL AND e.expense_date BETWEEN $1::timestamptz AND $2::timestamptz
     UNION ALL
     SELECT 'PURCHASE', i.intake_date, i.supplier_name, NULL, i.invoice_number, 0::float, i.total_cost::float
       FROM raw_material_intake i WHERE i.is_deleted=false AND i.intake_date BETWEEN $1::timestamptz AND $2::timestamptz

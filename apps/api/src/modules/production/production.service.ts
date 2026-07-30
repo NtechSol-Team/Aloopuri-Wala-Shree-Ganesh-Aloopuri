@@ -4,6 +4,8 @@ import { prisma } from '../../config/prisma';
 import { logger } from '../../config/logger';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
+import { booksScopeFor } from '../../shared/utils/books';
+import type { AuthUser } from '../../shared/types/api';
 import { nextDocNumber } from '../../shared/utils/docNumber';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
 import { emitRealtime } from '../../sockets/realtime';
@@ -334,6 +336,7 @@ async function applyPurchaseLines(
   prepared: Awaited<ReturnType<typeof preparePurchase>>,
   input: PurchaseInput,
   userId: string,
+  outletId: string | null,
 ) {
   const { items, lineCalc, productName, categoryName, rawMaterialName } = prepared;
   let rawLineCount = 0;
@@ -426,6 +429,8 @@ async function applyPurchaseLines(
           categoryId: item.categoryId, amount: base, expenseDate: input.intakeDate, paymentMethod: input.paymentMethod,
           taxRate: item.taxRate, taxAmount: tax, hsnCode: item.hsnCode,
           paidTo: input.supplierName, supplierName: input.supplierName, invoiceNumber: input.invoiceNumber,
+          // The expense follows the bill's books — a branch purchase is the branch's cost.
+          outletId,
           note: item.description ?? input.notes, supplierBillId: billId, createdById: userId,
         },
       });
@@ -437,7 +442,31 @@ async function applyPurchaseLines(
   return { rawLineCount, fgLineCount, otherLineCount, assetLineCount };
 }
 
-export async function logPurchase(input: PurchaseInput, userId: string) {
+/**
+ * A branch buys its own supplies; it does not receive goods into the company's
+ * godown. Raw-material and finished-good lines move central stock and central
+ * weighted-average cost, so they are refused outright rather than silently
+ * dropped — as is the asset register, which is a head-office ledger.
+ */
+function assertBranchLinesAllowed(outletId: string | null, input: PurchaseInput) {
+  if (!outletId) return;
+  const stockLine = input.items.find((i) => i.kind !== 'OTHER');
+  if (stockLine) {
+    throw AppError.badRequest(
+      'A branch purchase can only record expense lines — goods received into the godown must be entered by the main owner.',
+      undefined,
+      'items',
+    );
+  }
+  if (input.items.some((i) => i.isAsset)) {
+    throw AppError.badRequest('The asset register is kept by the main owner, so a branch purchase cannot mark a line as an asset.', undefined, 'items');
+  }
+}
+
+export async function logPurchase(input: PurchaseInput, user: AuthUser) {
+  const userId = user.id;
+  const { outletId } = booksScopeFor(user);
+  assertBranchLinesAllowed(outletId, input);
   const prepared = await preparePurchase(input);
   const { billTotal, paidNow, taxableTotal, taxTotal, roundOff, cgst, sgst, igst } = prepared;
 
@@ -467,13 +496,14 @@ export async function logPurchase(input: PurchaseInput, userId: string) {
         creditDays,
         dueDate,
         isGstBill: input.isGstBill,
+        outletId,
         notes: input.notes,
         createdById: userId,
       },
     });
 
     // 2) Each line: store an itemized bill line + apply its side effect.
-    const counts = await applyPurchaseLines(tx, bill.id, prepared, input, userId);
+    const counts = await applyPurchaseLines(tx, bill.id, prepared, input, userId, outletId);
 
     // 3) Initial supplier payment (if anything paid at entry).
     if (paidNow.greaterThan(0)) {
@@ -577,7 +607,12 @@ async function reversePurchaseEffects(tx: Prisma.TransactionClient, billId: stri
 }
 
 /** Edit a purchase bill: reverse its old effects, then re-apply fresh ones under the same bill number. */
-export async function updatePurchase(id: string, input: PurchaseInput, userId: string) {
+export async function updatePurchase(id: string, input: PurchaseInput, user: AuthUser) {
+  const userId = user.id;
+  const { outletId } = booksScopeFor(user);
+  assertBranchLinesAllowed(outletId, input);
+  const existing = await prisma.supplierBill.findFirst({ where: { id, isDeleted: false, outletId }, select: { id: true } });
+  if (!existing) throw AppError.notFound('Purchase bill not found');
   const prepared = await preparePurchase(input);
   const { billTotal, paidNow, taxableTotal, taxTotal, roundOff, cgst, sgst, igst } = prepared;
 
@@ -612,7 +647,7 @@ export async function updatePurchase(id: string, input: PurchaseInput, userId: s
       },
     });
 
-    const counts = await applyPurchaseLines(tx, bill.id, prepared, input, userId);
+    const counts = await applyPurchaseLines(tx, bill.id, prepared, input, userId, outletId);
 
     if (paidNow.greaterThan(0)) {
       await tx.supplierPayment.create({
@@ -651,9 +686,10 @@ export async function updatePurchase(id: string, input: PurchaseInput, userId: s
  * instead SOFT-deletes it: its number is retired (a gap remains) and no other
  * bill's number is ever rewritten, keeping the audit trail intact.
  */
-export async function deletePurchase(id: string) {
+export async function deletePurchase(id: string, user: AuthUser) {
+  const { outletId } = booksScopeFor(user);
   await prisma.$transaction(async (tx) => {
-    const bill = await tx.supplierBill.findFirst({ where: { id, isDeleted: false }, select: { billNumber: true } });
+    const bill = await tx.supplierBill.findFirst({ where: { id, isDeleted: false, outletId }, select: { billNumber: true } });
     if (!bill) throw AppError.notFound('Purchase bill not found');
     await reversePurchaseEffects(tx, id);
     await tx.supplierPayment.deleteMany({ where: { supplierBillId: id } });
@@ -680,9 +716,10 @@ export async function deletePurchase(id: string) {
 export interface ListPurchasesQuery { status?: string; search?: string }
 
 /** Purchase bills (supplier bills) for the Purchases register. */
-export async function listPurchases(query: ListPurchasesQuery = {}) {
+export async function listPurchases(query: ListPurchasesQuery = {}, user: AuthUser) {
   const where: Prisma.SupplierBillWhereInput = {
     isDeleted: false,
+    ...booksScopeFor(user),
     ...(query.status ? { status: query.status as Prisma.EnumSupplierBillStatusFilter['equals'] } : {}),
     ...(query.search
       ? { OR: [{ supplierName: { contains: query.search, mode: 'insensitive' } }, { invoiceNumber: { contains: query.search, mode: 'insensitive' } }, { billNumber: { contains: query.search, mode: 'insensitive' } }] }
@@ -700,9 +737,9 @@ export async function listPurchases(query: ListPurchasesQuery = {}) {
 }
 
 /** Full itemized purchase bill with GST breakup + payments. */
-export async function getPurchaseDetail(id: string) {
+export async function getPurchaseDetail(id: string, user: AuthUser) {
   const bill = await prisma.supplierBill.findFirst({
-    where: { id, isDeleted: false },
+    where: { id, isDeleted: false, ...booksScopeFor(user) },
     include: { items: { where: { isDeleted: false } }, payments: { where: { isDeleted: false }, orderBy: { paymentDate: 'desc' } } },
   });
   if (!bill) throw AppError.notFound('Purchase bill not found');

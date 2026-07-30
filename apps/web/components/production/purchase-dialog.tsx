@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/select';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
+import { useAuthStore } from '@/store/auth.store';
 import { useRawMaterials, useProducts } from '@/hooks/useProducts';
 import { useExpenseCategories, useCreateExpenseCategory } from '@/hooks/useExpenses';
 import { useRecordPurchase, useUpdatePurchase, type PurchaseItemInput, type PurchaseBillDetail } from '@/hooks/useProduction';
@@ -36,11 +37,16 @@ const KIND_META: Record<Line['kind'], { label: string; icon: typeof Boxes }> = {
 };
 
 export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean; onOpenChange: (v: boolean) => void; editBill?: PurchaseBillDetail | null }) {
-  const { data: materials } = useRawMaterials();
-  const { data: productsData } = useProducts({ isPosEnabled: false });
+  // A branch buys its own supplies; it never receives goods into the company's
+  // godown and does not keep the asset register. So it gets expense lines only —
+  // the API refuses anything else (see assertBranchLinesAllowed). The godown-only
+  // reference lists below would 403 for them, so those queries stay switched off.
+  const isBranch = useAuthStore((st) => st.user?.role) === 'FRANCHISE_OWNER';
+  const { data: materials } = useRawMaterials({}, !isBranch);
+  const { data: productsData } = useProducts({ isPosEnabled: false }, !isBranch);
   const { data: categories } = useExpenseCategories();
   const createCategory = useCreateExpenseCategory();
-  const { data: suppliers } = useContacts({ type: 'SUPPLIER' });
+  const { data: suppliers } = useContacts({ type: 'SUPPLIER' }, !isBranch);
   const record = useRecordPurchase();
   const updateMutation = useUpdatePurchase();
   const lookup = useGstLookup();
@@ -109,13 +115,13 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
 
     // New bill: hold off until both reference queries have resolved (even to an
     // empty list) so the first seeded line isn't stuck with a blank id.
-    if (materials === undefined || categories === undefined) return;
+    if ((!isBranch && materials === undefined) || categories === undefined) return;
     initedRef.current = true;
     setIsGstBill(true);
     setSupplier(''); setGstin(''); setSupplierState(''); setShowSuggestions(false);
     setInvoice(''); setBillDate(today()); setMethod('CASH'); setPayMode('full'); setCustomPaid(0); setCreditDays(30); setRoundOff(0);
     setNewCatLine(-1); setNewCatName('');
-    setLines(rmList.length ? [newRawLine()] : catList.length ? [newOtherLine()] : []);
+    setLines(isBranch || !rmList.length ? (catList.length ? [newOtherLine()] : []) : [newRawLine()]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editBill, materials, categories]);
 
@@ -309,7 +315,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
                 return (
                   <TR key={i}>
                     <TD className="px-1.5 py-1.5">
-                      <div className="flex overflow-hidden rounded-md border border-border">
+                      <div className={cn('flex overflow-hidden rounded-md border border-border', isBranch && 'hidden')}>
                         {(Object.keys(KIND_META) as Line['kind'][]).map((k) => {
                           const Icon = KIND_META[k].icon;
                           return (
@@ -365,15 +371,17 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
                       )}
                       {/* Ticking this sends the line to the asset register instead of
                           stock/expense — a capital buy shouldn't hit this month's P&L. */}
-                      <label className="flex cursor-pointer items-center gap-1.5 text-caption text-muted-foreground">
-                        <input
-                          type="checkbox"
-                          className="h-3.5 w-3.5"
-                          checked={line.isAsset}
-                          onChange={(e) => update(i, { isAsset: e.target.checked } as Partial<Line>)}
-                        />
-                        Is Asset?
-                      </label>
+                      {!isBranch && (
+                        <label className="flex cursor-pointer items-center gap-1.5 text-caption text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5"
+                            checked={line.isAsset}
+                            onChange={(e) => update(i, { isAsset: e.target.checked } as Partial<Line>)}
+                          />
+                          Is Asset?
+                        </label>
+                      )}
                       </div>
                     </TD>
 
@@ -424,9 +432,13 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newRawLine()])} disabled={rmList.length === 0}><Plus className="h-4 w-4" /> Raw material</Button>
-          <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newFgLine()])} disabled={prodList.length === 0}><Plus className="h-4 w-4" /> Finished good</Button>
-          <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newOtherLine()])} disabled={catList.length === 0}><Plus className="h-4 w-4" /> Other item</Button>
+          {!isBranch && (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newRawLine()])} disabled={rmList.length === 0}><Plus className="h-4 w-4" /> Raw material</Button>
+              <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newFgLine()])} disabled={prodList.length === 0}><Plus className="h-4 w-4" /> Finished good</Button>
+            </>
+          )}
+          <Button variant="secondary" size="sm" onClick={() => setLines((l) => [...l, newOtherLine()])} disabled={catList.length === 0}><Plus className="h-4 w-4" /> {isBranch ? 'Add item' : 'Other item'}</Button>
         </div>
 
         {/* GST + round-off summary */}

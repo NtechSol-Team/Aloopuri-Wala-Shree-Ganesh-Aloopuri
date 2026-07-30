@@ -17,11 +17,14 @@ import { expensesService } from './expenses.service';
 
 const idParam = z.object({ id: z.string().uuid() });
 const router = Router();
-router.use(authGuard, requireRole(UserRole.SUPER_ADMIN, UserRole.GODOWN_MANAGER));
+// A franchise owner keeps their own branch's expense book. The service scopes every
+// read and write to whoever is asking (see shared/utils/books), so one owner can
+// never see or touch another branch's costs, nor the company's.
+router.use(authGuard, requireRole(UserRole.SUPER_ADMIN, UserRole.GODOWN_MANAGER, UserRole.FRANCHISE_OWNER));
 
 const actor = (req: Request) => {
   if (!req.user) throw AppError.unauthorized();
-  return req.user.id;
+  return req.user;
 };
 
 router.get('/categories', asyncHandler(async (_req: Request, res: Response) => ok(res, await expensesService.listCategories())));
@@ -29,22 +32,26 @@ router.post(
   '/categories',
   writeRateLimiter,
   validate({ body: createExpenseCategorySchema }),
-  asyncHandler(async (req: Request, res: Response) => created(res, await expensesService.createCategory((req.body as { name: string }).name, actor(req)), 'Category created')),
+  asyncHandler(async (req: Request, res: Response) => created(res, await expensesService.createCategory((req.body as { name: string }).name, actor(req).id), 'Category created')),
 );
+// Categories are shared labels, so a branch may add one it needs — but renaming
+// relabels every historical expense including the company's, which is not a
+// branch's call.
 router.patch(
   '/categories/:id',
+  requireRole(UserRole.SUPER_ADMIN, UserRole.GODOWN_MANAGER),
   validate({ params: idParam, body: updateExpenseCategorySchema }),
   asyncHandler(async (req: Request, res: Response) => ok(res, await expensesService.updateCategory(req.params.id, (req.body as { name: string }).name), 'Category renamed')),
 );
 
-router.get('/summary', validate({ query: expenseSummaryQuerySchema }), asyncHandler(async (req: Request, res: Response) => ok(res, await expensesService.getSummary(req.query as unknown as ExpenseSummaryQuery))));
+router.get('/summary', validate({ query: expenseSummaryQuerySchema }), asyncHandler(async (req: Request, res: Response) => ok(res, await expensesService.getSummary(req.query as unknown as ExpenseSummaryQuery, actor(req)))));
 
 router.get('/', validate({ query: listExpensesQuerySchema }), asyncHandler(async (req: Request, res: Response) => {
-  const { rows, meta } = await expensesService.listExpenses(req.query as unknown as ListExpensesQuery);
+  const { rows, meta } = await expensesService.listExpenses(req.query as unknown as ListExpensesQuery, actor(req));
   return paginated(res, rows, meta);
 }));
 router.post('/', writeRateLimiter, validate({ body: createExpenseSchema }), asyncHandler(async (req: Request, res: Response) => created(res, await expensesService.createExpense(req.body as CreateExpenseInput, actor(req)), 'Expense added')));
-router.patch('/:id', validate({ params: idParam, body: updateExpenseSchema }), asyncHandler(async (req: Request, res: Response) => ok(res, await expensesService.updateExpense(req.params.id, req.body as UpdateExpenseInput), 'Expense updated')));
-router.delete('/:id', validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await expensesService.deleteExpense(req.params.id), 'Expense deleted')));
+router.patch('/:id', validate({ params: idParam, body: updateExpenseSchema }), asyncHandler(async (req: Request, res: Response) => ok(res, await expensesService.updateExpense(req.params.id, req.body as UpdateExpenseInput, actor(req)), 'Expense updated')));
+router.delete('/:id', validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await expensesService.deleteExpense(req.params.id, actor(req)), 'Expense deleted')));
 
 export const expensesRouter = router;

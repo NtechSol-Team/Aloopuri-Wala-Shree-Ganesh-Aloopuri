@@ -326,6 +326,8 @@ model Outlet {
   directTransfers StockTransfer[]      @relation("OutletDirectTransfers")
   specialPrices   OutletProductPrice[]
   documents       OutletDocument[]
+  expenses        Expense[]
+  supplierBills   SupplierBill[]
   assignedMenu    Menu?                @relation(fields: [assignedMenuId], references: [id], onDelete: SetNull)
 
   @@index([isActive])
@@ -1052,6 +1054,11 @@ model Expense {
   supplierName    String?         @map("supplier_name")
   invoiceNumber   String?         @map("invoice_number")
   location        ExpenseLocation @default(GENERAL)
+  // Whose expense this is. NULL = the business's own (godown / main branch), which
+  // is every expense that existed before franchises could record their own. A set
+  // outletId means the branch bears the cost alone: it is invisible to the main
+  // owner and excluded from company accounting and the P&L.
+  outletId        String?         @map("outlet_id") @db.Uuid
   note            String?
   receiptPhotoUrl String?         @map("receipt_photo_url")
   hsnCode         String?         @map("hsn_code")
@@ -1065,12 +1072,14 @@ model Expense {
 
   category     ExpenseCategory @relation(fields: [categoryId], references: [id])
   supplierBill SupplierBill?   @relation(fields: [supplierBillId], references: [id])
+  outlet       Outlet?         @relation(fields: [outletId], references: [id])
   payroll      Payroll?
 
   @@index([categoryId, expenseDate])
   @@index([location, expenseDate])
   @@index([expenseDate])
   @@index([supplierBillId])
+  @@index([outletId, expenseDate])
   @@map("expenses")
 }
 
@@ -1231,6 +1240,10 @@ model SupplierBill {
   dueDate       DateTime?          @map("due_date") @db.Timestamptz(6)
   // Whether this purchase carries GST (unregistered/composition suppliers often don't).
   isGstBill     Boolean            @default(true) @map("is_gst_bill")
+  // Who bought it. NULL = the business's own purchase, the only kind that may move
+  // godown stock. A set outletId is a branch buying its own supplies: expense lines
+  // only, borne by that branch alone. See Expense.outletId.
+  outletId      String?            @map("outlet_id") @db.Uuid
   notes         String?
   isDeleted     Boolean            @default(false) @map("is_deleted")
   createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -1242,10 +1255,12 @@ model SupplierBill {
   expenseLines Expense[]
   items        SupplierBillItem[]
   assets       Asset[]
+  outlet       Outlet?             @relation(fields: [outletId], references: [id])
 
   @@index([status, billDate])
   @@index([supplierName])
   @@index([status, dueDate])
+  @@index([outletId, billDate])
   @@map("supplier_bills")
 }
 

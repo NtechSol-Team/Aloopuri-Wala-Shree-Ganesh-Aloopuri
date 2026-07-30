@@ -45,9 +45,10 @@ export interface ContactPayload {
   bankIfsc?: string;
 }
 
-export function useContacts(params: { search?: string; type?: ContactType } = {}) {
+export function useContacts(params: { search?: string; type?: ContactType } = {}, enabled = true) {
   return useQuery({
     queryKey: ['contacts', params],
+    enabled,
     queryFn: async () => (await api.get<ApiSuccess<Contact[]>>('/contacts', { params: { limit: 100, ...params } })).data.data,
   });
 }

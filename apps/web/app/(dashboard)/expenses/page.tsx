@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { apiErrorMessage } from '@/lib/api';
+import { useAuthStore } from '@/store/auth.store';
 import { cn, formatINR, ist, todayIso } from '@/lib/utils';
 import {
   useExpenseCategories, useCreateExpenseCategory, useUpdateExpenseCategory,
@@ -91,6 +92,9 @@ function rangeFor(preset: PresetKey, custom: { from: string; to: string }): {
 }
 
 export default function ExpensesPage() {
+  // A branch's expenses are all its own, so the Godown/Main Branch/General split —
+  // which describes where the *company* spent — has nothing to say about them.
+  const isBranch = useAuthStore((s) => s.user?.role) === 'FRANCHISE_OWNER';
   const [preset, setPreset] = useState<PresetKey>('this-month');
   const [custom, setCustom] = useState({ from: today(), to: today() });
   const [location, setLocation] = useState<ExpenseLocation | ''>('');
@@ -134,7 +138,7 @@ export default function ExpensesPage() {
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <h1 className="text-card-title font-bold">Expenses</h1>
-          <p className="text-caption text-muted-foreground">{range.label} · what the business spent</p>
+          <p className="text-caption text-muted-foreground">{range.label} · what {isBranch ? 'your outlet' : 'the business'} spent</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Select className="w-40" value={preset} onChange={(e) => setPreset(e.target.value as PresetKey)}>
@@ -149,10 +153,12 @@ export default function ExpensesPage() {
             <option value="">All categories</option>
             {(categories ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
-          <Select className="w-40" value={location} onChange={(e) => setLocation(e.target.value as ExpenseLocation | '')}>
-            <option value="">All locations</option>
-            {LOCATIONS.map((l) => <option key={l} value={l}>{LOCATION_LABEL[l]}</option>)}
-          </Select>
+          {!isBranch && (
+            <Select className="w-40" value={location} onChange={(e) => setLocation(e.target.value as ExpenseLocation | '')}>
+              <option value="">All locations</option>
+              {LOCATIONS.map((l) => <option key={l} value={l}>{LOCATION_LABEL[l]}</option>)}
+            </Select>
+          )}
           <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> Add Expense</Button>
         </div>
       </div>
@@ -326,11 +332,11 @@ export default function ExpensesPage() {
             <THead>
               <TR>
                 <TH className="w-32">Date</TH><TH>Category</TH><TH>Paid to</TH>
-                <TH>Location</TH><TH>Method</TH><TH className="text-right">Amount</TH><TH className="w-24" />
+                {!isBranch && <TH>Location</TH>}<TH>Method</TH><TH className="text-right">Amount</TH><TH className="w-24" />
               </TR>
             </THead>
             <TBody>
-              {expenses.map((e) => <ExpenseRow key={e.id} expense={e} onEdit={() => setEditing(e)} />)}
+              {expenses.map((e) => <ExpenseRow key={e.id} expense={e} isBranch={isBranch} onEdit={() => setEditing(e)} />)}
             </TBody>
           </Table>
         )}
@@ -340,6 +346,7 @@ export default function ExpensesPage() {
         open={creating || !!editing}
         onOpenChange={(v) => { if (!v) { setCreating(false); setEditing(null); } }}
         expense={editing}
+        isBranch={isBranch}
       />
       <CategoriesDialog open={managingCategories} onOpenChange={setManagingCategories} />
     </div>
@@ -361,7 +368,7 @@ function StatCard({ label, value, icon: Icon, foot }: {
   );
 }
 
-function ExpenseRow({ expense, onEdit }: { expense: Expense; onEdit: () => void }) {
+function ExpenseRow({ expense, isBranch, onEdit }: { expense: Expense; isBranch: boolean; onEdit: () => void }) {
   const del = useDeleteExpense();
   const remove = () => {
     if (!window.confirm(`Delete this ${formatINR(expense.amount)} expense?`)) return;
@@ -375,7 +382,7 @@ function ExpenseRow({ expense, onEdit }: { expense: Expense; onEdit: () => void 
       <TD className="whitespace-nowrap">{format(ist(expense.expenseDate), 'dd MMM yyyy')}</TD>
       <TD className="font-medium">{expense.category.name}</TD>
       <TD className="text-muted-foreground">{expense.paidTo || '—'}</TD>
-      <TD><Badge variant="neutral">{LOCATION_LABEL[expense.location]}</Badge></TD>
+      {!isBranch && <TD><Badge variant="neutral">{LOCATION_LABEL[expense.location]}</Badge></TD>}
       <TD className="text-caption">{METHOD_LABEL[expense.paymentMethod] ?? expense.paymentMethod}</TD>
       <TD className="text-right font-semibold tabular-nums">{formatINR(expense.amount)}</TD>
       <TD>
@@ -394,8 +401,8 @@ const emptyExpense = {
   paidTo: '', note: '',
 };
 
-function ExpenseFormDialog({ open, onOpenChange, expense }: {
-  open: boolean; onOpenChange: (v: boolean) => void; expense: Expense | null;
+function ExpenseFormDialog({ open, onOpenChange, expense, isBranch }: {
+  open: boolean; onOpenChange: (v: boolean) => void; expense: Expense | null; isBranch: boolean;
 }) {
   const { data: categories } = useExpenseCategories();
   const save = useSaveExpense();
@@ -461,12 +468,14 @@ function ExpenseFormDialog({ open, onOpenChange, expense }: {
             <Label>Date</Label>
             <Input type="date" value={form.expenseDate} onChange={(e) => set('expenseDate', e.target.value)} />
           </div>
-          <div className="space-y-1.5">
-            <Label>Location</Label>
-            <Select value={form.location} onChange={(e) => set('location', e.target.value as ExpenseLocation)}>
-              {LOCATIONS.map((l) => <option key={l} value={l}>{LOCATION_LABEL[l]}</option>)}
-            </Select>
-          </div>
+          {!isBranch && (
+            <div className="space-y-1.5">
+              <Label>Location</Label>
+              <Select value={form.location} onChange={(e) => set('location', e.target.value as ExpenseLocation)}>
+                {LOCATIONS.map((l) => <option key={l} value={l}>{LOCATION_LABEL[l]}</option>)}
+              </Select>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Payment method</Label>
             <Select value={form.paymentMethod} onChange={(e) => set('paymentMethod', e.target.value)}>

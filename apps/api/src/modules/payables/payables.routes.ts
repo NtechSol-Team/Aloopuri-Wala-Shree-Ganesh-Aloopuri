@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { UserRole } from '@prisma/client';
 import type { Request, Response } from 'express';
 import { asyncHandler } from '../../shared/utils/asyncHandler';
 import { validate } from '../../shared/middleware/validate';
 import { authGuard } from '../../shared/guards/authGuard';
-import { requireGodownAccess } from '../../shared/guards/roleGuard';
+import { requireRole } from '../../shared/guards/roleGuard';
 import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { created, ok, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
@@ -13,19 +14,21 @@ import { payablesService } from './payables.service';
 
 const idParam = z.object({ id: z.string().uuid() });
 const router = Router();
-router.use(authGuard, requireGodownAccess); // owner + godown manager
+// A franchise owner settles their own branch's supplier bills; the service scopes
+// every read and write to their books (see shared/utils/books).
+router.use(authGuard, requireRole(UserRole.SUPER_ADMIN, UserRole.GODOWN_MANAGER, UserRole.FRANCHISE_OWNER));
 
 const actor = (req: Request) => {
   if (!req.user) throw AppError.unauthorized();
-  return req.user.id;
+  return req.user;
 };
 
-router.get('/summary', asyncHandler(async (_req: Request, res: Response) => ok(res, await payablesService.getPayablesSummary())));
+router.get('/summary', asyncHandler(async (req: Request, res: Response) => ok(res, await payablesService.getPayablesSummary(actor(req)))));
 router.get('/', validate({ query: listPayablesQuerySchema }), asyncHandler(async (req: Request, res: Response) => {
-  const { rows, meta } = await payablesService.listPayables(req.query as unknown as ListPayablesQuery);
+  const { rows, meta } = await payablesService.listPayables(req.query as unknown as ListPayablesQuery, actor(req));
   return paginated(res, rows, meta);
 }));
-router.get('/:id', validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await payablesService.getPayable(req.params.id))));
+router.get('/:id', validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await payablesService.getPayable(req.params.id, actor(req)))));
 router.post('/:id/pay', writeRateLimiter, validate({ params: idParam, body: paySupplierSchema }), asyncHandler(async (req: Request, res: Response) =>
   created(res, await payablesService.paySupplier(req.params.id, req.body as PaySupplierInput, actor(req)), 'Supplier payment recorded'),
 ));

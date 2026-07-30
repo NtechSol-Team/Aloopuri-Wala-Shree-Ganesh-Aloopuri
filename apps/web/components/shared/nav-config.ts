@@ -36,8 +36,10 @@ export const navItems: NavItem[] = [
   { label: 'Inventory', href: '/inventory', icon: Boxes, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   // Sales holds Orders + Bills as tabs; a franchise owner still sees only their own outlet's.
   { label: 'Sales', href: '/sales', icon: ShoppingCart, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER', 'FRANCHISE_OWNER'] },
-  { label: 'Purchases', href: '/purchases', icon: ShoppingBag, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
-  { label: 'Expenses', href: '/expenses', icon: TrendingUp, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
+  // A franchise owner keeps their own branch's purchase and expense book. It is a
+  // separate set of records from the company's — see shared/utils/books on the API.
+  { label: 'Purchases', href: '/purchases', icon: ShoppingBag, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER', 'FRANCHISE_OWNER'] },
+  { label: 'Expenses', href: '/expenses', icon: TrendingUp, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER', 'FRANCHISE_OWNER'] },
   { label: 'Payments', href: '/payments', icon: Wallet, roles: ['SUPER_ADMIN', 'FRANCHISE_OWNER', 'GODOWN_MANAGER'] },
   { label: 'Contacts', href: '/contacts', icon: Contact, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Accounting', href: '/accounting', icon: Landmark, roles: ['SUPER_ADMIN'] },

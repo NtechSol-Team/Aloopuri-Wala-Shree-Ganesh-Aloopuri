@@ -9,6 +9,12 @@ function actor(req: Request): string {
   return req.user.id;
 }
 
+/** Purchases are scoped to whose books the caller keeps, so they need the whole user. */
+function user(req: Request) {
+  if (!req.user) throw AppError.unauthorized();
+  return req.user;
+}
+
 export const logBatchController = async (req: Request, res: Response) =>
   created(res, await productionService.logBatch(req.body as LogBatchInput, actor(req)), 'Production batch logged');
 
@@ -29,19 +35,19 @@ export const listIntakeController = async (req: Request, res: Response) => {
 };
 
 export const recordPurchaseController = async (req: Request, res: Response) =>
-  created(res, await productionService.logPurchase(req.body as RecordPurchaseInput, actor(req)), 'Purchase recorded');
+  created(res, await productionService.logPurchase(req.body as RecordPurchaseInput, user(req)), 'Purchase recorded');
 
 export const updatePurchaseController = async (req: Request, res: Response) =>
-  ok(res, await productionService.updatePurchase(req.params.id, req.body as RecordPurchaseInput, actor(req)), 'Purchase bill updated');
+  ok(res, await productionService.updatePurchase(req.params.id, req.body as RecordPurchaseInput, user(req)), 'Purchase bill updated');
 
 export const deletePurchaseController = async (req: Request, res: Response) =>
-  ok(res, await productionService.deletePurchase(req.params.id), 'Purchase bill deleted');
+  ok(res, await productionService.deletePurchase(req.params.id, user(req)), 'Purchase bill deleted');
 
 export const listPurchasesController = async (req: Request, res: Response) =>
-  ok(res, await productionService.listPurchases({ status: req.query.status as string | undefined, search: req.query.search as string | undefined }));
+  ok(res, await productionService.listPurchases({ status: req.query.status as string | undefined, search: req.query.search as string | undefined }, user(req)));
 
 export const getPurchaseDetailController = async (req: Request, res: Response) =>
-  ok(res, await productionService.getPurchaseDetail(req.params.id));
+  ok(res, await productionService.getPurchaseDetail(req.params.id, user(req)));
 
 export const godownStockController = async (_req: Request, res: Response) =>
   ok(res, await productionService.getGodownStock());

@@ -4,6 +4,8 @@ import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
 import { IST_AT, istRange } from '../../shared/utils/date';
+import { booksScopeFor } from '../../shared/utils/books';
+import type { AuthUser } from '../../shared/types/api';
 import type { CreateExpenseInput, ExpenseSummaryQuery, ListExpensesQuery, UpdateExpenseInput } from './expenses.schema';
 
 const invalidate = () => cache.invalidateTags(CacheTag.EXPENSES, CacheTag.ANALYTICS, CacheTag.DASHBOARD);
@@ -40,9 +42,10 @@ export async function updateCategory(id: string, name: string) {
   return category;
 }
 
-export async function listExpenses(query: ListExpensesQuery) {
+export async function listExpenses(query: ListExpensesQuery, user: AuthUser) {
   const where: Prisma.ExpenseWhereInput = {
     isDeleted: false,
+    ...booksScopeFor(user),
     ...(query.categoryId ? { categoryId: query.categoryId } : {}),
     ...(query.location ? { location: query.location } : {}),
     ...dateWindow(query.from, query.to),
@@ -58,33 +61,39 @@ export async function listExpenses(query: ListExpensesQuery) {
   return { rows, meta: buildPaginationMeta(query, total) };
 }
 
-export async function createExpense(input: CreateExpenseInput, createdById: string) {
+export async function createExpense(input: CreateExpenseInput, user: AuthUser) {
   const category = await prisma.expenseCategory.findFirst({ where: { id: input.categoryId, isDeleted: false } });
   if (!category) throw AppError.badRequest('Invalid expense category', undefined, 'categoryId');
-  const expense = await prisma.expense.create({ data: { ...input, createdById }, include: { category: { select: { id: true, name: true } } } });
+  const expense = await prisma.expense.create({
+    // outletId comes from who is filing, never from the request body.
+    data: { ...input, ...booksScopeFor(user), createdById: user.id },
+    include: { category: { select: { id: true, name: true } } },
+  });
   invalidate();
   return expense;
 }
 
-export async function updateExpense(id: string, input: UpdateExpenseInput) {
-  const existing = await prisma.expense.findFirst({ where: { id, isDeleted: false } });
+export async function updateExpense(id: string, input: UpdateExpenseInput, user: AuthUser) {
+  const existing = await prisma.expense.findFirst({ where: { id, isDeleted: false, ...booksScopeFor(user) } });
   if (!existing) throw AppError.notFound('Expense not found');
   const expense = await prisma.expense.update({ where: { id }, data: input, include: { category: { select: { id: true, name: true } } } });
   invalidate();
   return expense;
 }
 
-export async function deleteExpense(id: string) {
-  const existing = await prisma.expense.findFirst({ where: { id, isDeleted: false } });
+export async function deleteExpense(id: string, user: AuthUser) {
+  const existing = await prisma.expense.findFirst({ where: { id, isDeleted: false, ...booksScopeFor(user) } });
   if (!existing) throw AppError.notFound('Expense not found');
   await prisma.expense.update({ where: { id }, data: { isDeleted: true } });
   invalidate();
   return { deleted: true };
 }
 
-export async function getSummary(query: ExpenseSummaryQuery) {
+export async function getSummary(query: ExpenseSummaryQuery, user: AuthUser) {
+  const { outletId } = booksScopeFor(user);
   const where: Prisma.ExpenseWhereInput = {
     isDeleted: false,
+    outletId,
     ...(query.location ? { location: query.location } : {}),
     ...(query.categoryId ? { categoryId: query.categoryId } : {}),
     ...dateWindow(query.from, query.to),
@@ -111,6 +120,7 @@ export async function getSummary(query: ExpenseSummaryQuery) {
            COALESCE(SUM(amount), 0)::float AS total
     FROM expenses
     WHERE is_deleted = false
+      ${outletId ? Prisma.sql`AND outlet_id = ${outletId}::uuid` : Prisma.sql`AND outlet_id IS NULL`}
       ${query.location ? Prisma.sql`AND location = ${query.location}::"ExpenseLocation"` : Prisma.empty}
       ${query.categoryId ? Prisma.sql`AND category_id = ${query.categoryId}::uuid` : Prisma.empty}
       AND expense_date ${Prisma.raw(IST_AT)} >= date_trunc('month', now() ${Prisma.raw(IST_AT)}) - interval '5 months'

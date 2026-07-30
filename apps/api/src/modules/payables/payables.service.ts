@@ -3,13 +3,16 @@ import { startOfMonth } from 'date-fns';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
+import { booksScopeFor } from '../../shared/utils/books';
+import type { AuthUser } from '../../shared/types/api';
 import { nextDocNumber } from '../../shared/utils/docNumber';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
 import type { ListPayablesQuery, PaySupplierInput } from './payables.schema';
 
-export async function listPayables(query: ListPayablesQuery) {
+export async function listPayables(query: ListPayablesQuery, user: AuthUser) {
   const where: Prisma.SupplierBillWhereInput = {
     isDeleted: false,
+    ...booksScopeFor(user),
     ...(query.status ? { status: query.status } : {}),
     ...(query.outstandingOnly ? { status: { in: [SupplierBillStatus.UNPAID, SupplierBillStatus.PARTIALLY_PAID] } } : {}),
     ...(query.search ? { OR: [{ supplierName: { contains: query.search, mode: 'insensitive' } }, { invoiceNumber: { contains: query.search, mode: 'insensitive' } }, { billNumber: { contains: query.search, mode: 'insensitive' } }] } : {}),
@@ -25,9 +28,9 @@ export async function listPayables(query: ListPayablesQuery) {
   return { rows, meta: buildPaginationMeta(query, total) };
 }
 
-export async function getPayable(id: string) {
+export async function getPayable(id: string, user: AuthUser) {
   const bill = await prisma.supplierBill.findFirst({
-    where: { id, isDeleted: false },
+    where: { id, isDeleted: false, ...booksScopeFor(user) },
     include: {
       payments: { where: { isDeleted: false }, orderBy: { paymentDate: 'desc' } },
       intakeLines: { include: { rawMaterial: { select: { name: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } } } },
@@ -39,9 +42,11 @@ export async function getPayable(id: string) {
 }
 
 /** Record a payment to a supplier against a bill (insert-only). */
-export async function paySupplier(id: string, input: PaySupplierInput, userId: string) {
+export async function paySupplier(id: string, input: PaySupplierInput, user: AuthUser) {
+  const userId = user.id;
+  const { outletId } = booksScopeFor(user);
   const result = await prisma.$transaction(async (tx) => {
-    const bill = await tx.supplierBill.findFirst({ where: { id, isDeleted: false } });
+    const bill = await tx.supplierBill.findFirst({ where: { id, isDeleted: false, outletId } });
     if (!bill) throw AppError.notFound('Supplier bill not found');
     if (bill.status === SupplierBillStatus.PAID) throw AppError.invalidState('This bill is already fully paid');
 
@@ -68,12 +73,17 @@ export async function paySupplier(id: string, input: PaySupplierInput, userId: s
 }
 
 /** Payables dashboard: total owed, paid this month, supplier-wise + aging. */
-export async function getPayablesSummary() {
-  return cache.getOrSet('payables:summary', [CacheTag.PAYMENTS], async () => {
-    const outstandingWhere: Prisma.SupplierBillWhereInput = { isDeleted: false, status: { in: [SupplierBillStatus.UNPAID, SupplierBillStatus.PARTIALLY_PAID] } };
+export async function getPayablesSummary(user: AuthUser) {
+  const { outletId } = booksScopeFor(user);
+  // Cached per books — a branch's payables and the company's are different figures.
+  return cache.getOrSet(`payables:summary:${outletId ?? 'HEAD_OFFICE'}`, [CacheTag.PAYMENTS], async () => {
+    const outstandingWhere: Prisma.SupplierBillWhereInput = { isDeleted: false, outletId, status: { in: [SupplierBillStatus.UNPAID, SupplierBillStatus.PARTIALLY_PAID] } };
     const [totalPayable, paidThisMonth, bySupplierRaw, aging] = await Promise.all([
       prisma.supplierBill.aggregate({ _sum: { balanceDue: true }, where: outstandingWhere }),
-      prisma.supplierPayment.aggregate({ _sum: { amount: true }, where: { isDeleted: false, paymentDate: { gte: startOfMonth(new Date()) } } }),
+      prisma.supplierPayment.aggregate({
+        _sum: { amount: true },
+        where: { isDeleted: false, paymentDate: { gte: startOfMonth(new Date()) }, bill: { outletId } },
+      }),
       prisma.supplierBill.groupBy({ by: ['supplierName'], _sum: { balanceDue: true }, where: outstandingWhere }),
       prisma.$queryRawUnsafe<Array<{ bucket: string; amount: number }>>(
         `SELECT CASE
@@ -82,8 +92,11 @@ export async function getPayablesSummary() {
             WHEN now()::date - bill_date::date BETWEEN 16 AND 30 THEN '16-30'
             ELSE '30+'
           END AS bucket, COALESCE(SUM(balance_due),0)::float AS amount
-          FROM supplier_bills WHERE is_deleted=false AND status IN ('UNPAID','PARTIALLY_PAID')
+          FROM supplier_bills
+          WHERE is_deleted=false AND status IN ('UNPAID','PARTIALLY_PAID')
+            AND outlet_id IS NOT DISTINCT FROM $1::uuid
           GROUP BY 1`,
+        outletId,
       ),
     ]);
     const order = ['0-7', '8-15', '16-30', '30+'];

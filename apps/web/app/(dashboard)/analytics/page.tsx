@@ -242,6 +242,8 @@ function PosDetail({ outletId, header }: { outletId?: string | 'main'; header?: 
         </CardContent>
       </Card>
 
+      <DailyPosTable rows={data.daily} periodLabel={dailyLabel} />
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,320px)_1fr]">
         <Card className="overflow-hidden">
           <CardHeader className="py-3"><CardTitle className="text-body">Monthly POS Sales (last 12 months)</CardTitle></CardHeader>
@@ -353,6 +355,89 @@ function DateRangeFilter({ range, onChange }: { range: PosAnalyticsRange; onChan
       <Input type="date" className="h-8 w-[142px] pl-2 pr-1 text-caption" value={range.to ?? ''} min={range.from} onChange={(e) => onChange({ ...range, to: e.target.value || undefined })} />
       {active && <Button variant="secondary" size="sm" className="h-8 px-2 text-caption" onClick={() => onChange({})}>Clear</Button>}
     </div>
+  );
+}
+
+/**
+ * Day-by-day counter sheet — the numbers a shop actually reconciles against at
+ * close: how many tokens the till issued, how many sales completed, how many were
+ * voided, and what was taken. The chart above shows the shape of the week; this
+ * shows the figures.
+ */
+function DailyPosTable({ rows, periodLabel }: {
+  rows: Array<{ date: string; revenue: number; transactions: number; itemsSold: number; voided: number; voidedAmount: number }>;
+  periodLabel: string;
+}) {
+  // Zero-filled days pad the chart nicely but are noise in a table you're reading
+  // down, so days the till never opened are dropped.
+  const active = rows.filter((r) => r.transactions > 0 || r.voided > 0);
+  const total = active.reduce(
+    (t, r) => ({
+      tokens: t.tokens + r.transactions + r.voided,
+      transactions: t.transactions + r.transactions,
+      itemsSold: t.itemsSold + r.itemsSold,
+      revenue: t.revenue + r.revenue,
+      voided: t.voided + r.voided,
+    }),
+    { tokens: 0, transactions: 0, itemsSold: 0, revenue: 0, voided: 0 },
+  );
+
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="gap-1 py-3">
+        <CardTitle className="text-body">Day-wise POS Report — {periodLabel}</CardTitle>
+        <p className="text-caption text-muted-foreground">
+          Every sale takes a token, so tokens issued counts completed and voided bills together.
+        </p>
+      </CardHeader>
+      {!active.length ? (
+        <p className="py-10 text-center text-body text-muted-foreground">No sales in this period.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <Table className="text-caption">
+            <THead>
+              <TR>
+                <TH className="px-3">Date</TH>
+                <TH className="px-3 text-right">Tokens issued</TH>
+                <TH className="px-3 text-right">Bills completed</TH>
+                <TH className="px-3 text-right">Items sold</TH>
+                <TH className="px-3 text-right">Voided</TH>
+                <TH className="px-3 text-right">Avg bill</TH>
+                <TH className="px-3 text-right">Collection</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {active.map((r) => (
+                <TR key={r.date}>
+                  <TD className="whitespace-nowrap px-3 font-medium">{r.date}</TD>
+                  <TD className="px-3 text-right tabular-nums">{r.transactions + r.voided}</TD>
+                  <TD className="px-3 text-right tabular-nums">{r.transactions}</TD>
+                  <TD className="px-3 text-right tabular-nums">{r.itemsSold}</TD>
+                  <TD className={cn('px-3 text-right tabular-nums', r.voided > 0 && 'text-danger')}>
+                    {r.voided > 0 ? `${r.voided} · ${formatINR(r.voidedAmount, { decimals: false })}` : '—'}
+                  </TD>
+                  <TD className="px-3 text-right tabular-nums">
+                    {r.transactions > 0 ? formatINR(r.revenue / r.transactions, { decimals: false }) : '—'}
+                  </TD>
+                  <TD className="px-3 text-right font-semibold tabular-nums">{formatINR(r.revenue, { decimals: false })}</TD>
+                </TR>
+              ))}
+              <TR className="bg-surface font-bold">
+                <TD className="px-3">Total · {active.length} day{active.length === 1 ? '' : 's'}</TD>
+                <TD className="px-3 text-right tabular-nums">{total.tokens}</TD>
+                <TD className="px-3 text-right tabular-nums">{total.transactions}</TD>
+                <TD className="px-3 text-right tabular-nums">{total.itemsSold}</TD>
+                <TD className="px-3 text-right tabular-nums">{total.voided || '—'}</TD>
+                <TD className="px-3 text-right tabular-nums">
+                  {total.transactions > 0 ? formatINR(total.revenue / total.transactions, { decimals: false }) : '—'}
+                </TD>
+                <TD className="px-3 text-right tabular-nums">{formatINR(total.revenue, { decimals: false })}</TD>
+              </TR>
+            </TBody>
+          </Table>
+        </div>
+      )}
+    </Card>
   );
 }
 
