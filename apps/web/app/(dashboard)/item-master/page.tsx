@@ -23,20 +23,23 @@ import { useUnits, useSaveUnit, useDeleteUnit, type Unit } from '@/hooks/useUnit
 import { ProductFormDialog } from '@/components/products/product-form-dialog';
 import { BomDialog } from '@/components/products/bom-dialog';
 import { AssetsTab } from '@/components/assets/assets-tab';
+import { EmployeesSection } from '@/components/employees/employees-tab';
 
-type Tab = 'categories' | 'units' | 'products' | 'assets';
+type Tab = 'categories' | 'units' | 'products' | 'assets' | 'employees';
 
 export default function ItemMasterPage() {
   const role = useAuthStore((s) => s.user?.role);
-  // Products management stays owner-only, same as when it lived on its own page —
-  // moving it under Item Master is just relocating the entry point.
+  // Products and Employees stay owner-only, same as when each lived on its own
+  // page — moving them under Item Master is just relocating the entry point.
   const showProducts = role === 'SUPER_ADMIN';
+  const showEmployees = role === 'SUPER_ADMIN';
 
   const TABS: Array<[Tab, string]> = [
     ['categories', 'Category Master'],
     ['units', 'Unit Master'],
     ...(showProducts ? [['products', 'Products'] as [Tab, string]] : []),
     ['assets', 'Assets'],
+    ...(showEmployees ? [['employees', 'Employees'] as [Tab, string]] : []),
   ];
 
   const [tab, setTab] = useState<Tab>('categories');
@@ -62,6 +65,7 @@ export default function ItemMasterPage() {
       {tab === 'units' && <UnitsTab />}
       {tab === 'assets' && <AssetsTab />}
       {tab === 'products' && showProducts && <ProductsTab />}
+      {tab === 'employees' && showEmployees && <EmployeesSection />}
     </div>
   );
 }

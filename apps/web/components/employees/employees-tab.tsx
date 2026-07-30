@@ -23,22 +23,23 @@ import {
   type Employee, type EmployeeStatus, type EmploymentType, type Gender, type SalaryType, type Shift,
 } from '@/hooks/useEmployees';
 
-type Tab = 'employees' | 'shifts';
+type SubTab = 'employees' | 'shifts';
 
-const TABS: Array<[Tab, string]> = [
+const SUB_TABS: Array<[SubTab, string]> = [
   ['employees', 'Employees'],
   ['shifts', 'Shifts'],
 ];
 
 const today = () => todayIso();
 
-export default function EmployeesPage() {
-  const [tab, setTab] = useState<Tab>('employees');
+/** Employee Master + Shift Master, as a tab within Item Master. */
+export function EmployeesSection() {
+  const [tab, setTab] = useState<SubTab>('employees');
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="flex gap-2 border-b border-border">
-        {TABS.map(([key, label]) => (
+        {SUB_TABS.map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
