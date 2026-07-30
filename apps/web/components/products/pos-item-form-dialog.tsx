@@ -11,9 +11,10 @@ import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import {
-  UNITS, useCategories, useCreateCategory, useSaveProduct, useUploadProductPhoto, useRemoveProductPhoto,
-  type Category, type MeasurementUnit, type Product,
+  useCategories, useCreateCategory, useSaveProduct, useUploadProductPhoto, useRemoveProductPhoto,
+  type Category, type Product,
 } from '@/hooks/useProducts';
+import { useUnits } from '@/hooks/useUnits';
 import { productImageSrc } from '@/lib/menu-images';
 
 const GST_RATES = [0, 5, 12, 18, 28];
@@ -23,15 +24,18 @@ function slugSku(name: string): string {
   return `${base || 'ITEM'}-${Math.floor(100 + Math.random() * 900)}`;
 }
 
-const empty = { name: '', categoryId: '', unit: 'PIECE' as MeasurementUnit, price: 0, cost: 0, taxPercent: 5, trackInventory: true };
+const empty = { name: '', categoryId: '', unitId: '', price: 0, cost: 0, taxPercent: 5, trackInventory: true };
 
 export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean; onOpenChange: (v: boolean) => void; item: Product | null }) {
-  const { data: categories } = useCategories();
+  // POS items are finished goods, so only that side of the category master applies.
+  const { data: categories } = useCategories({ type: 'FINISHED_GOODS' });
+  const { data: units } = useUnits();
   const createCategory = useCreateCategory();
   const save = useSaveProduct();
   const uploadPhoto = useUploadProductPhoto();
   const removePhoto = useRemoveProductPhoto();
   const isEdit = !!item;
+  const unitList = units ?? [];
 
   const [form, setForm] = useState({ ...empty });
   const [newCategory, setNewCategory] = useState('');
@@ -57,16 +61,16 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
       costTouched.current = true; // respect the saved value, don't overwrite on price edits
       skuRef.current = item.sku;
       setForm({
-        name: item.name, categoryId: item.category.id, unit: item.unit,
+        name: item.name, categoryId: item.category.id, unitId: item.unit.id,
         price: Number(item.mrp), cost: Number(item.basePrice), taxPercent: Number(item.taxPercent),
         trackInventory: item.trackInventory,
       });
     } else {
       costTouched.current = false;
       skuRef.current = '';
-      setForm({ ...empty, categoryId: categories?.[0]?.id ?? '' });
+      setForm({ ...empty, categoryId: categories?.[0]?.id ?? '', unitId: units?.[0]?.id ?? '' });
     }
-  }, [open, item, categories]);
+  }, [open, item, categories, units]);
 
   const pickPhoto = (file: File | null) => {
     if (!file) return;
@@ -106,7 +110,7 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
     const sku = isEdit ? skuRef.current : slugSku(form.name);
     save.mutate(
       {
-        id: item?.id, name: form.name.trim(), sku, categoryId: form.categoryId, unit: form.unit,
+        id: item?.id, name: form.name.trim(), sku, categoryId: form.categoryId, unitId: form.unitId,
         basePrice: form.cost || form.price, mrp: form.price, taxPercent: form.taxPercent,
         reorderLevel: 0, batchTrackingEnabled: false, isPosEnabled: true, trackInventory: form.trackInventory,
       },
@@ -230,8 +234,9 @@ export function PosItemFormDialog({ open, onOpenChange, item }: { open: boolean;
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Unit</Label>
-              <Select value={form.unit} onChange={(e) => set('unit', e.target.value as MeasurementUnit)}>
-                {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+              <Select value={form.unitId} onChange={(e) => set('unitId', e.target.value)}>
+                {!unitList.length && <option value="">No units yet</option>}
+                {unitList.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </Select>
             </div>
             <div className="space-y-1.5">

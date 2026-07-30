@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
+import type { ItemUnit } from './useProducts';
 
 export interface ProductionBatch {
   id: string;
@@ -13,7 +14,7 @@ export interface ProductionBatch {
   costPerUnit: string;
   productionDate: string;
   notes: string | null;
-  product: { id: string; name: string; unit: string };
+  product: { id: string; name: string; unit: ItemUnit };
 }
 
 export interface IntakeRecord {
@@ -24,12 +25,12 @@ export interface IntakeRecord {
   supplierName: string | null;
   invoiceNumber: string | null;
   intakeDate: string;
-  rawMaterial: { name: string; unit: string };
+  rawMaterial: { name: string; unit: ItemUnit };
 }
 
 export interface GodownStockRow {
   quantity: string;
-  product: { id: string; name: string; sku: string; unit: string; reorderLevel: string };
+  product: { id: string; name: string; sku: string; unit: ItemUnit; reorderLevel: string };
 }
 
 export function useBatches() {
@@ -46,12 +47,12 @@ export interface ProductionBatchDetail {
   quantityProduced: string;
   productionDate: string;
   notes: string | null;
-  product: { name: string; unit: string };
+  product: { name: string; unit: ItemUnit };
   items: Array<{
     nameSnapshot: string | null;
     quantityConsumed: string;
-    rawMaterial: { name: string; unit: string } | null;
-    componentProduct: { name: string; unit: string } | null;
+    rawMaterial: { name: string; unit: ItemUnit } | null;
+    componentProduct: { name: string; unit: ItemUnit } | null;
   }>;
 }
 

@@ -3,6 +3,7 @@ import { authRouter } from '../modules/auth/auth.routes';
 import { usersRouter } from '../modules/users/users.routes';
 import { analyticsRouter } from '../modules/analytics/analytics.routes';
 import { categoriesRouter, productsRouter, rawMaterialsRouter } from '../modules/products/products.routes';
+import { unitsRouter } from '../modules/units/units.routes';
 import { productionRouter } from '../modules/production/production.routes';
 import { transfersRouter } from '../modules/transfers/transfers.routes';
 import { ordersRouter } from '../modules/orders/orders.routes';
@@ -33,6 +34,7 @@ export function buildApiRouter(): Router {
   router.use('/users', usersRouter);
   router.use('/analytics', analyticsRouter);
   router.use('/categories', categoriesRouter);
+  router.use('/units', unitsRouter);
   router.use('/products', productsRouter);
   router.use('/raw-materials', rawMaterialsRouter);
   router.use('/production', productionRouter);

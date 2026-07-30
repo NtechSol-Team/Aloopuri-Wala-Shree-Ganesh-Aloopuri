@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   LayoutDashboard,
+  Ruler,
   Factory,
   Boxes,
   Truck,
@@ -30,6 +31,7 @@ const ALL: UserRole[] = ['SUPER_ADMIN', 'GODOWN_MANAGER', 'FRANCHISE_OWNER', 'CA
 
 export const navItems: NavItem[] = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER', 'FRANCHISE_OWNER'] },
+  { label: 'Item Master', href: '/item-master', icon: Ruler, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Production', href: '/production', icon: Factory, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Purchases', href: '/purchases', icon: ShoppingBag, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },
   { label: 'Inventory', href: '/inventory', icon: Boxes, roles: ['SUPER_ADMIN', 'GODOWN_MANAGER'] },

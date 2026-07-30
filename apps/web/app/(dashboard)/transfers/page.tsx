@@ -15,6 +15,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiErrorMessage } from '@/lib/api';
 import { useProducts } from '@/hooks/useProducts';
+import { stepFor } from '@/hooks/useUnits';
 import { useOutlets } from '@/hooks/useOutlets';
 import { useCreateTransfer, useTransfers, useUpdateTransferStatus, type TransferStatus } from '@/hooks/useTransfers';
 
@@ -142,9 +143,15 @@ function CreateTransferDialog({ open, onOpenChange }: { open: boolean; onOpenCha
           {rows.map((row, i) => (
             <div key={i} className="flex items-center gap-2">
               <Select className="flex-1" value={row.productId} onChange={(e) => update(i, { productId: e.target.value })}>
-                {list.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>)}
+                {list.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit.name})</option>)}
               </Select>
-              <Input type="number" className="w-28" value={row.quantity} onChange={(e) => update(i, { quantity: Number(e.target.value) })} />
+              <Input
+                type="number"
+                className="w-28"
+                step={stepFor(list.find((p) => p.id === row.productId)?.unit.decimalPlaces ?? 0)}
+                value={row.quantity}
+                onChange={(e) => update(i, { quantity: Number(e.target.value) })}
+              />
               <Button variant="ghost" size="icon" onClick={() => remove(i)}><Trash2 className="h-4 w-4 text-danger" /></Button>
             </div>
           ))}

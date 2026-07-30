@@ -8,14 +8,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, formatQty } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useApproveOrder, type Order } from '@/hooks/useOrders';
+import type { ItemUnit } from '@/hooks/useProducts';
+import { stepFor } from '@/hooks/useUnits';
 
 interface Line {
   itemId: string;
   name: string;
-  unit: string;
+  unit: ItemUnit;
   requested: number;
   approved: number;
   price: number;
@@ -113,9 +115,9 @@ export function ApproveOrderDialog({ order, onClose }: { order: Order | null; on
               {lines.map((l) => (
                 <TR key={l.itemId}>
                   <TD className="font-medium">{l.name}</TD>
-                  <TD className="text-right text-muted-foreground">{l.requested} {l.unit}</TD>
+                  <TD className="text-right text-muted-foreground">{formatQty(l.requested, l.unit.decimalPlaces)} {l.unit.name}</TD>
                   <TD className="px-1.5 py-1.5">
-                    <Input type="number" step="0.01" className="h-8 text-right" value={l.approved} onChange={(e) => updateLine(l.itemId, { approved: Number(e.target.value) })} />
+                    <Input type="number" step={stepFor(l.unit.decimalPlaces)} className="h-8 text-right" value={l.approved} onChange={(e) => updateLine(l.itemId, { approved: Number(e.target.value) })} />
                   </TD>
                   <TD className="px-1.5 py-1.5">
                     <Input type="number" step="0.01" className="h-8 text-right" value={l.price} onChange={(e) => updateLine(l.itemId, { price: Number(e.target.value) })} />

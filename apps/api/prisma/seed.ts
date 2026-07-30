@@ -2,7 +2,7 @@
 import {
   PrismaClient,
   UserRole,
-  MeasurementUnit,
+  CategoryType,
   OutletOrderStatus,
   StockTransferStatus,
   BillStatus,
@@ -32,7 +32,8 @@ async function wipe(): Promise<void> {
     'raw_material_intake', 'bill_of_materials',
     'outlet_stock', 'main_branch_stock', 'godown_stock',
     'expenses', 'expense_categories',
-    'products', 'product_categories', 'raw_materials',
+    'menu_items', 'menu_categories', 'menus',
+    'products', 'product_categories', 'raw_materials', 'units',
     'analytics_snapshots', 'document_counters',
     'user_sessions', 'users', 'outlets',
   ];
@@ -70,56 +71,81 @@ async function main(): Promise<void> {
     prisma.outlet.update({ where: { id: katargam.id }, data: { ownerUserId: owner3.id, createdById: admin.id } }),
   ]);
 
+  // ── Units (Item Master) ─────────────────────────────────────────────────────
+  // decimalPlaces reflects how each unit is actually counted: discrete units are
+  // whole numbers, weight/volume units that get part-measured allow fractions.
+  const unitDefs: Array<{ name: string; decimalPlaces: number }> = [
+    { name: 'Kg', decimalPlaces: 3 },
+    { name: 'Gram', decimalPlaces: 0 },
+    { name: 'Litre', decimalPlaces: 3 },
+    { name: 'ML', decimalPlaces: 0 },
+    { name: 'Piece', decimalPlaces: 0 },
+    { name: 'Packet', decimalPlaces: 0 },
+    { name: 'Box', decimalPlaces: 0 },
+    { name: 'Dozen', decimalPlaces: 0 },
+  ];
+  const units = await Promise.all(
+    unitDefs.map((u) => prisma.unit.create({ data: { ...u, createdById: admin.id } })),
+  );
+  const unitId = (n: string): string => units[unitDefs.findIndex((u) => u.name === n)].id;
+
   // ── Categories ──────────────────────────────────────────────────────────────
   const catNames = ['Namkeen', 'Sweets', 'Farsan', 'Snacks', 'Beverages'];
   const cats = await Promise.all(
-    catNames.map((name) => prisma.productCategory.create({ data: { name, createdById: admin.id } })),
+    catNames.map((name) => prisma.productCategory.create({ data: { name, type: CategoryType.FINISHED_GOODS, createdById: admin.id } })),
   );
   const catId = (n: string): string => cats[catNames.indexOf(n)].id;
 
+  // Raw materials get their own category side of the same master.
+  const rawCatNames = ['Vegetables', 'Flour & Grains', 'Oils & Dairy', 'Spices', 'Packaging'];
+  const rawCats = await Promise.all(
+    rawCatNames.map((name) => prisma.productCategory.create({ data: { name, type: CategoryType.RAW_MATERIAL, createdById: admin.id } })),
+  );
+  const rawCatId = (n: string): string => rawCats[rawCatNames.indexOf(n)].id;
+
   // ── Raw materials (10) ───────────────────────────────────────────────────────
-  const rmDefs: Array<{ name: string; unit: MeasurementUnit; cost: number; stock: number; reorder: number; supplier: string }> = [
-    { name: 'Potato', unit: MeasurementUnit.KG, cost: 25, stock: 500, reorder: 100, supplier: 'APMC Surat' },
-    { name: 'Gram Flour (Besan)', unit: MeasurementUnit.KG, cost: 80, stock: 300, reorder: 80, supplier: 'Shree Flour Mills' },
-    { name: 'Wheat Flour', unit: MeasurementUnit.KG, cost: 40, stock: 400, reorder: 100, supplier: 'Shree Flour Mills' },
-    { name: 'Refined Oil', unit: MeasurementUnit.LITRE, cost: 130, stock: 250, reorder: 60, supplier: 'Gokul Oils' },
-    { name: 'Sugar', unit: MeasurementUnit.KG, cost: 45, stock: 200, reorder: 50, supplier: 'Sayan Sugars' },
-    { name: 'Salt', unit: MeasurementUnit.KG, cost: 20, stock: 150, reorder: 30, supplier: 'Tata Salt Distributor' },
-    { name: 'Spice Mix', unit: MeasurementUnit.KG, cost: 220, stock: 80, reorder: 20, supplier: 'MDH Distributor' },
-    { name: 'Ghee', unit: MeasurementUnit.KG, cost: 550, stock: 60, reorder: 15, supplier: 'Amul Dairy' },
-    { name: 'Milk', unit: MeasurementUnit.LITRE, cost: 60, stock: 100, reorder: 40, supplier: 'Sumul Dairy' },
-    { name: 'Packaging Pouch', unit: MeasurementUnit.PIECE, cost: 2, stock: 5000, reorder: 1000, supplier: 'Pack India' },
+  const rmDefs: Array<{ name: string; unit: string; cat: string; cost: number; stock: number; reorder: number; supplier: string }> = [
+    { name: 'Potato', unit: 'Kg', cat: 'Vegetables', cost: 25, stock: 500, reorder: 100, supplier: 'APMC Surat' },
+    { name: 'Gram Flour (Besan)', unit: 'Kg', cat: 'Flour & Grains', cost: 80, stock: 300, reorder: 80, supplier: 'Shree Flour Mills' },
+    { name: 'Wheat Flour', unit: 'Kg', cat: 'Flour & Grains', cost: 40, stock: 400, reorder: 100, supplier: 'Shree Flour Mills' },
+    { name: 'Refined Oil', unit: 'Litre', cat: 'Oils & Dairy', cost: 130, stock: 250, reorder: 60, supplier: 'Gokul Oils' },
+    { name: 'Sugar', unit: 'Kg', cat: 'Spices', cost: 45, stock: 200, reorder: 50, supplier: 'Sayan Sugars' },
+    { name: 'Salt', unit: 'Kg', cat: 'Spices', cost: 20, stock: 150, reorder: 30, supplier: 'Tata Salt Distributor' },
+    { name: 'Spice Mix', unit: 'Kg', cat: 'Spices', cost: 220, stock: 80, reorder: 20, supplier: 'MDH Distributor' },
+    { name: 'Ghee', unit: 'Kg', cat: 'Oils & Dairy', cost: 550, stock: 60, reorder: 15, supplier: 'Amul Dairy' },
+    { name: 'Milk', unit: 'Litre', cat: 'Oils & Dairy', cost: 60, stock: 100, reorder: 40, supplier: 'Sumul Dairy' },
+    { name: 'Packaging Pouch', unit: 'Piece', cat: 'Packaging', cost: 2, stock: 5000, reorder: 1000, supplier: 'Pack India' },
   ];
   const rms = await Promise.all(
-    rmDefs.map((r) => prisma.rawMaterial.create({ data: { name: r.name, unit: r.unit, costPerUnit: r.cost, currentStock: r.stock, reorderLevel: r.reorder, supplierName: r.supplier, createdById: admin.id } })),
+    rmDefs.map((r) => prisma.rawMaterial.create({ data: { name: r.name, unitId: unitId(r.unit), categoryId: rawCatId(r.cat), costPerUnit: r.cost, currentStock: r.stock, reorderLevel: r.reorder, supplierName: r.supplier, createdById: admin.id } })),
   );
   const rm = (name: string) => rms[rmDefs.findIndex((d) => d.name === name)];
 
   // ── Products (20) ────────────────────────────────────────────────────────────
-  const prodDefs: Array<{ name: string; sku: string; cat: string; unit: MeasurementUnit; base: number; mrp: number; tax: number; reorder: number }> = [
-    { name: 'Aloo Puri', sku: 'SKU-ALOOPURI', cat: 'Farsan', unit: MeasurementUnit.PACKET, base: 90, mrp: 120, tax: 5, reorder: 40 },
-    { name: 'Aloo Bhujia', sku: 'SKU-ALOOBHUJIA', cat: 'Namkeen', unit: MeasurementUnit.PACKET, base: 70, mrp: 95, tax: 12, reorder: 50 },
-    { name: 'Sev Mamra', sku: 'SKU-SEVMAMRA', cat: 'Namkeen', unit: MeasurementUnit.PACKET, base: 60, mrp: 80, tax: 12, reorder: 50 },
-    { name: 'Khaman Dhokla', sku: 'SKU-KHAMAN', cat: 'Farsan', unit: MeasurementUnit.BOX, base: 110, mrp: 150, tax: 5, reorder: 30 },
-    { name: 'Fafda', sku: 'SKU-FAFDA', cat: 'Farsan', unit: MeasurementUnit.PACKET, base: 80, mrp: 110, tax: 5, reorder: 40 },
-    { name: 'Gathiya', sku: 'SKU-GATHIYA', cat: 'Namkeen', unit: MeasurementUnit.PACKET, base: 75, mrp: 100, tax: 12, reorder: 40 },
-    { name: 'Mathiya', sku: 'SKU-MATHIYA', cat: 'Namkeen', unit: MeasurementUnit.PACKET, base: 85, mrp: 115, tax: 12, reorder: 30 },
-    { name: 'Chorafali', sku: 'SKU-CHORAFALI', cat: 'Namkeen', unit: MeasurementUnit.PACKET, base: 95, mrp: 130, tax: 12, reorder: 30 },
-    { name: 'Mohanthal', sku: 'SKU-MOHANTHAL', cat: 'Sweets', unit: MeasurementUnit.BOX, base: 260, mrp: 340, tax: 5, reorder: 20 },
-    { name: 'Jalebi', sku: 'SKU-JALEBI', cat: 'Sweets', unit: MeasurementUnit.KG, base: 180, mrp: 240, tax: 5, reorder: 25 },
-    { name: 'Gulab Jamun', sku: 'SKU-GULABJAMUN', cat: 'Sweets', unit: MeasurementUnit.BOX, base: 200, mrp: 280, tax: 5, reorder: 25 },
-    { name: 'Penda', sku: 'SKU-PENDA', cat: 'Sweets', unit: MeasurementUnit.BOX, base: 240, mrp: 320, tax: 5, reorder: 20 },
-    { name: 'Samosa', sku: 'SKU-SAMOSA', cat: 'Snacks', unit: MeasurementUnit.PIECE, base: 12, mrp: 18, tax: 5, reorder: 100 },
-    { name: 'Kachori', sku: 'SKU-KACHORI', cat: 'Snacks', unit: MeasurementUnit.PIECE, base: 14, mrp: 20, tax: 5, reorder: 100 },
-    { name: 'Dabeli', sku: 'SKU-DABELI', cat: 'Snacks', unit: MeasurementUnit.PIECE, base: 20, mrp: 30, tax: 5, reorder: 80 },
-    { name: 'Khakhra', sku: 'SKU-KHAKHRA', cat: 'Farsan', unit: MeasurementUnit.PACKET, base: 55, mrp: 75, tax: 5, reorder: 60 },
-    { name: 'Thepla', sku: 'SKU-THEPLA', cat: 'Farsan', unit: MeasurementUnit.PACKET, base: 65, mrp: 90, tax: 5, reorder: 50 },
-    { name: 'Masala Chaas', sku: 'SKU-CHAAS', cat: 'Beverages', unit: MeasurementUnit.PIECE, base: 15, mrp: 25, tax: 12, reorder: 80 },
-    { name: 'Lassi', sku: 'SKU-LASSI', cat: 'Beverages', unit: MeasurementUnit.PIECE, base: 25, mrp: 40, tax: 12, reorder: 60 },
-    { name: 'Masala Soda', sku: 'SKU-SODA', cat: 'Beverages', unit: MeasurementUnit.PIECE, base: 18, mrp: 30, tax: 18, reorder: 60 },
+  const prodDefs: Array<{ name: string; sku: string; cat: string; unit: string; base: number; mrp: number; tax: number; reorder: number }> = [
+    { name: 'Aloo Puri', sku: 'SKU-ALOOPURI', cat: 'Farsan', unit: 'Packet', base: 90, mrp: 120, tax: 5, reorder: 40 },
+    { name: 'Aloo Bhujia', sku: 'SKU-ALOOBHUJIA', cat: 'Namkeen', unit: 'Packet', base: 70, mrp: 95, tax: 12, reorder: 50 },
+    { name: 'Sev Mamra', sku: 'SKU-SEVMAMRA', cat: 'Namkeen', unit: 'Packet', base: 60, mrp: 80, tax: 12, reorder: 50 },
+    { name: 'Khaman Dhokla', sku: 'SKU-KHAMAN', cat: 'Farsan', unit: 'Box', base: 110, mrp: 150, tax: 5, reorder: 30 },
+    { name: 'Fafda', sku: 'SKU-FAFDA', cat: 'Farsan', unit: 'Packet', base: 80, mrp: 110, tax: 5, reorder: 40 },
+    { name: 'Gathiya', sku: 'SKU-GATHIYA', cat: 'Namkeen', unit: 'Packet', base: 75, mrp: 100, tax: 12, reorder: 40 },
+    { name: 'Mathiya', sku: 'SKU-MATHIYA', cat: 'Namkeen', unit: 'Packet', base: 85, mrp: 115, tax: 12, reorder: 30 },
+    { name: 'Chorafali', sku: 'SKU-CHORAFALI', cat: 'Namkeen', unit: 'Packet', base: 95, mrp: 130, tax: 12, reorder: 30 },
+    { name: 'Mohanthal', sku: 'SKU-MOHANTHAL', cat: 'Sweets', unit: 'Box', base: 260, mrp: 340, tax: 5, reorder: 20 },
+    { name: 'Jalebi', sku: 'SKU-JALEBI', cat: 'Sweets', unit: 'Kg', base: 180, mrp: 240, tax: 5, reorder: 25 },
+    { name: 'Gulab Jamun', sku: 'SKU-GULABJAMUN', cat: 'Sweets', unit: 'Box', base: 200, mrp: 280, tax: 5, reorder: 25 },
+    { name: 'Penda', sku: 'SKU-PENDA', cat: 'Sweets', unit: 'Box', base: 240, mrp: 320, tax: 5, reorder: 20 },
+    { name: 'Samosa', sku: 'SKU-SAMOSA', cat: 'Snacks', unit: 'Piece', base: 12, mrp: 18, tax: 5, reorder: 100 },
+    { name: 'Kachori', sku: 'SKU-KACHORI', cat: 'Snacks', unit: 'Piece', base: 14, mrp: 20, tax: 5, reorder: 100 },
+    { name: 'Dabeli', sku: 'SKU-DABELI', cat: 'Snacks', unit: 'Piece', base: 20, mrp: 30, tax: 5, reorder: 80 },
+    { name: 'Khakhra', sku: 'SKU-KHAKHRA', cat: 'Farsan', unit: 'Packet', base: 55, mrp: 75, tax: 5, reorder: 60 },
+    { name: 'Thepla', sku: 'SKU-THEPLA', cat: 'Farsan', unit: 'Packet', base: 65, mrp: 90, tax: 5, reorder: 50 },
+    { name: 'Masala Chaas', sku: 'SKU-CHAAS', cat: 'Beverages', unit: 'Piece', base: 15, mrp: 25, tax: 12, reorder: 80 },
+    { name: 'Lassi', sku: 'SKU-LASSI', cat: 'Beverages', unit: 'Piece', base: 25, mrp: 40, tax: 12, reorder: 60 },
+    { name: 'Masala Soda', sku: 'SKU-SODA', cat: 'Beverages', unit: 'Piece', base: 18, mrp: 30, tax: 18, reorder: 60 },
   ];
   const products = await Promise.all(
-    prodDefs.map((p) => prisma.product.create({ data: { name: p.name, sku: p.sku, categoryId: catId(p.cat), unit: p.unit, basePrice: p.base, mrp: p.mrp, taxPercent: p.tax, reorderLevel: p.reorder, batchTrackingEnabled: true, createdById: admin.id } })),
+    prodDefs.map((p) => prisma.product.create({ data: { name: p.name, sku: p.sku, categoryId: catId(p.cat), unitId: unitId(p.unit), basePrice: p.base, mrp: p.mrp, taxPercent: p.tax, reorderLevel: p.reorder, batchTrackingEnabled: true, createdById: admin.id } })),
   );
   const prod = (sku: string) => products[prodDefs.findIndex((d) => d.sku === sku)];
 

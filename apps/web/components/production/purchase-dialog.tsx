@@ -324,11 +324,11 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
                     <TD className="px-1.5 py-1.5">
                       {line.kind === 'RAW_MATERIAL' ? (
                         <Select className="h-8" value={line.rawMaterialId} onChange={(e) => onMaterial(i, e.target.value)}>
-                          {rmList.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
+                          {rmList.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit.name})</option>)}
                         </Select>
                       ) : line.kind === 'FINISHED_GOOD' ? (
                         <Select className="h-8" value={line.productId} onChange={(e) => onProduct(i, e.target.value)}>
-                          {prodList.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>)}
+                          {prodList.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit.name})</option>)}
                         </Select>
                       ) : (
                         <div className="space-y-1">

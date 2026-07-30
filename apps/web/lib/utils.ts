@@ -18,6 +18,30 @@ export function formatINR(value: number | string, opts: { decimals?: boolean } =
   return `₹${(opts.decimals === false ? INR_0DP : INR_2DP).format(Number.isFinite(n) ? n : 0)}`;
 }
 
+// Quantity formatters, cached per decimal-place setting for the same reason as the
+// INR ones above — inventory/POS tables render hundreds of quantities per paint.
+const QTY_FORMATTERS = new Map<number, Intl.NumberFormat>();
+
+/**
+ * Format a quantity to the precision its unit allows (Item Master → Unit.decimalPlaces).
+ * A Piece unit (0 dp) renders "12", a Kg unit (3 dp) renders "12.500".
+ */
+export function formatQty(value: number | string, decimalPlaces = 2): string {
+  const dp = Math.max(0, Math.min(4, decimalPlaces));
+  let fmt = QTY_FORMATTERS.get(dp);
+  if (!fmt) {
+    fmt = new Intl.NumberFormat('en-IN', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+    QTY_FORMATTERS.set(dp, fmt);
+  }
+  const n = typeof value === 'string' ? Number(value) : value;
+  return fmt.format(Number.isFinite(n) ? n : 0);
+}
+
+/** Quantity with its unit name appended, e.g. "12.500 Kg". */
+export function formatQtyWithUnit(value: number | string, unit: { name: string; decimalPlaces: number }): string {
+  return `${formatQty(value, unit.decimalPlaces)} ${unit.name}`;
+}
+
 /** Compact number (1.2k, 3.4L). */
 export function formatCompact(value: number): string {
   if (value >= 1e7) return `${(value / 1e7).toFixed(2)}Cr`;

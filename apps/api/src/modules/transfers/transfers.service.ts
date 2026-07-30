@@ -6,10 +6,11 @@ import { nextDocNumber } from '../../shared/utils/docNumber';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
 import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
+import { assertProductQuantities } from '../../shared/utils/quantity';
 import type { CreateTransferInput, ListTransfersQuery, UpdateTransferStatusInput } from './transfers.schema';
 
 const transferInclude = {
-  items: { include: { product: { select: { id: true, name: true, unit: true } } } },
+  items: { include: { product: { select: { id: true, name: true, unit: { select: { id: true, name: true, decimalPlaces: true } } } } } },
   destinationOutlet: { select: { id: true, name: true } },
 } satisfies Prisma.StockTransferInclude;
 
@@ -18,6 +19,7 @@ export async function createTransfer(input: CreateTransferInput, userId: string)
   const productIds = input.items.map((i) => i.productId);
   const found = await prisma.product.count({ where: { id: { in: productIds }, isDeleted: false } });
   if (found !== new Set(productIds).size) throw AppError.badRequest('One or more products are invalid');
+  await assertProductQuantities(input.items);
 
   if (input.destinationType === 'OUTLET' && input.destinationOutletId) {
     const outlet = await prisma.outlet.count({ where: { id: input.destinationOutletId, isDeleted: false } });

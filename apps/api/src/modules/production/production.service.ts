@@ -10,6 +10,7 @@ import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
 import { env } from '../../config/env';
 import { gstinStateCode, splitGst } from '../../shared/utils/gst';
+import { assertQuantityPrecision } from '../../shared/utils/quantity';
 import type { ListBatchesQuery, ListIntakeQuery, LogBatchInput, LogIntakeInput } from './production.schema';
 
 /**
@@ -24,13 +25,20 @@ export async function logBatch(input: LogBatchInput, userId: string) {
     where: { id: input.productId, isDeleted: false },
     include: {
       godownStock: true,
+      unit: { select: { name: true, decimalPlaces: true } },
       bom: {
         where: { isDeleted: false },
-        include: { rawMaterial: true, componentProduct: { include: { godownStock: true } } },
+        include: {
+          rawMaterial: { include: { unit: { select: { name: true, decimalPlaces: true } } } },
+          componentProduct: { include: { godownStock: true, unit: { select: { name: true, decimalPlaces: true } } } },
+        },
       },
     },
   });
   if (!product) throw AppError.notFound('Product not found');
+
+  // The produced quantity has to respect the output product's own unit precision.
+  assertQuantityPrecision(input.quantityProduced, product.unit, 'quantityProduced');
 
   const producedQty = new Prisma.Decimal(input.quantityProduced);
   const overrideMap = new Map((input.ingredients ?? []).map((i) => [i.bomItemId, i]));
@@ -47,7 +55,7 @@ export async function logBatch(input: LogBatchInput, userId: string) {
       const unitCost = override ? new Prisma.Decimal(override.unitCost) : new Prisma.Decimal(cp.avgCost);
       const available = new Prisma.Decimal(cp.godownStock?.quantity ?? 0);
       if (available.lessThan(required)) {
-        throw AppError.insufficientStock(`Not enough ${cp.name} in godown: need ${required.toString()} ${cp.unit}, have ${available.toString()}`);
+        throw AppError.insufficientStock(`Not enough ${cp.name} in godown: need ${required.toString()} ${cp.unit.name}, have ${available.toString()}`);
       }
       return { kind: 'PRODUCT' as const, id: cp.id, name: cp.name, required, unitCost, belowReorder: false };
     }
@@ -55,7 +63,7 @@ export async function logBatch(input: LogBatchInput, userId: string) {
     if (!rm) throw AppError.badRequest('A raw material in the recipe is missing');
     const unitCost = override ? new Prisma.Decimal(override.unitCost) : new Prisma.Decimal(rm.costPerUnit);
     if (new Prisma.Decimal(rm.currentStock).lessThan(required)) {
-      throw AppError.insufficientStock(`Not enough ${rm.name}: need ${required.toString()} ${rm.unit}, have ${rm.currentStock}`);
+      throw AppError.insufficientStock(`Not enough ${rm.name}: need ${required.toString()} ${rm.unit.name}, have ${rm.currentStock}`);
     }
     return { kind: 'RAW_MATERIAL' as const, id: rm.id, name: rm.name, required, unitCost, belowReorder: false };
   });
@@ -175,8 +183,12 @@ export async function getBatch(id: string) {
 
 /** Log raw-material purchase: increase stock, recompute weighted-average cost. */
 export async function logIntake(input: LogIntakeInput, userId: string) {
-  const material = await prisma.rawMaterial.findFirst({ where: { id: input.rawMaterialId, isDeleted: false } });
+  const material = await prisma.rawMaterial.findFirst({
+    where: { id: input.rawMaterialId, isDeleted: false },
+    include: { unit: { select: { name: true, decimalPlaces: true } } },
+  });
   if (!material) throw AppError.notFound('Raw material not found');
+  assertQuantityPrecision(input.quantity, material.unit);
 
   const oldStock = new Prisma.Decimal(material.currentStock);
   const oldCost = new Prisma.Decimal(material.costPerUnit);

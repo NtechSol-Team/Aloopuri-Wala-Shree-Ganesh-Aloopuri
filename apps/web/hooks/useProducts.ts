@@ -3,23 +3,32 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
+import type { Unit } from './useUnits';
 
-export type MeasurementUnit = 'KG' | 'GRAM' | 'LITRE' | 'ML' | 'PIECE' | 'PACKET' | 'BOX' | 'DOZEN';
-export const UNITS: MeasurementUnit[] = ['KG', 'GRAM', 'LITRE', 'ML', 'PIECE', 'PACKET', 'BOX', 'DOZEN'];
+/** Units are maintained in the Item Master, so an item carries its unit inline. */
+export type ItemUnit = Pick<Unit, 'id' | 'name' | 'decimalPlaces'>;
+
+export type CategoryType = 'FINISHED_GOODS' | 'RAW_MATERIAL';
+
+export const CATEGORY_TYPE_LABEL: Record<CategoryType, string> = {
+  FINISHED_GOODS: 'Finished Goods',
+  RAW_MATERIAL: 'Raw Materials',
+};
 
 export interface Category {
   id: string;
   name: string;
   description?: string | null;
+  type: CategoryType;
   isActive: boolean;
-  _count?: { products: number };
+  _count?: { products: number; rawMaterials: number };
 }
 
 export interface Product {
   id: string;
   name: string;
   sku: string;
-  unit: MeasurementUnit;
+  unit: ItemUnit;
   basePrice: string;
   mrp: string;
   taxPercent: string;
@@ -30,13 +39,14 @@ export interface Product {
   isPosEnabled: boolean;
   trackInventory: boolean;
   avgCost: string;
-  category: { id: string; name: string };
+  category: { id: string; name: string; type: CategoryType };
 }
 
 export interface RawMaterial {
   id: string;
   name: string;
-  unit: MeasurementUnit;
+  unit: ItemUnit;
+  category: { id: string; name: string; type: CategoryType } | null;
   supplierName: string | null;
   reorderLevel: string;
   currentStock: string;
@@ -54,8 +64,8 @@ export interface BomItem {
   rawMaterialId: string | null;
   componentProductId: string | null;
   quantity: string;
-  rawMaterial: { id: string; name: string; unit: MeasurementUnit; costPerUnit: string } | null;
-  componentProduct: { id: string; name: string; unit: MeasurementUnit; avgCost: string } | null;
+  rawMaterial: { id: string; name: string; unit: ItemUnit; costPerUnit: string } | null;
+  componentProduct: { id: string; name: string; unit: ItemUnit; avgCost: string } | null;
 }
 
 export type BomLineInput =
@@ -63,18 +73,38 @@ export type BomLineInput =
   | { componentType: 'PRODUCT'; componentProductId: string; quantity: number };
 
 // ── Categories ──
-export function useCategories() {
+/** Pass a `type` to get only Finished Goods or only Raw Material categories. */
+export function useCategories(params: { type?: CategoryType } = {}) {
   return useQuery({
-    queryKey: ['categories'],
-    queryFn: async () => (await api.get<ApiSuccess<Category[]>>('/categories')).data.data,
+    queryKey: ['categories', params],
+    queryFn: async () => (await api.get<ApiSuccess<Category[]>>('/categories', { params })).data.data,
   });
 }
 
 export function useCreateCategory() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { name: string; description?: string }) =>
+    mutationFn: async (input: { name: string; description?: string; type?: CategoryType }) =>
       (await api.post<ApiSuccess<Category>>('/categories', input)).data.data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['categories'] }),
+  });
+}
+
+export function useSaveCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...input }: { id?: string; name: string; description?: string; type: CategoryType }) =>
+      id
+        ? (await api.patch<ApiSuccess<Category>>(`/categories/${id}`, input)).data.data
+        : (await api.post<ApiSuccess<Category>>('/categories', input)).data.data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['categories'] }),
+  });
+}
+
+export function useDeleteCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete(`/categories/${id}`)).data,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['categories'] }),
   });
 }
@@ -91,7 +121,7 @@ export function useProducts(params: { search?: string; categoryId?: string; page
 }
 
 type ProductPayload = {
-  name: string; sku: string; categoryId: string; unit: MeasurementUnit;
+  name: string; sku: string; categoryId: string; unitId: string;
   basePrice: number; mrp: number; taxPercent: number; reorderLevel: number; batchTrackingEnabled: boolean;
   isPosEnabled: boolean; trackInventory: boolean;
 };
@@ -181,7 +211,7 @@ export function useRawMaterials(params: { search?: string; lowStockOnly?: boolea
 }
 
 type RawMaterialPayload = {
-  name: string; unit: MeasurementUnit; supplierName?: string;
+  name: string; unitId: string; categoryId?: string; supplierName?: string;
   reorderLevel: number; currentStock: number; costPerUnit: number;
   hsnCode?: string; taxPercent: number;
 };

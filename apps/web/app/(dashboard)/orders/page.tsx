@@ -16,9 +16,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiErrorMessage } from '@/lib/api';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, formatQty } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
 import { useProducts } from '@/hooks/useProducts';
+import { stepFor } from '@/hooks/useUnits';
 import {
   useCreateOrder, useOrders, useReceiveOrder,
   ACTIVE_ORDER_STATUSES, ORDER_STATUS_BADGE, ORDER_STATUS_LABEL,
@@ -157,7 +158,7 @@ export default function OrdersPage() {
                           <div key={i.id} className="truncate text-caption">
                             <span className="text-foreground">{i.product.name}</span>{' '}
                             <span className={cn(trimmed ? 'font-medium text-warning' : 'text-muted-foreground')}>
-                              {approved ?? requested} {i.product.unit}
+                              {formatQty(approved ?? requested, i.product.unit.decimalPlaces)} {i.product.unit.name}
                             </span>
                             {trimmed && <span className="text-muted-foreground"> (of {requested})</span>}
                           </div>
@@ -322,9 +323,15 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
           {rows.map((row, i) => (
             <div key={i} className="flex items-center gap-2">
               <Select className="flex-1" value={row.productId} onChange={(e) => upd(i, { productId: e.target.value })}>
-                {list.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatINR(p.mrp)}/{p.unit}</option>)}
+                {list.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatINR(p.mrp)}/{p.unit.name}</option>)}
               </Select>
-              <Input type="number" className="w-24" value={row.requestedQuantity} onChange={(e) => upd(i, { requestedQuantity: Number(e.target.value) })} />
+              <Input
+                type="number"
+                className="w-24"
+                step={stepFor(list.find((p) => p.id === row.productId)?.unit.decimalPlaces ?? 0)}
+                value={row.requestedQuantity}
+                onChange={(e) => upd(i, { requestedQuantity: Number(e.target.value) })}
+              />
               <Button variant="ghost" size="icon" onClick={() => rm(i)}><Trash2 className="h-4 w-4 text-danger" /></Button>
             </div>
           ))}

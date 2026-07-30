@@ -3,13 +3,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
+import type { ItemUnit } from './useProducts';
 
 export type TransferStatus = 'DRAFT' | 'DISPATCHED' | 'RECEIVED' | 'CANCELLED';
 
 export interface TransferItem {
   id: string;
   quantity: string;
-  product: { id: string; name: string; unit: string };
+  product: { id: string; name: string; unit: ItemUnit };
 }
 export interface Transfer {
   id: string;

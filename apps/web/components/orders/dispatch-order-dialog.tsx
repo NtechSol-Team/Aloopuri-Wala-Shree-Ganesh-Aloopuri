@@ -6,7 +6,7 @@ import { Warehouse, Factory, AlertTriangle, Truck } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, formatQty } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useDispatchOrder, type Order, type FulfillmentSource } from '@/hooks/useOrders';
 import { useMainBranchInventory, useGodownInventory } from '@/hooks/useInventory';
@@ -92,9 +92,9 @@ export function DispatchOrderDialog({ order, onClose }: { order: Order | null; o
                 return (
                   <TR key={l.productId}>
                     <TD className="font-medium">{l.name}</TD>
-                    <TD className="text-right">{l.qty} {l.unit}</TD>
+                    <TD className="text-right">{formatQty(l.qty, l.unit.decimalPlaces)} {l.unit.name}</TD>
                     <TD className={cn('text-right', short ? 'font-semibold text-danger' : 'text-muted-foreground')}>
-                      <span className="inline-flex items-center justify-end gap-1">{short && <AlertTriangle className="h-3.5 w-3.5" />}{available} {l.unit}</span>
+                      <span className="inline-flex items-center justify-end gap-1">{short && <AlertTriangle className="h-3.5 w-3.5" />}{formatQty(available, l.unit.decimalPlaces)} {l.unit.name}</span>
                     </TD>
                     <TD className="text-right font-semibold">{formatINR(l.qty * l.price)}</TD>
                   </TR>

@@ -12,14 +12,14 @@ import { cn } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import {
   useSaveMenuItem, useUploadMenuItemPhoto, useRemoveMenuItemPhoto,
-  type MenuCategory, type MenuItem, type MeasurementUnit,
+  type MenuCategory, type MenuItem,
 } from '@/hooks/useMenus';
+import { useUnits } from '@/hooks/useUnits';
 import { productImageSrc } from '@/lib/menu-images';
 
-const UNITS: MeasurementUnit[] = ['PIECE', 'KG', 'GRAM', 'LITRE', 'ML', 'PACKET', 'BOX', 'DOZEN'];
 const GST_RATES = [0, 5, 12, 18, 28];
 
-const empty = { name: '', categoryId: '' as string, unit: 'PIECE' as MeasurementUnit, price: 0, taxPercent: 5, isAvailable: true };
+const empty = { name: '', categoryId: '' as string, unitId: '', price: 0, taxPercent: 5, isAvailable: true };
 
 /** Add/edit a single item inside one menu. Prices, category, tax etc are this
  *  menu's own — editing here never affects any other menu. */
@@ -35,6 +35,8 @@ export function MenuItemFormDialog({
   const save = useSaveMenuItem(menuId);
   const uploadPhoto = useUploadMenuItemPhoto(menuId);
   const removePhoto = useRemoveMenuItemPhoto(menuId);
+  const { data: units } = useUnits();
+  const unitList = units ?? [];
   const isEdit = !!item;
 
   const [form, setForm] = useState({ ...empty });
@@ -48,11 +50,11 @@ export function MenuItemFormDialog({
     setPhotoFile(null); setPhotoPreview(null); setPhotoRemoved(false);
     if (item) {
       setForm({
-        name: item.name, categoryId: item.categoryId ?? '', unit: item.unit,
+        name: item.name, categoryId: item.categoryId ?? '', unitId: item.unit.id,
         price: Number(item.price), taxPercent: Number(item.taxPercent), isAvailable: item.isAvailable,
       });
     } else {
-      setForm({ ...empty, categoryId: categories[0]?.id ?? '' });
+      setForm({ ...empty, categoryId: categories[0]?.id ?? '', unitId: unitList[0]?.id ?? '' });
     }
   }, [open, item, categories]);
 
@@ -78,7 +80,7 @@ export function MenuItemFormDialog({
     save.mutate(
       {
         id: item?.id, name: form.name.trim(), categoryId: form.categoryId || null,
-        unit: form.unit, price: form.price, taxPercent: form.taxPercent, isAvailable: form.isAvailable,
+        unitId: form.unitId, price: form.price, taxPercent: form.taxPercent, isAvailable: form.isAvailable,
       },
       {
         onSuccess: async (saved) => {
@@ -166,8 +168,9 @@ export function MenuItemFormDialog({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Unit</Label>
-              <Select value={form.unit} onChange={(e) => set('unit', e.target.value as MeasurementUnit)}>
-                {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+              <Select value={form.unitId} onChange={(e) => set('unitId', e.target.value)}>
+                {!unitList.length && <option value="">No units yet</option>}
+                {unitList.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </Select>
             </div>
             <div className="space-y-1.5">

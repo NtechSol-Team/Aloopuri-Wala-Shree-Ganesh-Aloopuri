@@ -78,6 +78,7 @@ export const CacheTag = {
   INVENTORY: 'inventory',
   OUTLETS: 'outlets',
   MENUS: 'menus',
+  UNITS: 'units',
   PRODUCTION: 'production',
   EXPENSES: 'expenses',
   POS: 'pos',

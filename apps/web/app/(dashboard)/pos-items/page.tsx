@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { formatINR } from '@/lib/utils';
+import { formatINR, formatQty } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useProducts, useSaveProduct, type Product } from '@/hooks/useProducts';
 import { useMainBranchInventory } from '@/hooks/useInventory';
@@ -69,7 +69,7 @@ export default function PosItemsPage() {
                     <TD><Badge variant="info">{p.category.name}</Badge></TD>
                     <TD className="text-right font-semibold">{formatINR(p.mrp)}</TD>
                     <TD className="text-right text-muted-foreground">
-                      {!p.trackInventory ? <Badge variant="neutral">Always available</Badge> : stock != null ? `${Number(stock)} ${p.unit}` : '—'}
+                      {!p.trackInventory ? <Badge variant="neutral">Always available</Badge> : stock != null ? `${formatQty(stock, p.unit.decimalPlaces)} ${p.unit.name}` : '—'}
                     </TD>
                     <TD className="text-right">
                       <div className="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">

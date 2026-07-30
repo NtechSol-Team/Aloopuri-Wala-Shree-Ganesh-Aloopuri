@@ -8,7 +8,7 @@ import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { imageUpload } from '../../shared/middleware/upload';
 import {
   createCategorySchema, createProductSchema, createRawMaterialSchema,
-  listProductsQuerySchema, listRawMaterialsQuerySchema, setBomSchema,
+  listCategoriesQuerySchema, listProductsQuerySchema, listRawMaterialsQuerySchema, setBomSchema,
   updateCategorySchema, updateProductSchema, updateRawMaterialSchema,
 } from './products.schema';
 import * as c from './products.controller';
@@ -18,7 +18,7 @@ const idParam = z.object({ id: z.string().uuid() });
 // ── Categories ──
 export const categoriesRouter = Router();
 categoriesRouter.use(authGuard);
-categoriesRouter.get('/', asyncHandler(c.listCategoriesController));
+categoriesRouter.get('/', validate({ query: listCategoriesQuerySchema }), asyncHandler(c.listCategoriesController));
 categoriesRouter.post('/', requireSuperAdmin, writeRateLimiter, validate({ body: createCategorySchema }), asyncHandler(c.createCategoryController));
 categoriesRouter.patch('/:id', requireSuperAdmin, validate({ params: idParam, body: updateCategorySchema }), asyncHandler(c.updateCategoryController));
 categoriesRouter.delete('/:id', requireSuperAdmin, validate({ params: idParam }), asyncHandler(c.deleteCategoryController));

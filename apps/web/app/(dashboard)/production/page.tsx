@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, formatQty } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useRawMaterials, type RawMaterial } from '@/hooks/useProducts';
 import { useBatches, useGodownStock, fetchBatchDetail } from '@/hooks/useProduction';
@@ -75,12 +75,12 @@ function MaterialsTab() {
               return (
                 <TR key={m.id}>
                   <TD className="font-medium">{m.name}</TD>
-                  <TD>{m.unit}</TD>
+                  <TD>{m.unit.name}</TD>
                   <TD className="text-muted-foreground">{m.supplierName ?? '—'}</TD>
                   <TD className={cn('text-right', low && 'font-semibold text-danger')}>
-                    <span className="inline-flex items-center gap-1">{low && <AlertTriangle className="h-3.5 w-3.5" />}{Number(m.currentStock)}</span>
+                    <span className="inline-flex items-center gap-1">{low && <AlertTriangle className="h-3.5 w-3.5" />}{formatQty(m.currentStock, m.unit.decimalPlaces)}</span>
                   </TD>
-                  <TD className="text-right">{Number(m.reorderLevel)}</TD>
+                  <TD className="text-right">{formatQty(m.reorderLevel, m.unit.decimalPlaces)}</TD>
                   <TD className="text-right">{formatINR(m.costPerUnit)}</TD>
                   <TD className="text-right"><Button variant="ghost" size="icon" onClick={() => setEditing(m)}><Pencil className="h-4 w-4" /></Button></TD>
                 </TR>
@@ -117,10 +117,10 @@ function ProductionTab() {
                 <TR key={b.id}>
                   <TD className="font-medium">{b.batchNumber}</TD>
                   <TD>{b.product.name}</TD>
-                  <TD className="text-right">{Number(b.quantityProduced)} {b.product.unit}</TD>
+                  <TD className="text-right">{formatQty(b.quantityProduced, b.product.unit.decimalPlaces)} {b.product.unit.name}</TD>
                   <TD className="text-right">{formatINR(b.totalMaterialCost)}</TD>
                   <TD className="text-right text-muted-foreground">{Number(b.overheadCost) > 0 ? formatINR(b.overheadCost) : '—'}</TD>
-                  <TD className="text-right font-semibold text-primary">{formatINR(b.costPerUnit)}/{b.product.unit.toLowerCase()}</TD>
+                  <TD className="text-right font-semibold text-primary">{formatINR(b.costPerUnit)}/{b.product.unit.name.toLowerCase()}</TD>
                   <TD className="whitespace-nowrap">{format(new Date(b.productionDate), 'dd MMM yyyy, hh:mm a')}</TD>
                   <TD className="text-right"><BatchPrintButton batchId={b.id} /></TD>
                 </TR>
@@ -145,12 +145,12 @@ function BatchPrintButton({ batchId }: { batchId: string }) {
         batchNumber: d.batchNumber,
         productName: d.product.name,
         quantity: Number(d.quantityProduced),
-        unit: d.product.unit,
+        unit: d.product.unit.name,
         productionDate: d.productionDate,
         ingredients: d.items.map((it) => ({
           name: it.nameSnapshot ?? it.rawMaterial?.name ?? it.componentProduct?.name ?? 'Item',
           quantity: Number(it.quantityConsumed),
-          unit: it.rawMaterial?.unit ?? it.componentProduct?.unit ?? '',
+          unit: it.rawMaterial?.unit.name ?? it.componentProduct?.unit.name ?? '',
         })),
       });
     } catch (e) {
@@ -182,8 +182,8 @@ function FinishedTab() {
               <TR key={s.product.id}>
                 <TD className="font-medium">{s.product.name}</TD>
                 <TD className="text-muted-foreground">{s.product.sku}</TD>
-                <TD className={cn('text-right', low && 'font-semibold text-danger')}>{Number(s.quantity)} {s.product.unit}</TD>
-                <TD className="text-right">{Number(s.product.reorderLevel)}</TD>
+                <TD className={cn('text-right', low && 'font-semibold text-danger')}>{formatQty(s.quantity, s.product.unit.decimalPlaces)} {s.product.unit.name}</TD>
+                <TD className="text-right">{formatQty(s.product.reorderLevel, s.product.unit.decimalPlaces)}</TD>
                 <TD>{low ? <Badge variant="danger"><AlertTriangle className="mr-1 h-3 w-3" />Low</Badge> : <Badge variant="success">OK</Badge>}</TD>
               </TR>
             );

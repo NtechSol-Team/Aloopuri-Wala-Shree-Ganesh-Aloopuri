@@ -13,6 +13,7 @@ import { apiErrorMessage } from '@/lib/api';
 import { formatINR } from '@/lib/utils';
 import { useProducts, useRawMaterials, useBom, type BomItem } from '@/hooks/useProducts';
 import { useLogBatch, useLogIntake } from '@/hooks/useProduction';
+import { stepFor } from '@/hooks/useUnits';
 
 const OVERHEAD_PRESETS = ['Electricity', 'Gas', 'Labour', 'Packaging', 'Other'];
 
@@ -23,6 +24,8 @@ interface IngredientRow {
   kind: 'RAW_MATERIAL' | 'PRODUCT';
   name: string;
   unit: string;
+  /** From the component's Unit master entry — drives this row's quantity step. */
+  decimalPlaces: number;
   quantity: number;
   unitCost: number;
 }
@@ -33,7 +36,8 @@ function buildRow(b: BomItem, producedQty: number): IngredientRow {
     bomItemId: b.id,
     kind: b.componentType,
     name: (isProduct ? b.componentProduct?.name : b.rawMaterial?.name) ?? '',
-    unit: (isProduct ? b.componentProduct?.unit : b.rawMaterial?.unit) ?? '',
+    unit: (isProduct ? b.componentProduct?.unit.name : b.rawMaterial?.unit.name) ?? '',
+    decimalPlaces: (isProduct ? b.componentProduct?.unit.decimalPlaces : b.rawMaterial?.unit.decimalPlaces) ?? 2,
     quantity: Number(b.quantity) * producedQty,
     unitCost: isProduct ? Number(b.componentProduct?.avgCost ?? 0) : Number(b.rawMaterial?.costPerUnit ?? 0),
   };
@@ -104,13 +108,15 @@ export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         ingredients: ingredients.length ? ingredients : undefined,
       },
       {
-        onSuccess: (b) => { toast.success(`Batch ${b.batchNumber} · ${formatINR(b.costPerUnit)}/${b.product.unit.toLowerCase()}`); onOpenChange(false); },
+        onSuccess: (b) => { toast.success(`Batch ${b.batchNumber} · ${formatINR(b.costPerUnit)}/${b.product.unit.name.toLowerCase()}`); onOpenChange(false); },
         onError: (e) => toast.error(apiErrorMessage(e)),
       },
     );
   };
 
-  const unitLabel = products?.rows.find((p) => p.id === productId)?.unit.toLowerCase() ?? 'unit';
+  const selectedProduct = products?.rows.find((p) => p.id === productId);
+  const unitLabel = selectedProduct?.unit.name.toLowerCase() ?? 'unit';
+  const producedDecimals = selectedProduct?.unit.decimalPlaces ?? 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -124,12 +130,12 @@ export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenCh
             <div className="space-y-1.5">
               <Label>Product</Label>
               <Select value={productId} onChange={(e) => setProductId(e.target.value)}>
-                {products?.rows.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>)}
+                {products?.rows.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit.name})</option>)}
               </Select>
             </div>
             <div className="space-y-1.5">
               <Label>Quantity Produced</Label>
-              <Input type="number" min={1} value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
+              <Input type="number" min={0} step={stepFor(producedDecimals)} value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <Label>Produced on (date &amp; time)</Label>
@@ -152,7 +158,7 @@ export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                     return (
                       <div key={r.bomItemId} className="grid grid-cols-[1fr_84px_92px_84px] items-center gap-2">
                         <span className="inline-flex items-center gap-1.5 truncate text-body"><Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{r.name}</span>
-                        <Input type="number" step="0.01" className="h-8 text-right" value={r.quantity} onChange={(e) => setRowQuantity(r.bomItemId, Number(e.target.value))} />
+                        <Input type="number" step={stepFor(r.decimalPlaces)} className="h-8 text-right" value={r.quantity} onChange={(e) => setRowQuantity(r.bomItemId, Number(e.target.value))} />
                         <Input type="number" step="0.01" className="h-8 text-right" value={r.unitCost} onChange={(e) => setRowCost(r.bomItemId, Number(e.target.value))} />
                         <span className="text-right text-body font-medium">{formatINR(r.quantity * r.unitCost)}</span>
                       </div>
@@ -234,6 +240,9 @@ export function LogIntakeDialog({ open, onOpenChange }: { open: boolean; onOpenC
     if (m) setCostPerUnit(Number(m.costPerUnit));
   };
 
+  // Intake quantity steps by the selected material's unit precision (Item Master).
+  const intakeDecimals = materials?.rows.find((r) => r.id === rawMaterialId)?.unit.decimalPlaces ?? 2;
+
   const submit = () => {
     if (!rawMaterialId || quantity <= 0) return;
     log.mutate(
@@ -256,12 +265,12 @@ export function LogIntakeDialog({ open, onOpenChange }: { open: boolean; onOpenC
           <div className="sm:col-span-2 space-y-1.5">
             <Label>Raw Material</Label>
             <Select value={rawMaterialId} onChange={(e) => onSelect(e.target.value)}>
-              {materials?.rows.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
+              {materials?.rows.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit.name})</option>)}
             </Select>
           </div>
           <div className="space-y-1.5">
             <Label>Quantity</Label>
-            <Input type="number" step="0.01" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
+            <Input type="number" step={stepFor(intakeDecimals)} value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
           </div>
           <div className="space-y-1.5">
             <Label>Cost / Unit (₹)</Label>

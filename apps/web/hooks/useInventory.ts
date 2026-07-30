@@ -3,13 +3,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
+import type { ItemUnit } from './useProducts';
 
 export interface StockRow {
   quantity: string;
-  product: { id: string; name: string; sku: string; unit: string; reorderLevel?: string };
+  product: { id: string; name: string; sku: string; unit: ItemUnit; reorderLevel?: string };
 }
 export interface RawRow {
-  id: string; name: string; unit: string; currentStock: string; reorderLevel: string; costPerUnit: string; supplierName: string | null;
+  id: string; name: string; unit: ItemUnit; currentStock: string; reorderLevel: string; costPerUnit: string; supplierName: string | null;
 }
 export interface InventorySummary {
   godownUnits: number; mainBranchUnits: number; outletUnits: number; rawMaterialCount: number; lowStockCount: number;

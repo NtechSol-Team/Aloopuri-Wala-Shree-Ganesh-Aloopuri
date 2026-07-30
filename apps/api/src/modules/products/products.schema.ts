@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MeasurementUnit } from '@prisma/client';
+import { CategoryType } from '@prisma/client';
 import { paginationQuerySchema } from '../../shared/utils/pagination';
 
 const decimalString = z.coerce.number().nonnegative();
@@ -15,9 +15,13 @@ const queryBoolean = z
 export const createCategorySchema = z.object({
   name: z.string().min(2).max(80),
   description: z.string().max(280).optional(),
+  type: z.nativeEnum(CategoryType).default(CategoryType.FINISHED_GOODS),
 });
 export const updateCategorySchema = createCategorySchema.partial().extend({
   isActive: z.boolean().optional(),
+});
+export const listCategoriesQuerySchema = z.object({
+  type: z.nativeEnum(CategoryType).optional(),
 });
 
 // ── Products ─────────────────────────────────────────────────────────────────
@@ -25,7 +29,7 @@ export const createProductSchema = z.object({
   name: z.string().min(2).max(120),
   sku: z.string().min(2).max(60),
   categoryId: z.string().uuid(),
-  unit: z.nativeEnum(MeasurementUnit),
+  unitId: z.string().uuid(),
   basePrice: decimalString,
   mrp: decimalString,
   taxPercent: z.coerce.number().min(0).max(100).default(0),
@@ -65,7 +69,10 @@ export const setBomSchema = z.object({
 // ── Raw materials ────────────────────────────────────────────────────────────
 export const createRawMaterialSchema = z.object({
   name: z.string().min(2).max(120),
-  unit: z.nativeEnum(MeasurementUnit),
+  unitId: z.string().uuid(),
+  // Optional on the API so pre-existing uncategorised raw materials stay editable;
+  // the Add form requires a pick for anything new.
+  categoryId: z.string().uuid().optional(),
   supplierName: z.string().max(120).optional(),
   reorderLevel: decimalString.default(0),
   currentStock: decimalString.default(0),
@@ -90,3 +97,4 @@ export type UpdateRawMaterialInput = z.infer<typeof updateRawMaterialSchema>;
 export type ListRawMaterialsQuery = z.infer<typeof listRawMaterialsQuerySchema>;
 export type CreateCategoryInput = z.infer<typeof createCategorySchema>;
 export type UpdateCategoryInput = z.infer<typeof updateCategorySchema>;
+export type ListCategoriesQuery = z.infer<typeof listCategoriesQuerySchema>;

@@ -8,8 +8,9 @@
 //   • isDeleted     soft delete (no hard deletes in a financial system)
 //   • createdById   the user who created the row (app-enforced)
 //
-// Money is ALWAYS Decimal(12,2). Tax rate is Decimal(5,2). Quantities that may
-// be fractional (BOM ratios, consumption) use Decimal(12,4).
+// Money is ALWAYS Decimal(12,2). Tax rate is Decimal(5,2). Quantities are
+// Decimal(12,4) — the Unit master lets each unit declare how many of those
+// decimals it actually permits (see Unit.decimalPlaces).
 //
 // Advanced DB objects that Prisma does not model — audit triggers, materialized
 // views and their refresh function — live in a follow-up SQL migration
@@ -36,15 +37,11 @@ enum UserRole {
   CASHIER
 }
 
-enum MeasurementUnit {
-  KG
-  GRAM
-  LITRE
-  ML
-  PIECE
-  PACKET
-  BOX
-  DOZEN
+// Which side of the catalog a category applies to — a Finished Goods category
+// is offered to Product, a Raw Materials one to RawMaterial.
+enum CategoryType {
+  FINISHED_GOODS
+  RAW_MATERIAL
 }
 
 enum StockTransferStatus {
@@ -348,18 +345,41 @@ model OutletDocument {
 // ─────────────────────────────── CATALOG ────────────────────────────────────
 
 model ProductCategory {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String   @unique
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String       @unique
   description String?
-  isActive    Boolean  @default(true) @map("is_active")
-  isDeleted   Boolean  @default(false) @map("is_deleted")
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdById String?  @map("created_by") @db.Uuid
+  type        CategoryType @default(FINISHED_GOODS)
+  isActive    Boolean      @default(true) @map("is_active")
+  isDeleted   Boolean      @default(false) @map("is_deleted")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?      @map("created_by") @db.Uuid
 
-  products Product[]
+  products     Product[]
+  rawMaterials RawMaterial[]
 
   @@map("product_categories")
+}
+
+// Item Master: dynamic measurement units, replacing the old fixed MeasurementUnit
+// enum. decimalPlaces governs how many decimals a quantity in this unit may carry —
+// enforced in Zod validation (see shared/utils/quantity.ts) wherever a quantity is
+// entered, not just cosmetic input formatting.
+model Unit {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String   @unique
+  decimalPlaces Int      @default(2) @map("decimal_places")
+  isActive      Boolean  @default(true) @map("is_active")
+  isDeleted     Boolean  @default(false) @map("is_deleted")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById   String?  @map("created_by") @db.Uuid
+
+  products     Product[]
+  rawMaterials RawMaterial[]
+  menuItems    MenuItem[]
+
+  @@map("units")
 }
 
 model Product {
@@ -367,12 +387,12 @@ model Product {
   name                 String
   sku                  String          @unique
   categoryId           String          @map("category_id") @db.Uuid
-  unit                 MeasurementUnit
+  unitId               String          @map("unit_id") @db.Uuid
   basePrice            Decimal         @map("base_price") @db.Decimal(12, 2)
   mrp                  Decimal         @db.Decimal(12, 2)
   taxPercent           Decimal         @default(0) @map("tax_percent") @db.Decimal(5, 2)
   photoUrl             String?         @map("photo_url")
-  reorderLevel         Decimal         @default(0) @map("reorder_level") @db.Decimal(12, 2)
+  reorderLevel         Decimal         @default(0) @map("reorder_level") @db.Decimal(12, 4)
   batchTrackingEnabled Boolean         @default(false) @map("batch_tracking_enabled")
   isActive             Boolean         @default(true) @map("is_active")
   // Whether this product is sellable directly at the POS counter (distinct from
@@ -394,6 +414,7 @@ model Product {
   createdById          String?         @map("created_by") @db.Uuid
 
   category            ProductCategory       @relation(fields: [categoryId], references: [id])
+  unit                Unit                  @relation(fields: [unitId], references: [id])
   bom                 BillOfMaterials[]     @relation("BomOutput")
   usedInBom           BillOfMaterials[]     @relation("BomComponent")
   godownStock         GodownStock?
@@ -408,6 +429,7 @@ model Product {
   outletSpecialPrices OutletProductPrice[]
 
   @@index([categoryId])
+  @@index([unitId])
   @@index([isActive])
   @@index([isDeleted])
   // Trigram GIN indexes for fast fuzzy search on product name + SKU.
@@ -473,7 +495,7 @@ model MenuItem {
   // Optional short code for barcode/quick search (not unique — the same item can
   // exist in several menus).
   code         String?
-  unit         MeasurementUnit @default(PIECE)
+  unitId       String          @map("unit_id") @db.Uuid
   // GST-inclusive counter price (same convention as the current POS mrp).
   price        Decimal         @db.Decimal(12, 2)
   taxPercent   Decimal         @default(0) @map("tax_percent") @db.Decimal(5, 2)
@@ -488,10 +510,12 @@ model MenuItem {
 
   menu     Menu                 @relation(fields: [menuId], references: [id], onDelete: Cascade)
   category MenuCategory?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  unit     Unit                 @relation(fields: [unitId], references: [id])
   posItems PosTransactionItem[]
 
   @@index([menuId])
   @@index([categoryId])
+  @@index([unitId])
   @@index([isDeleted])
   @@map("menu_items")
 }
@@ -499,10 +523,14 @@ model MenuItem {
 model RawMaterial {
   id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name         String
-  unit         MeasurementUnit
+  unitId       String          @map("unit_id") @db.Uuid
+  // Nullable: existing raw materials predate categorisation and aren't force-migrated
+  // into a synthetic bucket. The create form requires it for new raw materials going
+  // forward (see products.schema.ts's createRawMaterialSchema).
+  categoryId   String?         @map("category_id") @db.Uuid
   supplierName String?         @map("supplier_name")
-  reorderLevel Decimal         @default(0) @map("reorder_level") @db.Decimal(12, 2)
-  currentStock Decimal         @default(0) @map("current_stock") @db.Decimal(12, 2)
+  reorderLevel Decimal         @default(0) @map("reorder_level") @db.Decimal(12, 4)
+  currentStock Decimal         @default(0) @map("current_stock") @db.Decimal(12, 4)
   costPerUnit  Decimal         @default(0) @map("cost_per_unit") @db.Decimal(12, 2)
   // Master-level defaults for future billing/reporting — a purchase entry can
   // still override these per-intake (see RawMaterialIntake.hsnCode/taxRate).
@@ -514,10 +542,14 @@ model RawMaterial {
   updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById  String?         @map("created_by") @db.Uuid
 
+  unit       Unit                  @relation(fields: [unitId], references: [id])
+  category   ProductCategory?      @relation(fields: [categoryId], references: [id])
   bom        BillOfMaterials[]
   intake     RawMaterialIntake[]
   batchItems ProductionBatchItem[]
 
+  @@index([unitId])
+  @@index([categoryId])
   @@index([isActive])
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("raw_materials")
@@ -551,7 +583,7 @@ model ProductionBatch {
   id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   batchNumber       String   @unique @map("batch_number")
   productId         String   @map("product_id") @db.Uuid
-  quantityProduced  Decimal  @map("quantity_produced") @db.Decimal(12, 2)
+  quantityProduced  Decimal  @map("quantity_produced") @db.Decimal(12, 4)
   totalMaterialCost Decimal  @default(0) @map("total_material_cost") @db.Decimal(12, 2) // raw + component cost
   overheadCost      Decimal  @default(0) @map("overhead_cost") @db.Decimal(12, 2) // electricity/gas/labour/etc.
   costPerUnit       Decimal  @default(0) @map("cost_per_unit") @db.Decimal(12, 2) // (material + overhead) / quantity
@@ -614,7 +646,7 @@ model ProductionOverhead {
 model RawMaterialIntake {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   rawMaterialId  String   @map("raw_material_id") @db.Uuid
-  quantity       Decimal  @db.Decimal(12, 2)
+  quantity       Decimal  @db.Decimal(12, 4)
   costPerUnit    Decimal  @map("cost_per_unit") @db.Decimal(12, 2)
   totalCost      Decimal  @map("total_cost") @db.Decimal(12, 2)
   supplierName   String?  @map("supplier_name")
@@ -643,7 +675,7 @@ model RawMaterialIntake {
 model GodownStock {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   productId String   @unique @map("product_id") @db.Uuid
-  quantity  Decimal  @default(0) @db.Decimal(12, 2)
+  quantity  Decimal  @default(0) @db.Decimal(12, 4)
   isDeleted Boolean  @default(false) @map("is_deleted")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -656,7 +688,7 @@ model GodownStock {
 model MainBranchStock {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   productId String   @unique @map("product_id") @db.Uuid
-  quantity  Decimal  @default(0) @db.Decimal(12, 2)
+  quantity  Decimal  @default(0) @db.Decimal(12, 4)
   isDeleted Boolean  @default(false) @map("is_deleted")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -670,7 +702,7 @@ model OutletStock {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   outletId  String   @map("outlet_id") @db.Uuid
   productId String   @map("product_id") @db.Uuid
-  quantity  Decimal  @default(0) @db.Decimal(12, 2)
+  quantity  Decimal  @default(0) @db.Decimal(12, 4)
   isDeleted Boolean  @default(false) @map("is_deleted")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -714,7 +746,7 @@ model StockTransferItem {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   transferId String   @map("transfer_id") @db.Uuid
   productId  String   @map("product_id") @db.Uuid
-  quantity   Decimal  @db.Decimal(12, 2)
+  quantity   Decimal  @db.Decimal(12, 4)
   isDeleted  Boolean  @default(false) @map("is_deleted")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -773,8 +805,8 @@ model OutletOrderItem {
   id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   orderId           String   @map("order_id") @db.Uuid
   productId         String   @map("product_id") @db.Uuid
-  requestedQuantity Decimal  @map("requested_quantity") @db.Decimal(12, 2)
-  confirmedQuantity Decimal? @map("confirmed_quantity") @db.Decimal(12, 2)
+  requestedQuantity Decimal  @map("requested_quantity") @db.Decimal(12, 4)
+  confirmedQuantity Decimal? @map("confirmed_quantity") @db.Decimal(12, 4)
   unitPriceSnapshot Decimal? @map("unit_price_snapshot") @db.Decimal(12, 2)
   isDeleted         Boolean  @default(false) @map("is_deleted")
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -828,7 +860,7 @@ model BillItem {
   billId              String    @map("bill_id") @db.Uuid
   productId           String    @map("product_id") @db.Uuid
   productNameSnapshot String    @map("product_name_snapshot")
-  quantity            Decimal   @db.Decimal(12, 2)
+  quantity            Decimal   @db.Decimal(12, 4)
   rate                Decimal   @db.Decimal(12, 2)
   taxPercent          Decimal   @map("tax_percent") @db.Decimal(5, 2)
   taxAmount           Decimal   @map("tax_amount") @db.Decimal(12, 2)
@@ -1063,7 +1095,7 @@ model PosTransactionItem {
   productId           String?  @map("product_id") @db.Uuid
   menuItemId          String?  @map("menu_item_id") @db.Uuid
   productNameSnapshot String   @map("product_name_snapshot")
-  quantity            Decimal  @db.Decimal(12, 2)
+  quantity            Decimal  @db.Decimal(12, 4)
   unitPrice           Decimal  @map("unit_price") @db.Decimal(12, 2)
   discount            Decimal  @default(0) @db.Decimal(12, 2)
   taxPercent          Decimal  @map("tax_percent") @db.Decimal(5, 2)
@@ -1165,7 +1197,7 @@ model SupplierBillItem {
   refId          String?          @map("ref_id") @db.Uuid // rawMaterialId / productId / categoryId
   name           String // snapshot of the item/category name
   hsnCode        String?          @map("hsn_code")
-  quantity       Decimal?         @db.Decimal(12, 2)
+  quantity       Decimal?         @db.Decimal(12, 4)
   unitCost       Decimal?         @map("unit_cost") @db.Decimal(12, 2)
   taxRate        Decimal          @default(0) @map("tax_rate") @db.Decimal(5, 2)
   taxableAmount  Decimal          @map("taxable_amount") @db.Decimal(12, 2)

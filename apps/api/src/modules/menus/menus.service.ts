@@ -55,8 +55,9 @@ export async function getMenu(id: string) {
         where: { isDeleted: false },
         orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
         select: {
-          id: true, name: true, code: true, unit: true, price: true, taxPercent: true,
+          id: true, name: true, code: true, price: true, taxPercent: true,
           photoUrl: true, displayOrder: true, isAvailable: true, categoryId: true,
+          unit: { select: { id: true, name: true, decimalPlaces: true } },
         },
       },
       outlets: { where: { isDeleted: false }, select: { id: true, name: true, code: true } },
@@ -82,7 +83,7 @@ export async function createMenu(input: CreateMenuInput, createdById: string) {
           items: {
             where: { isDeleted: false },
             select: {
-              name: true, code: true, unit: true, price: true, taxPercent: true,
+              name: true, code: true, unitId: true, price: true, taxPercent: true,
               photoUrl: true, displayOrder: true, isAvailable: true, categoryId: true,
             },
           },
@@ -103,7 +104,7 @@ export async function createMenu(input: CreateMenuInput, createdById: string) {
           data: source.items.map((it) => ({
             menuId: created.id,
             categoryId: it.categoryId ? catIdMap.get(it.categoryId) ?? null : null,
-            name: it.name, code: it.code, unit: it.unit, price: it.price, taxPercent: it.taxPercent,
+            name: it.name, code: it.code, unitId: it.unitId, price: it.price, taxPercent: it.taxPercent,
             // Photos are immutable uuid files; sharing the reference across menus
             // is safe (menu-item photo removal never unlinks the file).
             photoUrl: it.photoUrl, displayOrder: it.displayOrder, isAvailable: it.isAvailable,
@@ -201,7 +202,7 @@ export async function createMenuItem(menuId: string, input: CreateMenuItemInput)
       categoryId: input.categoryId ?? null,
       name: input.name,
       code: input.code ?? null,
-      unit: input.unit,
+      unitId: input.unitId,
       price: new Prisma.Decimal(input.price),
       taxPercent: new Prisma.Decimal(input.taxPercent),
       isAvailable: input.isAvailable,
@@ -227,7 +228,7 @@ export async function updateMenuItem(menuId: string, itemId: string, input: Upda
       name: input.name,
       categoryId: input.categoryId === undefined ? undefined : input.categoryId,
       code: input.code === undefined ? undefined : input.code,
-      unit: input.unit,
+      unitId: input.unitId,
       price: input.price === undefined ? undefined : new Prisma.Decimal(input.price),
       taxPercent: input.taxPercent === undefined ? undefined : new Prisma.Decimal(input.taxPercent),
       isAvailable: input.isAvailable,

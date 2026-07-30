@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, formatQty } from '@/lib/utils';
 import { useInventorySummary, useGodownInventory, useMainBranchInventory, useOutletInventory, type StockRow } from '@/hooks/useInventory';
 import { useOutlets } from '@/hooks/useOutlets';
 import { useAuthStore } from '@/store/auth.store';
@@ -72,8 +72,8 @@ function GodownTab() {
                 return (
                   <TR key={m.id}>
                     <TD className="font-medium">{m.name}</TD>
-                    <TD className={cn('text-right', low && 'font-semibold text-danger')}>{Number(m.currentStock)} {m.unit}</TD>
-                    <TD className="text-right">{Number(m.reorderLevel)}</TD>
+                    <TD className={cn('text-right', low && 'font-semibold text-danger')}>{formatQty(m.currentStock, m.unit.decimalPlaces)} {m.unit.name}</TD>
+                    <TD className="text-right">{formatQty(m.reorderLevel, m.unit.decimalPlaces)}</TD>
                     <TD className="text-right">{formatINR(m.costPerUnit)}</TD>
                     <TD>{low ? <Badge variant="danger">Low</Badge> : <Badge variant="success">OK</Badge>}</TD>
                   </TR>
@@ -125,7 +125,7 @@ function StockTable({ rows }: { rows: StockRow[] }) {
             <TR key={r.product.id}>
               <TD className="font-medium">{r.product.name}</TD>
               <TD className="text-muted-foreground">{r.product.sku}</TD>
-              <TD className={cn('text-right', low && 'font-semibold text-danger')}>{Number(r.quantity)} {r.product.unit}</TD>
+              <TD className={cn('text-right', low && 'font-semibold text-danger')}>{formatQty(r.quantity, r.product.unit.decimalPlaces)} {r.product.unit.name}</TD>
               {reorder !== undefined && <TD>{low ? <Badge variant="danger"><AlertTriangle className="mr-1 h-3 w-3" />Low</Badge> : <Badge variant="success">OK</Badge>}</TD>}
             </TR>
           );

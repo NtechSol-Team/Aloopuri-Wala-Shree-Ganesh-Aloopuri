@@ -5,7 +5,7 @@ import { uploadUrl } from '../../shared/middleware/upload';
 import { productsService } from './products.service';
 import type {
   CreateCategoryInput, CreateProductInput, CreateRawMaterialInput,
-  ListProductsQuery, ListRawMaterialsQuery, SetBomInput,
+  ListCategoriesQuery, ListProductsQuery, ListRawMaterialsQuery, SetBomInput,
   UpdateCategoryInput, UpdateProductInput, UpdateRawMaterialInput,
 } from './products.schema';
 
@@ -15,8 +15,8 @@ function actor(req: Request): string {
 }
 
 // Categories
-export const listCategoriesController = async (_req: Request, res: Response) =>
-  ok(res, await productsService.listCategories());
+export const listCategoriesController = async (req: Request, res: Response) =>
+  ok(res, await productsService.listCategories(req.query as unknown as ListCategoriesQuery));
 export const createCategoryController = async (req: Request, res: Response) =>
   created(res, await productsService.createCategory(req.body as CreateCategoryInput, actor(req)), 'Category created');
 export const updateCategoryController = async (req: Request, res: Response) =>

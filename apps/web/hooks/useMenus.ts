@@ -3,8 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
-
-export type MeasurementUnit = 'KG' | 'GRAM' | 'LITRE' | 'ML' | 'PIECE' | 'PACKET' | 'BOX' | 'DOZEN';
+import type { ItemUnit } from './useProducts';
 
 export interface MenuOutletRef { id: string; name: string; code: string }
 
@@ -24,7 +23,7 @@ export interface MenuItem {
   id: string;
   name: string;
   code: string | null;
-  unit: MeasurementUnit;
+  unit: ItemUnit;
   price: string;
   taxPercent: string;
   photoUrl: string | null;
@@ -49,7 +48,7 @@ export interface MenuItemInput {
   name: string;
   categoryId?: string | null;
   code?: string | null;
-  unit?: MeasurementUnit;
+  unitId: string;
   price: number;
   taxPercent?: number;
   isAvailable?: boolean;

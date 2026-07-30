@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
+import type { ItemUnit } from './useProducts';
 
 export type OrderStatus =
   | 'PAYMENT_PENDING'
@@ -48,7 +49,7 @@ export interface OrderItem {
   requestedQuantity: string;
   confirmedQuantity: string | null;
   unitPriceSnapshot: string | null;
-  product: { id: string; name: string; unit: string; mrp: string; taxPercent: string };
+  product: { id: string; name: string; unit: ItemUnit; mrp: string; taxPercent: string };
 }
 
 export interface Order {

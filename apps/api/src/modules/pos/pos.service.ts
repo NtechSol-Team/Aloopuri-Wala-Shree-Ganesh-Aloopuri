@@ -355,7 +355,10 @@ export async function posProducts(user: AuthUser) {
     prisma.menuItem.findMany({
       where: { menuId, isDeleted: false, isAvailable: true },
       orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
-      select: { id: true, name: true, code: true, unit: true, price: true, taxPercent: true, photoUrl: true, displayOrder: true, categoryId: true },
+      select: {
+        id: true, name: true, code: true, price: true, taxPercent: true, photoUrl: true, displayOrder: true, categoryId: true,
+        unit: { select: { name: true, decimalPlaces: true } },
+      },
     }),
     prisma.menuCategory.findMany({ where: { menuId, isDeleted: false }, select: { id: true, name: true } }),
   ]);
@@ -385,7 +388,10 @@ export async function posProducts(user: AuthUser) {
     id: it.id,
     name: it.name,
     sku: it.code ?? '',
-    unit: it.unit,
+    // Kept as a plain string (not the Unit object) so the POS cart/tablet payload
+    // shape is unchanged; precision rides alongside for quantity entry.
+    unit: it.unit.name,
+    unitDecimalPlaces: it.unit.decimalPlaces,
     mrp: it.price,
     taxPercent: it.taxPercent,
     photoUrl: it.photoUrl,

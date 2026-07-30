@@ -68,7 +68,7 @@ export function BomDialog({ product, onClose }: { product: Product | null; onClo
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Recipe — {product?.name}</DialogTitle>
-          <DialogDescription>Ingredients consumed to produce one {product?.unit?.toLowerCase()}. Use another product as an ingredient for semi-finished goods (e.g. Khawsa → frozen Khawsa).</DialogDescription>
+          <DialogDescription>Ingredients consumed to produce one {product?.unit.name.toLowerCase()}. Use another product as an ingredient for semi-finished goods (e.g. Khawsa → frozen Khawsa).</DialogDescription>
         </DialogHeader>
 
         {isLoading ? (
@@ -84,11 +84,11 @@ export function BomDialog({ product, onClose }: { product: Product | null; onClo
                 </span>
                 {row.componentType === 'PRODUCT' ? (
                   <Select className="flex-1" value={row.componentProductId} onChange={(e) => update(i, { componentProductId: e.target.value } as Partial<Row>)}>
-                    {componentProducts.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit}) · {formatINR(p.avgCost)}/u</option>)}
+                    {componentProducts.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit.name}) · {formatINR(p.avgCost)}/u</option>)}
                   </Select>
                 ) : (
                   <Select className="flex-1" value={row.rawMaterialId} onChange={(e) => update(i, { rawMaterialId: e.target.value } as Partial<Row>)}>
-                    {rmList.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit}) · {formatINR(m.costPerUnit)}/u</option>)}
+                    {rmList.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit.name}) · {formatINR(m.costPerUnit)}/u</option>)}
                   </Select>
                 )}
                 <Input type="number" step="0.0001" className="w-24" value={row.quantity} onChange={(e) => update(i, { quantity: Number(e.target.value) })} />
@@ -105,7 +105,7 @@ export function BomDialog({ product, onClose }: { product: Product | null; onClo
 
             {rows.length > 0 && (
               <div className="mt-2 flex justify-between rounded-md border border-border bg-surface px-3 py-2 text-body font-semibold">
-                <span>Material cost per {product?.unit?.toLowerCase()}</span>
+                <span>Material cost per {product?.unit.name.toLowerCase()}</span>
                 <span>{formatINR(perUnitCost)}</span>
               </div>
             )}

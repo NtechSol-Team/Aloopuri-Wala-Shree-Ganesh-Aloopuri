@@ -6,10 +6,12 @@ import { env } from '../../config/env';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
+import { assertQuantityPrecision, assertRawMaterialQuantities } from '../../shared/utils/quantity';
 import type {
   CreateCategoryInput,
   CreateProductInput,
   CreateRawMaterialInput,
+  ListCategoriesQuery,
   ListProductsQuery,
   ListRawMaterialsQuery,
   SetBomInput,
@@ -23,12 +25,15 @@ function invalidate(): void {
 }
 
 // ─────────────────────────────── Categories ─────────────────────────────────
-export async function listCategories() {
-  return cache.getOrSet('categories:list', [CacheTag.INVENTORY], () =>
+export async function listCategories(query: ListCategoriesQuery = {}) {
+  return cache.getOrSet(`categories:list:${query.type ?? 'all'}`, [CacheTag.INVENTORY], () =>
     prisma.productCategory.findMany({
-      where: { isDeleted: false },
+      where: { isDeleted: false, ...(query.type ? { type: query.type } : {}) },
       orderBy: { name: 'asc' },
-      select: { id: true, name: true, description: true, isActive: true, _count: { select: { products: true } } },
+      select: {
+        id: true, name: true, description: true, type: true, isActive: true,
+        _count: { select: { products: true, rawMaterials: true } },
+      },
     }),
   );
 }
@@ -46,8 +51,12 @@ export async function updateCategory(id: string, input: UpdateCategoryInput) {
 }
 
 export async function deleteCategory(id: string) {
-  const count = await prisma.product.count({ where: { categoryId: id, isDeleted: false } });
-  if (count > 0) throw AppError.conflict('Cannot delete a category that still has products');
+  const [products, rawMaterials] = await Promise.all([
+    prisma.product.count({ where: { categoryId: id, isDeleted: false } }),
+    prisma.rawMaterial.count({ where: { categoryId: id, isDeleted: false } }),
+  ]);
+  const inUse = products + rawMaterials;
+  if (inUse > 0) throw AppError.conflict(`This category still has ${inUse} item(s). Reassign them before deleting it.`);
   await prisma.productCategory.update({ where: { id }, data: { isDeleted: true, isActive: false } });
   invalidate();
   return { deleted: true };
@@ -58,7 +67,6 @@ const productSelect = {
   id: true,
   name: true,
   sku: true,
-  unit: true,
   basePrice: true,
   mrp: true,
   taxPercent: true,
@@ -69,8 +77,23 @@ const productSelect = {
   isPosEnabled: true,
   trackInventory: true,
   avgCost: true,
-  category: { select: { id: true, name: true } },
+  category: { select: { id: true, name: true, type: true } },
+  unit: { select: { id: true, name: true, decimalPlaces: true } },
 } satisfies Prisma.ProductSelect;
+
+const rawMaterialSelect = {
+  id: true,
+  name: true,
+  supplierName: true,
+  reorderLevel: true,
+  currentStock: true,
+  costPerUnit: true,
+  hsnCode: true,
+  taxPercent: true,
+  isActive: true,
+  unit: { select: { id: true, name: true, decimalPlaces: true } },
+  category: { select: { id: true, name: true, type: true } },
+} satisfies Prisma.RawMaterialSelect;
 
 export async function listProducts(query: ListProductsQuery) {
   return cache.getOrSet(`products:list:${JSON.stringify(query)}`, [CacheTag.INVENTORY], async () => {
@@ -103,8 +126,16 @@ export async function getProduct(id: string) {
   const product = await prisma.product.findFirst({
     where: { id, isDeleted: false },
     include: {
-      category: { select: { id: true, name: true } },
-      bom: { where: { isDeleted: false }, include: { rawMaterial: { select: { id: true, name: true, unit: true, costPerUnit: true } } } },
+      category: { select: { id: true, name: true, type: true } },
+      unit: { select: { id: true, name: true, decimalPlaces: true } },
+      bom: {
+        where: { isDeleted: false },
+        include: {
+          rawMaterial: {
+            select: { id: true, name: true, costPerUnit: true, unit: { select: { id: true, name: true, decimalPlaces: true } } },
+          },
+        },
+      },
       godownStock: { select: { quantity: true } },
       mainBranchStock: { select: { quantity: true } },
     },
@@ -169,8 +200,12 @@ export async function getBom(productId: string) {
   return prisma.billOfMaterials.findMany({
     where: { productId, isDeleted: false },
     include: {
-      rawMaterial: { select: { id: true, name: true, unit: true, costPerUnit: true } },
-      componentProduct: { select: { id: true, name: true, unit: true, avgCost: true } },
+      rawMaterial: {
+        select: { id: true, name: true, costPerUnit: true, unit: { select: { id: true, name: true, decimalPlaces: true } } },
+      },
+      componentProduct: {
+        select: { id: true, name: true, avgCost: true, unit: { select: { id: true, name: true, decimalPlaces: true } } },
+      },
     },
   });
 }
@@ -225,6 +260,11 @@ export async function setBom(productId: string, input: SetBomInput, createdById:
     }
   }
 
+  // Recipe quantities must respect each component's own unit precision.
+  await assertRawMaterialQuantities(
+    input.items.flatMap((i) => (i.componentType === 'RAW_MATERIAL' ? [{ rawMaterialId: i.rawMaterialId, quantity: i.quantity }] : [])),
+  );
+
   await prisma.$transaction(async (tx) => {
     await tx.billOfMaterials.deleteMany({ where: { productId } });
     if (input.items.length > 0) {
@@ -250,7 +290,7 @@ export async function listRawMaterials(query: ListRawMaterialsQuery) {
     };
     const { skip, take } = toSkipTake(query);
     let [rows, total] = await Promise.all([
-      prisma.rawMaterial.findMany({ where, orderBy: { name: 'asc' }, skip, take }),
+      prisma.rawMaterial.findMany({ where, select: rawMaterialSelect, orderBy: { name: 'asc' }, skip, take }),
       prisma.rawMaterial.count({ where }),
     ]);
     if (query.lowStockOnly) {
@@ -260,16 +300,29 @@ export async function listRawMaterials(query: ListRawMaterialsQuery) {
   });
 }
 
+/** The unit a raw material is (or is about to be) counted in. */
+async function unitFor(unitId: string) {
+  const unit = await prisma.unit.findFirst({ where: { id: unitId, isDeleted: false }, select: { name: true, decimalPlaces: true } });
+  if (!unit) throw AppError.badRequest('That unit does not exist', undefined, 'unitId');
+  return unit;
+}
+
 export async function createRawMaterial(input: CreateRawMaterialInput, createdById: string) {
-  const rm = await prisma.rawMaterial.create({ data: { ...input, createdById } });
+  const unit = await unitFor(input.unitId);
+  assertQuantityPrecision(input.currentStock, unit, 'currentStock');
+  assertQuantityPrecision(input.reorderLevel, unit, 'reorderLevel');
+  const rm = await prisma.rawMaterial.create({ data: { ...input, createdById }, select: rawMaterialSelect });
   invalidate();
   return rm;
 }
 
 export async function updateRawMaterial(id: string, input: UpdateRawMaterialInput) {
-  const existing = await prisma.rawMaterial.findFirst({ where: { id, isDeleted: false } });
+  const existing = await prisma.rawMaterial.findFirst({ where: { id, isDeleted: false }, select: { id: true, unitId: true } });
   if (!existing) throw AppError.notFound('Raw material not found');
-  const rm = await prisma.rawMaterial.update({ where: { id }, data: input });
+  const unit = await unitFor(input.unitId ?? existing.unitId);
+  if (input.currentStock !== undefined) assertQuantityPrecision(input.currentStock, unit, 'currentStock');
+  if (input.reorderLevel !== undefined) assertQuantityPrecision(input.reorderLevel, unit, 'reorderLevel');
+  const rm = await prisma.rawMaterial.update({ where: { id }, data: input, select: rawMaterialSelect });
   invalidate();
   return rm;
 }

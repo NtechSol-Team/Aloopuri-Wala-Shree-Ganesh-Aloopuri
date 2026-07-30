@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { MeasurementUnit } from '@prisma/client';
 
 /** Blank string from a form = clear the field, not store an empty string. */
 const optionalText = (max: number) =>
@@ -34,7 +33,7 @@ export const createMenuItemSchema = z.object({
   name: z.string().trim().min(1, 'Enter an item name').max(120),
   categoryId: z.string().uuid().nullable().optional(),
   code: optionalText(40),
-  unit: z.nativeEnum(MeasurementUnit).default(MeasurementUnit.PIECE),
+  unitId: z.string().uuid(),
   price: z.coerce.number().positive('Enter a price'),
   taxPercent: z.coerce.number().min(0).max(100).default(0),
   isAvailable: z.boolean().default(true),
@@ -44,7 +43,7 @@ export const updateMenuItemSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   categoryId: z.string().uuid().nullable().optional(),
   code: optionalText(40),
-  unit: z.nativeEnum(MeasurementUnit).optional(),
+  unitId: z.string().uuid().optional(),
   price: z.coerce.number().positive().optional(),
   taxPercent: z.coerce.number().min(0).max(100).optional(),
   isAvailable: z.boolean().optional(),

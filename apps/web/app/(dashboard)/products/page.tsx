@@ -9,39 +9,21 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR } from '@/lib/utils';
+import { formatINR } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import {
-  useCategories, useCreateCategory, useProducts, useDeleteProduct,
+  useCategories, useProducts, useDeleteProduct,
   type Product,
 } from '@/hooks/useProducts';
 import { ProductFormDialog } from '@/components/products/product-form-dialog';
 import { BomDialog } from '@/components/products/bom-dialog';
 
-type Tab = 'products' | 'categories';
-
+// Categories moved out to Item Master → Category Master (they're shared with raw
+// materials now and need full edit/delete, which the old inline tab never had).
 export default function ProductsPage() {
-  const [tab, setTab] = useState<Tab>('products');
-
   return (
     <div className="space-y-5">
-      <div className="flex gap-2 border-b border-border">
-        {([['products', 'Products'], ['categories', 'Categories']] as const).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={cn(
-              'border-b-2 px-4 py-2 text-body font-medium transition-colors',
-              tab === key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'products' && <ProductsTab />}
-      {tab === 'categories' && <CategoriesTab />}
+      <ProductsTab />
     </div>
   );
 }
@@ -53,7 +35,9 @@ function ProductsTab() {
   const deferredSearch = useDeferredValue(search);
   // Catalog products only — POS counter items live on their own "POS Items" page.
   const { data, isLoading } = useProducts({ search: deferredSearch || undefined, isPosEnabled: false });
-  const { data: categories } = useCategories();
+  // Products file under Finished Goods categories only (raw-material ones live
+  // on the Item Master page and apply to raw materials).
+  const { data: categories } = useCategories({ type: 'FINISHED_GOODS' });
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const [bomProduct, setBomProduct] = useState<Product | null>(null);
@@ -88,7 +72,7 @@ function ProductsTab() {
                 <TD className="font-medium">{p.name}</TD>
                 <TD className="text-muted-foreground">{p.sku}</TD>
                 <TD>{p.category.name}</TD>
-                <TD>{p.unit}</TD>
+                <TD>{p.unit.name}</TD>
                 <TD className="text-right">{Number(p.avgCost) > 0 ? formatINR(p.avgCost) : <span className="text-muted-foreground">—</span>}</TD>
                 <TD className="text-right">{formatINR(p.basePrice)}</TD>
                 <TD className="text-right">{formatINR(p.mrp)}</TD>
@@ -114,41 +98,6 @@ function ProductsTab() {
 
       <ProductFormDialog open={creating || !!editing} onOpenChange={(v) => { if (!v) { setCreating(false); setEditing(null); } }} product={editing} categories={categories ?? []} />
       <BomDialog product={bomProduct} onClose={() => setBomProduct(null)} />
-    </Card>
-  );
-}
-
-function CategoriesTab() {
-  const { data, isLoading } = useCategories();
-  const create = useCreateCategory();
-  const [name, setName] = useState('');
-
-  const add = () => {
-    if (name.trim().length < 2) return;
-    create.mutate({ name: name.trim() }, {
-      onSuccess: () => { toast.success('Category added'); setName(''); },
-      onError: (e) => toast.error(apiErrorMessage(e)),
-    });
-  };
-
-  return (
-    <Card className="p-4">
-      <div className="mb-4 flex gap-2">
-        <Input placeholder="New category name" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
-        <Button onClick={add} loading={create.isPending}><Plus className="h-4 w-4" /> Add</Button>
-      </div>
-      {isLoading ? (
-        <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
-      ) : (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {data?.map((c) => (
-            <div key={c.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-              <span className="font-medium">{c.name}</span>
-              <Badge variant="info">{c._count?.products ?? 0} products</Badge>
-            </div>
-          ))}
-        </div>
-      )}
     </Card>
   );
 }

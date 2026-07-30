@@ -7,6 +7,7 @@ import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { nextDocNumber } from '../../shared/utils/docNumber';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
+import { assertProductQuantities } from '../../shared/utils/quantity';
 import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
 import { razorpay, razorpayErrorMessage, verifyCheckoutSignature } from '../../config/razorpay';
@@ -21,7 +22,13 @@ import type {
 const orderInclude = {
   // Franchise ordering prices against MRP, not the internal basePrice cost basis —
   // an outlet order calculates and bills the same way an outlet customer would see.
-  items: { include: { product: { select: { id: true, name: true, unit: true, mrp: true, taxPercent: true } } } },
+  items: {
+    include: {
+      product: {
+        select: { id: true, name: true, mrp: true, taxPercent: true, unit: { select: { id: true, name: true, decimalPlaces: true } } },
+      },
+    },
+  },
   outlet: { select: { id: true, name: true, pricingMode: true, gstBilling: true, creditPeriodDays: true } },
   bill: { select: { id: true, billNumber: true, grandTotal: true, status: true, isGstBill: true, balanceDue: true } },
 } satisfies Prisma.OutletOrderInclude;
@@ -119,6 +126,7 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
   });
   if (products.length !== new Set(productIds).size) throw AppError.badRequest('One or more products are invalid');
   const priceOf = new Map(products.map((p) => [p.id, p.mrp]));
+  await assertProductQuantities(input.items.map((i) => ({ productId: i.productId, quantity: i.requestedQuantity })));
 
   const outlet = await prisma.outlet.findFirst({ where: { id: outletId, isDeleted: false }, select: { id: true, pricingMode: true, gstBilling: true } });
   if (!outlet) throw AppError.notFound('Outlet not found');
@@ -171,7 +179,8 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
       orderDate: order.orderDate.toISOString(),
       items: order.items.map((i) => ({
         name: i.product.name,
-        unit: i.product.unit,
+        // The print payload wants a printable label, not the Unit record.
+        unit: i.product.unit.name,
         qty: Number(i.confirmedQuantity ?? i.requestedQuantity),
         price: Number(i.unitPriceSnapshot ?? i.product.mrp),
       })),
