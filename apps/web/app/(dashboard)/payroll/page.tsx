@@ -5,7 +5,7 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
   Users, CalendarCheck, Wallet, BarChart3, FileText, Play, Check, Undo2,
-  Download, Pencil,
+  Download, Pencil, HandCoins, Plus, Trash2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -24,15 +24,17 @@ import {
   useAttendance, useSaveAttendance, usePayroll, useGeneratePayroll, useUpdatePayroll,
   useMarkPayrollPaid, useRevertPayroll, usePayrollDashboard, openPayslip, downloadCsv,
   useEmployeeMasterReport, useAttendanceReport, useSalaryRegisterReport, useMonthlySummaryReport,
-  MONTH_NAMES, type AttendanceRow, type PayrollRow, type Period,
+  useAdvances, useCreateAdvance, useUpdateAdvance, useDeleteAdvance,
+  MONTH_NAMES, type AttendanceRow, type PayrollRow, type Period, type AdvanceRow, type AdvancePaymentMethod,
 } from '@/hooks/usePayroll';
 
-type Tab = 'dashboard' | 'attendance' | 'salary' | 'reports';
+type Tab = 'dashboard' | 'attendance' | 'salary' | 'advances' | 'reports';
 
 const TABS: Array<[Tab, string, typeof Users]> = [
   ['dashboard', 'Dashboard', BarChart3],
   ['attendance', 'Attendance', CalendarCheck],
   ['salary', 'Salary', Wallet],
+  ['advances', 'Advances', HandCoins],
   ['reports', 'Reports', FileText],
 ];
 
@@ -60,12 +62,13 @@ export default function PayrollPage() {
             </button>
           ))}
         </div>
-        {tab !== 'reports' && <PeriodPicker period={period} onChange={setPeriod} />}
+        {tab !== 'reports' && tab !== 'advances' && <PeriodPicker period={period} onChange={setPeriod} />}
       </div>
 
       {tab === 'dashboard' && <DashboardTab period={period} />}
       {tab === 'attendance' && <AttendanceTab period={period} />}
       {tab === 'salary' && <SalaryTab period={period} />}
+      {tab === 'advances' && <AdvancesTab />}
       {tab === 'reports' && <ReportsTab />}
     </div>
   );
@@ -234,13 +237,9 @@ function AttendanceTab({ period }: { period: Period }) {
   );
 }
 
-/** Working days default to the calendar month minus Sundays — the usual shop week. */
-function defaultWorkingDays(year: number, month: number): number {
-  const days = new Date(year, month, 0).getDate();
-  let count = 0;
-  for (let d = 1; d <= days; d++) if (new Date(year, month - 1, d).getDay() !== 0) count++;
-  return count;
-}
+/** Standard 30-day payroll month — the flat divisor most shops run salary on,
+ * regardless of how many calendar days a given month actually has. */
+const DEFAULT_WORKING_DAYS = 30;
 
 function AttendanceDialog({ target, period, onClose }: {
   target: { employeeId: string; name: string; existing?: AttendanceRow } | null;
@@ -249,7 +248,7 @@ function AttendanceDialog({ target, period, onClose }: {
 }) {
   const save = useSaveAttendance();
   const [form, setForm] = useState({
-    totalWorkingDays: 26, presentDays: 0, absentDays: 0, halfDays: 0,
+    totalWorkingDays: DEFAULT_WORKING_DAYS, presentDays: 0, absentDays: 0, halfDays: 0,
     paidLeave: 0, unpaidLeave: 0, overtimeHours: 0, workingHours: 0, notes: '',
   });
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -267,12 +266,12 @@ function AttendanceDialog({ target, period, onClose }: {
             notes: e.notes ?? '',
           }
         : {
-            totalWorkingDays: defaultWorkingDays(period.year, period.month),
+            totalWorkingDays: DEFAULT_WORKING_DAYS,
             presentDays: 0, absentDays: 0, halfDays: 0, paidLeave: 0, unpaidLeave: 0,
             overtimeHours: 0, workingHours: 0, notes: '',
           },
     );
-  }, [target, period]);
+  }, [target]);
 
   if (!target) return null;
 
@@ -476,6 +475,11 @@ function AdjustDialog({ row, onClose }: { row: PayrollRow | null; onClose: () =>
   const update = useUpdatePayroll();
   const [form, setForm] = useState({ allowances: 0, deductions: 0, bonus: 0, incentives: 0, advanceRecovery: 0, loanRecovery: 0 });
   const set = <K extends keyof typeof form>(k: K, v: number) => setForm((f) => ({ ...f, [k]: v }));
+  // What this employee still owes right now — Generate Salary already pre-filled
+  // advanceRecovery with this figure for a brand-new row, this is just so the admin
+  // can see the number they're looking at actually means something before saving.
+  const { data: advances } = useAdvances({ employeeId: row?.employee.id, status: 'OUTSTANDING' }, !!row);
+  const outstanding = advances?.outstandingTotal ?? 0;
 
   useEffect(() => {
     if (!row) return;
@@ -514,7 +518,12 @@ function AdjustDialog({ row, onClose }: { row: PayrollRow | null; onClose: () =>
           <Num label="Bonus (₹)" value={form.bonus} onChange={(v) => set('bonus', v)} step={0.01} />
           <Num label="Incentives (₹)" value={form.incentives} onChange={(v) => set('incentives', v)} step={0.01} />
           <Num label="Deductions (₹)" value={form.deductions} onChange={(v) => set('deductions', v)} step={0.01} />
-          <Num label="Advance recovery (₹)" value={form.advanceRecovery} onChange={(v) => set('advanceRecovery', v)} step={0.01} />
+          <div>
+            <Num label="Advance recovery (₹)" value={form.advanceRecovery} onChange={(v) => set('advanceRecovery', v)} step={0.01} />
+            {outstanding > 0 && (
+              <p className="mt-1 text-caption text-muted-foreground">{row.employee.name} owes {formatINR(outstanding)} in advances.</p>
+            )}
+          </div>
           <Num label="Loan recovery (₹)" value={form.loanRecovery} onChange={(v) => set('loanRecovery', v)} step={0.01} />
         </div>
 
@@ -526,6 +535,168 @@ function AdjustDialog({ row, onClose }: { row: PayrollRow | null; onClose: () =>
         <DialogFooter>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button onClick={submit} loading={update.isPending}>Save</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ───────────────────────────── Advances ──────────────────────────────────────
+const ADVANCE_METHODS = ['CASH', 'UPI', 'BANK_TRANSFER', 'CARD', 'NET_BANKING'] as const;
+const ADVANCE_METHOD_LABEL: Record<string, string> = {
+  CASH: 'Cash', UPI: 'UPI', BANK_TRANSFER: 'Bank Transfer', CARD: 'Card', NET_BANKING: 'Net Banking', RAZORPAY: 'Razorpay',
+};
+
+function AdvancesTab() {
+  const { data, isLoading } = useAdvances();
+  const del = useDeleteAdvance();
+  const [editing, setEditing] = useState<AdvanceRow | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const rows = data?.rows ?? [];
+
+  const remove = (a: AdvanceRow) => {
+    if (!window.confirm(`Delete the ${formatINR(a.amount)} advance given to ${a.employee.name}? The booked expense will be removed too.`)) return;
+    del.mutate(a.id, {
+      onSuccess: () => toast.success('Advance deleted'),
+      onError: (e) => toast.error(apiErrorMessage(e)),
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-body">Cash given to staff ahead of payday, recovered from a later salary.</p>
+          <p className="text-caption text-muted-foreground">
+            {data ? `${formatINR(data.outstandingTotal)} outstanding across ${rows.filter((r) => r.status === 'OUTSTANDING').length} advance(s)` : ' '}
+          </p>
+        </div>
+        <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> Give Advance</Button>
+      </Card>
+
+      <Card className="overflow-hidden">
+        {isLoading ? (
+          <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
+        ) : !rows.length ? (
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <HandCoins className="h-8 w-8 text-muted-foreground" />
+            <p className="text-body text-muted-foreground">No advances given yet.</p>
+          </div>
+        ) : (
+          <Table>
+            <THead>
+              <TR>
+                <TH>Advance #</TH><TH>Employee</TH><TH>Given</TH><TH>Method</TH>
+                <TH className="text-right">Amount</TH><TH className="text-right">Recovered</TH>
+                <TH className="text-right">Outstanding</TH><TH>Status</TH><TH className="text-right">Actions</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {rows.map((a) => {
+                const outstanding = Number(a.amount) - Number(a.amountRecovered);
+                const editable = Number(a.amountRecovered) === 0;
+                return (
+                  <TR key={a.id}>
+                    <TD className="font-medium">{a.advanceNo}</TD>
+                    <TD>{a.employee.name}<span className="ml-1.5 text-caption text-muted-foreground">{a.employee.employeeNo}</span></TD>
+                    <TD className="whitespace-nowrap">{format(ist(a.givenDate), 'dd MMM yyyy')}</TD>
+                    <TD className="text-caption">{ADVANCE_METHOD_LABEL[a.paymentMethod] ?? a.paymentMethod}</TD>
+                    <TD className="text-right">{formatINR(a.amount)}</TD>
+                    <TD className="text-right text-muted-foreground">{formatINR(a.amountRecovered)}</TD>
+                    <TD className={cn('text-right font-semibold', outstanding > 0 && 'text-danger')}>{formatINR(outstanding)}</TD>
+                    <TD><Badge variant={a.status === 'OUTSTANDING' ? 'warning' : 'success'}>{a.status === 'OUTSTANDING' ? 'Outstanding' : 'Recovered'}</Badge></TD>
+                    <TD>
+                      {editable && (
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="icon" title="Edit" onClick={() => setEditing(a)}><Pencil className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" title="Delete" onClick={() => remove(a)}><Trash2 className="h-4 w-4 text-danger" /></Button>
+                        </div>
+                      )}
+                    </TD>
+                  </TR>
+                );
+              })}
+            </TBody>
+          </Table>
+        )}
+      </Card>
+
+      <AdvanceFormDialog open={creating || !!editing} onOpenChange={(v) => { if (!v) { setCreating(false); setEditing(null); } }} advance={editing} />
+    </div>
+  );
+}
+
+function AdvanceFormDialog({ open, onOpenChange, advance }: {
+  open: boolean; onOpenChange: (v: boolean) => void; advance: AdvanceRow | null;
+}) {
+  const { data: employees } = useEmployees({ status: 'ACTIVE' });
+  const create = useCreateAdvance();
+  const update = useUpdateAdvance();
+  const [form, setForm] = useState({
+    employeeId: '', amount: 0, givenDate: today(), paymentMethod: 'CASH' as AdvancePaymentMethod, notes: '',
+  });
+  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    if (!open) return;
+    setForm(
+      advance
+        ? { employeeId: advance.employeeId, amount: Number(advance.amount), givenDate: advance.givenDate.slice(0, 10), paymentMethod: advance.paymentMethod, notes: advance.notes ?? '' }
+        : { employeeId: employees?.[0]?.id ?? '', amount: 0, givenDate: today(), paymentMethod: 'CASH', notes: '' },
+    );
+    // employees only seeds the default for a brand-new advance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, advance]);
+
+  const submit = () => {
+    if (!form.employeeId) { toast.error('Pick an employee'); return; }
+    if (form.amount <= 0) { toast.error('Enter an amount greater than zero'); return; }
+    const payload = { amount: form.amount, givenDate: form.givenDate, paymentMethod: form.paymentMethod, notes: form.notes.trim() || undefined };
+    const onSettled = {
+      onSuccess: () => { toast.success(advance ? 'Advance updated' : 'Advance recorded'); onOpenChange(false); },
+      onError: (e: unknown) => toast.error(apiErrorMessage(e)),
+    };
+    if (advance) update.mutate({ id: advance.id, ...payload }, onSettled);
+    else create.mutate({ employeeId: form.employeeId, ...payload }, onSettled);
+  };
+
+  const saving = create.isPending || update.isPending;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>{advance ? `Edit ${advance.advanceNo}` : 'Give Advance'}</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label>Employee</Label>
+            <Select value={form.employeeId} onChange={(e) => set('employeeId', e.target.value)} disabled={!!advance}>
+              {!employees?.length && <option value="">No active employees</option>}
+              {(employees ?? []).map((e) => <option key={e.id} value={e.id}>{e.name} ({e.employeeNo})</option>)}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Amount (₹)</Label>
+            <Input type="number" step="0.01" min={0} value={form.amount} onChange={(e) => set('amount', Number(e.target.value))} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Given on</Label>
+            <Input type="date" value={form.givenDate} onChange={(e) => set('givenDate', e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Payment method</Label>
+            <Select value={form.paymentMethod} onChange={(e) => set('paymentMethod', e.target.value as AdvancePaymentMethod)}>
+              {ADVANCE_METHODS.map((m) => <option key={m} value={m}>{ADVANCE_METHOD_LABEL[m]}</option>)}
+            </Select>
+          </div>
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label>Notes <span className="text-muted-foreground">(optional)</span></Label>
+            <Input value={form.notes} onChange={(e) => set('notes', e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} loading={saving}>{advance ? 'Save' : 'Give Advance'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

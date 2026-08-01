@@ -11,10 +11,13 @@ import { AppError } from '../../shared/utils/AppError';
 import {
   generatePayrollSchema, listAttendanceQuerySchema, listPayrollQuerySchema, markPaidSchema,
   periodQuerySchema, saveAttendanceSchema, updatePayrollSchema,
+  createAdvanceSchema, updateAdvanceSchema, listAdvancesQuerySchema,
   type GeneratePayrollInput, type ListAttendanceQuery, type ListPayrollQuery, type MarkPaidInput,
   type PeriodQuery, type SaveAttendanceInput, type UpdatePayrollInput,
+  type CreateAdvanceInput, type UpdateAdvanceInput, type ListAdvancesQuery,
 } from './payroll.schema';
 import { payrollService } from './payroll.service';
+import { advancesService } from './advances.service';
 import { renderPayslipPdf } from './payroll.pdf';
 
 const idParam = z.object({ id: z.string().uuid() });
@@ -50,6 +53,38 @@ router.delete(
   '/attendance/:id',
   validate({ params: idParam }),
   asyncHandler(async (req: Request, res: Response) => ok(res, await payrollService.deleteAttendance(req.params.id), 'Attendance removed')),
+);
+
+// ────────────────────────── Employee advances ────────────────────────────────
+router.get(
+  '/advances',
+  validate({ query: listAdvancesQuerySchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await advancesService.listAdvances(req.query as unknown as ListAdvancesQuery)),
+  ),
+);
+
+router.post(
+  '/advances',
+  writeRateLimiter,
+  validate({ body: createAdvanceSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    created(res, await advancesService.createAdvance(req.body as CreateAdvanceInput, actor(req)), 'Advance recorded'),
+  ),
+);
+
+router.patch(
+  '/advances/:id',
+  validate({ params: idParam, body: updateAdvanceSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await advancesService.updateAdvance(req.params.id, req.body as UpdateAdvanceInput), 'Advance updated'),
+  ),
+);
+
+router.delete(
+  '/advances/:id',
+  validate({ params: idParam }),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await advancesService.deleteAdvance(req.params.id), 'Advance removed')),
 );
 
 // ────────────────────────────── Payroll ─────────────────────────────────────

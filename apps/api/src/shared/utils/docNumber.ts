@@ -13,7 +13,8 @@ export type DocCounterKey =
   | 'SUPPLIER_PAYMENT'
   | 'ASSET'
   | 'EMPLOYEE'
-  | 'PAYROLL';
+  | 'PAYROLL'
+  | 'ADVANCE';
 
 const PREFIX: Record<DocCounterKey, string> = {
   BILL: 'BL',
@@ -32,6 +33,7 @@ const PREFIX: Record<DocCounterKey, string> = {
   EMPLOYEE: 'EMPL',
   // PAY is already taken by PAYMENT, so payroll rows use PR.
   PAYROLL: 'PR',
+  ADVANCE: 'ADV',
 };
 
 /**

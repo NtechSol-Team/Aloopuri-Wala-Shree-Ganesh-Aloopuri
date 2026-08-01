@@ -4,6 +4,7 @@ import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { nextDocNumber } from '../../shared/utils/docNumber';
 import { computePayroll, payableDaysFor } from './payroll.calc';
+import { applyAdvanceRecoveryTx, outstandingAdvanceBalance, reverseAdvanceRecoveryTx } from './advances.service';
 import type {
   GeneratePayrollInput, ListAttendanceQuery, ListPayrollQuery, MarkPaidInput,
   PeriodQuery, SaveAttendanceInput, UpdatePayrollInput,
@@ -172,11 +173,18 @@ export async function generatePayroll(input: GeneratePayrollInput, createdById: 
       const prior = existingBy.get(emp.id);
       if (prior?.status === PayrollStatus.PAID) { skippedPaid.push(emp.name); continue; }
 
+      // A brand-new row starts with the employee's whole outstanding advance balance
+      // pre-filled as this month's recovery — the admin can still adjust it down (or
+      // up) before paying. A re-run of an existing PENDING row leaves it exactly as
+      // last saved, so re-generating after an attendance fix can't silently overwrite
+      // a deliberate manual edit.
+      const advanceOwed = prior ? null : await outstandingAdvanceBalance(emp.id, tx);
+
       // Manual adjustments already keyed against a pending row survive a re-run.
       const computed = computePayroll(emp, att, {
         bonus: prior ? Number(prior.bonus) : 0,
         incentives: prior ? Number(prior.incentives) : 0,
-        advanceRecovery: prior ? Number(prior.advanceRecovery) : 0,
+        advanceRecovery: prior ? Number(prior.advanceRecovery) : Number(advanceOwed),
         loanRecovery: prior ? Number(prior.loanRecovery) : 0,
       });
 
@@ -288,7 +296,7 @@ async function salaryCategoryId(tx: Prisma.TransactionClient): Promise<string> {
 export async function markPayrollPaid(id: string, input: MarkPaidInput, userId: string) {
   const row = await prisma.payroll.findFirst({
     where: { id, isDeleted: false },
-    select: { id: true, status: true, netSalary: true, year: true, month: true, employee: { select: { name: true, employeeNo: true } } },
+    select: { id: true, status: true, netSalary: true, advanceRecovery: true, year: true, month: true, employeeId: true, employee: { select: { name: true, employeeNo: true } } },
   });
   if (!row) throw AppError.notFound('Payroll record not found');
   if (row.status === PayrollStatus.PAID) throw AppError.invalidState('This salary is already marked paid');
@@ -308,6 +316,9 @@ export async function markPayrollPaid(id: string, input: MarkPaidInput, userId: 
       },
       select: { id: true },
     });
+    // Only now — the money is actually leaving — does the deduction shown on this
+    // payslip actually reduce what the employee still owes.
+    await applyAdvanceRecoveryTx(tx, row.employeeId, id, new Prisma.Decimal(row.advanceRecovery));
     return tx.payroll.update({
       where: { id },
       data: { status: PayrollStatus.PAID, paymentDate: input.paymentDate, expenseId: expense.id },
@@ -329,6 +340,9 @@ export async function revertPayrollPayment(id: string) {
   if (row.status !== PayrollStatus.PAID) throw AppError.invalidState('This salary is not marked paid');
 
   const saved = await prisma.$transaction(async (tx) => {
+    // Undo the advance recovery first — the employee still owes whatever this
+    // payroll had claimed to recover, now that the payment itself is undone.
+    await reverseAdvanceRecoveryTx(tx, id);
     const updated = await tx.payroll.update({
       where: { id },
       data: { status: PayrollStatus.PENDING, paymentDate: null, expenseId: null },

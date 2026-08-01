@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PayrollStatus } from '@prisma/client';
+import { PayrollStatus, PaymentMethod, AdvanceStatus } from '@prisma/client';
 import { istDate } from '../../shared/utils/date';
 
 const money = z.coerce.number().nonnegative();
@@ -63,6 +63,23 @@ export const listPayrollQuerySchema = z.object({
   employeeId: z.string().uuid().optional(),
 });
 
+// ─────────────────────────── Employee advances ──────────────────────────────
+export const createAdvanceSchema = z.object({
+  employeeId: z.string().uuid(),
+  amount: z.coerce.number().positive('Amount must be greater than 0'),
+  givenDate: istDate.default(() => new Date()),
+  paymentMethod: z.nativeEnum(PaymentMethod).default(PaymentMethod.CASH),
+  notes: z.string().max(300).optional(),
+});
+
+/** Only reachable while nothing has been recovered yet — see advances.service.ts. */
+export const updateAdvanceSchema = createAdvanceSchema.omit({ employeeId: true }).partial();
+
+export const listAdvancesQuerySchema = z.object({
+  employeeId: z.string().uuid().optional(),
+  status: z.nativeEnum(AdvanceStatus).optional(),
+});
+
 export type PeriodQuery = z.infer<typeof periodQuerySchema>;
 export type SaveAttendanceInput = z.infer<typeof saveAttendanceSchema>;
 export type ListAttendanceQuery = z.infer<typeof listAttendanceQuerySchema>;
@@ -70,3 +87,6 @@ export type GeneratePayrollInput = z.infer<typeof generatePayrollSchema>;
 export type UpdatePayrollInput = z.infer<typeof updatePayrollSchema>;
 export type MarkPaidInput = z.infer<typeof markPaidSchema>;
 export type ListPayrollQuery = z.infer<typeof listPayrollQuerySchema>;
+export type CreateAdvanceInput = z.infer<typeof createAdvanceSchema>;
+export type UpdateAdvanceInput = z.infer<typeof updateAdvanceSchema>;
+export type ListAdvancesQuery = z.infer<typeof listAdvancesQuerySchema>;

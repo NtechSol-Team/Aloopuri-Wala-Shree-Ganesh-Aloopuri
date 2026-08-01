@@ -273,14 +273,6 @@ function EmployeeFormDialog({ open, onOpenChange, employee }: {
                 <Input value={form.mobile} onChange={(e) => set('mobile', e.target.value)} />
               </div>
               <div className="space-y-1.5">
-                <Label>Email</Label>
-                <Input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Date of birth</Label>
-                <Input type="date" value={form.dateOfBirth} onChange={(e) => set('dateOfBirth', e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
                 <Label>Gender</Label>
                 <Select value={form.gender} onChange={(e) => set('gender', e.target.value as Gender | '')}>
                   <option value="">Not specified</option>
@@ -306,10 +298,6 @@ function EmployeeFormDialog({ open, onOpenChange, employee }: {
               <div className="space-y-1.5">
                 <Label>Joining date</Label>
                 <Input type="date" value={form.joiningDate} onChange={(e) => set('joiningDate', e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Department</Label>
-                <Input placeholder="e.g. Production" value={form.department} onChange={(e) => set('department', e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <Label>Employment type</Label>

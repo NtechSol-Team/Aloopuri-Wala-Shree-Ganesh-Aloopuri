@@ -186,6 +186,75 @@ export async function openPayslip(id: string, payrollNo: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+// ───────────────────────── Employee advances ─────────────────────────────────
+export type AdvanceStatus = 'OUTSTANDING' | 'RECOVERED';
+export type AdvancePaymentMethod = 'CASH' | 'CARD' | 'UPI' | 'NET_BANKING' | 'RAZORPAY' | 'BANK_TRANSFER';
+
+export interface AdvanceRow {
+  id: string;
+  advanceNo: string;
+  employeeId: string;
+  amount: string;
+  amountRecovered: string;
+  givenDate: string;
+  paymentMethod: AdvancePaymentMethod;
+  status: AdvanceStatus;
+  notes: string | null;
+  employee: { id: string; employeeNo: string; name: string };
+}
+
+export interface AdvancesResponse { rows: AdvanceRow[]; outstandingTotal: number }
+
+export function useAdvances(params: { employeeId?: string; status?: AdvanceStatus } = {}, enabled = true) {
+  return useQuery({
+    queryKey: ['payroll', 'advances', params],
+    enabled,
+    queryFn: async () => (await api.get<ApiSuccess<AdvancesResponse>>('/payroll/advances', { params })).data.data,
+  });
+}
+
+export interface AdvancePayload {
+  employeeId: string;
+  amount: number;
+  givenDate?: string;
+  paymentMethod?: AdvancePaymentMethod;
+  notes?: string;
+}
+
+export function useCreateAdvance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: AdvancePayload) => (await api.post<ApiSuccess<AdvanceRow>>('/payroll/advances', input)).data.data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['payroll'] });
+      ['expenses', 'expense-summary', 'accounting', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    },
+  });
+}
+
+export function useUpdateAdvance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...input }: Partial<AdvancePayload> & { id: string }) =>
+      (await api.patch<ApiSuccess<AdvanceRow>>(`/payroll/advances/${id}`, input)).data.data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['payroll'] });
+      ['expenses', 'expense-summary', 'accounting', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    },
+  });
+}
+
+export function useDeleteAdvance() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete(`/payroll/advances/${id}`)).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['payroll'] });
+      ['expenses', 'expense-summary', 'accounting', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    },
+  });
+}
+
 // ─────────────────────── Dashboard + reports ────────────────────────────────
 export function usePayrollDashboard(period: Period) {
   return useQuery({
