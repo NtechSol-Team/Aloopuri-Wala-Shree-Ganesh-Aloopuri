@@ -8,7 +8,7 @@
  * with familiar names inherit the right photo automatically.
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+import { apiOrigin } from '@/lib/api-origin';
 
 /** Bundled photos live in the web app's /public/menu folder. */
 const menu = (file: string) => `/menu/${file}`;
@@ -48,7 +48,7 @@ export function productImageSrc(product: { name: string; photoUrl?: string | nul
   if (uploaded) {
     // Uploaded photos are served by the API; bundled/absolute ones as-is.
     if (/^https?:\/\//.test(uploaded)) return uploaded;
-    return uploaded.startsWith('/uploads') ? `${API_URL}${uploaded}` : uploaded;
+    return uploaded.startsWith('/uploads') ? `${apiOrigin()}${uploaded}` : uploaded;
   }
   const name = product.name.toLowerCase();
   const rule = RULES.find((r) => r.test.test(name));

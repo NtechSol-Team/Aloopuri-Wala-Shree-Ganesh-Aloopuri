@@ -21,10 +21,11 @@
 // ── Minimal Web Bluetooth typings (not in TS's dom lib) ─────────────────────
 interface BluetoothRemoteGATTCharacteristicLike {
   uuid?: string;
-  properties: { write: boolean; writeWithoutResponse: boolean };
+  properties: { write: boolean; writeWithoutResponse: boolean; notify: boolean; indicate: boolean };
   writeValueWithResponse?: (data: Uint8Array) => Promise<void>;
   writeValueWithoutResponse?: (data: Uint8Array) => Promise<void>;
   writeValue: (data: Uint8Array) => Promise<void>;
+  startNotifications?: () => Promise<unknown>;
 }
 interface BluetoothRemoteGATTServiceLike {
   uuid: string;
@@ -184,27 +185,62 @@ export class WebBluetoothPrinter {
     this.connectedAt = Date.now();
     log('gatt connected, discovering services…');
 
-    // Find the first writable characteristic under a known printer service.
+    // Collect every writable characteristic under every matching service — not
+    // just the first — before picking one. A device advertising several known
+    // printer services (as several cheap clone modules do) may have more than
+    // one plausible write target; if the one we pick turns out to be wrong
+    // (write succeeds, printer stays silent), this log is what tells us what
+    // else to try instead of guessing blind through another deploy.
     const services = await server.getPrimaryServices();
     log('services found:', services.map((s) => s.uuid).join(', ') || '(none)');
+    const candidates: Array<{ svc: BluetoothRemoteGATTServiceLike; ch: BluetoothRemoteGATTCharacteristicLike }> = [];
     for (const svc of services) {
       if (!PRINTER_SERVICES.includes(svc.uuid)) continue;
       for (const ch of await svc.getCharacteristics()) {
-        if (ch.properties.write || ch.properties.writeWithoutResponse) {
-          this.characteristic = ch;
-          log('using characteristic', ch.uuid ?? '(uuid n/a)', 'on service', svc.uuid,
-            `(write=${ch.properties.write}, writeWithoutResponse=${ch.properties.writeWithoutResponse})`);
-          return;
-        }
+        if (ch.properties.write || ch.properties.writeWithoutResponse) candidates.push({ svc, ch });
       }
     }
-    fail('no writable characteristic under any known printer service — disconnecting');
-    device.gatt.disconnect();
-    this.characteristic = null;
-    this.connectedAt = 0;
-    throw new Error(
-      'No writable printer service found — this printer does not expose BLE printing. Use the SCFC Print Bridge app instead.',
-    );
+    if (candidates.length) {
+      log(
+        `${candidates.length} writable characteristic(s) found:`,
+        candidates.map((c) => `${c.ch.uuid ?? '?'}@${c.svc.uuid} (write=${c.ch.properties.write},noResp=${c.ch.properties.writeWithoutResponse})`).join(' | '),
+      );
+    }
+
+    const picked = candidates[0];
+    if (!picked) {
+      fail('no writable characteristic under any known printer service — disconnecting');
+      device.gatt.disconnect();
+      this.characteristic = null;
+      this.connectedAt = 0;
+      throw new Error(
+        'No writable printer service found — this printer does not expose BLE printing. Use the SCFC Print Bridge app instead.',
+      );
+    }
+    if (candidates.length > 1) {
+      warn('multiple write candidates found — using the first; if nothing prints, this is the first thing to try changing');
+    }
+    this.characteristic = picked.ch;
+    log('using characteristic', picked.ch.uuid ?? '(uuid n/a)', 'on service', picked.svc.uuid,
+      `(write=${picked.ch.properties.write}, writeWithoutResponse=${picked.ch.properties.writeWithoutResponse})`);
+
+    // Some BLE-UART bridge modules (common on cheap clone printers) only start
+    // relaying writes to the printer's UART once a client has subscribed to
+    // notifications on a characteristic in the same service — even though we
+    // never read a response. Skipped silently if the service has no such
+    // characteristic, or the printer doesn't require it; either way this must
+    // never block printing, so any failure here is logged, not thrown.
+    const notifyCh = await picked.svc.getCharacteristics()
+      .then((chs) => chs.find((c) => c.properties.notify || c.properties.indicate))
+      .catch(() => undefined);
+    if (notifyCh?.startNotifications) {
+      try {
+        await notifyCh.startNotifications();
+        log('subscribed to notify characteristic', notifyCh.uuid ?? '(uuid n/a)', '— some bridge modules gate printing on this');
+      } catch (e) {
+        warn('startNotifications failed (continuing anyway)', e);
+      }
+    }
   }
 
   async ensureConnected(savedDeviceId?: string): Promise<void> {

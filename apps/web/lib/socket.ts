@@ -1,7 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 import { useAuthStore } from '@/store/auth.store';
-
-const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+import { socketOrigin } from '@/lib/api-origin';
 
 let socket: Socket | null = null;
 
@@ -11,7 +10,7 @@ export function getSocket(): Socket | null {
   if (!token) return null;
   if (socket?.connected) return socket;
 
-  socket = io(SOCKET_URL, {
+  socket = io(socketOrigin(), {
     auth: { token },
     transports: ['websocket'],
     autoConnect: true,

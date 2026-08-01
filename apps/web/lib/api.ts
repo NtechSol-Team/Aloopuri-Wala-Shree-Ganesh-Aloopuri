@@ -1,9 +1,9 @@
 import axios, { AxiosError, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '@/store/auth.store';
+import { apiOrigin } from '@/lib/api-origin';
 import type { ApiErrorBody, ApiSuccess, Tokens } from '@/types/api';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
-export const API_BASE = `${API_URL}/api/v1`;
+export const API_BASE = `${apiOrigin()}/api/v1`;
 
 export const api = axios.create({
   baseURL: API_BASE,
