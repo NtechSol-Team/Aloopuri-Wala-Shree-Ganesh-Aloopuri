@@ -40,6 +40,7 @@ export interface Product {
   trackInventory: boolean;
   avgCost: string;
   category: { id: string; name: string; type: CategoryType };
+  godownStock: { quantity: string };
 }
 
 export interface RawMaterial {
@@ -127,6 +128,8 @@ type ProductPayload = {
   isPosEnabled: boolean; trackInventory: boolean;
   // Create-only — the server ignores it on update. See products.schema.ts.
   openingStock?: number;
+  // Edit-only — a delta added to Godown stock, never a replacement value.
+  addStock?: number;
 };
 
 export function useSaveProduct() {

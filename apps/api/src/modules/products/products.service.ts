@@ -79,6 +79,10 @@ const productSelect = {
   avgCost: true,
   category: { select: { id: true, name: true, type: true } },
   unit: { select: { id: true, name: true, decimalPlaces: true } },
+  // So the Edit dialog can show what's already on hand before the owner decides
+  // how much stock to add — Main Branch isn't included because Add Stock, like
+  // Opening Stock, only ever lands at the Godown.
+  godownStock: { select: { quantity: true } },
 } satisfies Prisma.ProductSelect;
 
 const rawMaterialSelect = {
@@ -163,8 +167,23 @@ export async function createProduct(input: CreateProductInput, createdById: stri
 }
 
 export async function updateProduct(id: string, input: UpdateProductInput) {
-  await getProduct(id);
-  const product = await prisma.product.update({ where: { id }, data: input, select: productSelect });
+  const existing = await getProduct(id);
+  const { addStock, ...productInput } = input;
+
+  if (addStock) {
+    const unit = await unitFor(input.unitId ?? existing.unitId);
+    assertQuantityPrecision(addStock, unit, 'addStock');
+  }
+
+  const product = await prisma.$transaction(async (tx) => {
+    // Increment first, update+select second — so the Godown quantity the caller
+    // gets back already reflects this save, the same read-your-write guarantee
+    // every other mutation in this API gives.
+    if (addStock) {
+      await tx.godownStock.update({ where: { productId: id }, data: { quantity: { increment: addStock } } });
+    }
+    return tx.product.update({ where: { id }, data: productInput, select: productSelect });
+  });
   invalidate();
   return product;
 }

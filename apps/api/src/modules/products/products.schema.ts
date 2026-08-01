@@ -41,13 +41,21 @@ export const createProductSchema = z.object({
   // One-time initial balance for a product entering the system with stock already on
   // hand (e.g. migrating from another system). Lands in the Godown ledger — the
   // canonical starting point for finished goods — same as an existing raw material's
-  // opening currentStock. Deliberately not on the update schema: after creation, stock
-  // only moves through production, transfers and Fulfil, never by editing the product.
+  // opening currentStock. Not on the update schema (see addStock below) — Create only
+  // ever seeds a fresh ledger, it never touches an existing one.
   openingStock: decimalString.default(0),
 });
 export const updateProductSchema = createProductSchema.omit({ openingStock: true }).partial().extend({
   isActive: z.boolean().optional(),
   isPosEnabled: z.boolean().optional(),
+  // A stock *movement*, not a field replacement: each save that carries a non-zero
+  // value adds that many units to Godown stock on top of whatever is already there.
+  // It never sets/overwrites the ledger, so it's safe to apply even if production,
+  // a transfer or a sale changed the quantity after this dialog was opened. The web
+  // form always resets it to 0 after a successful save, precisely so re-opening and
+  // re-saving the same product (e.g. just to fix a typo in its name) can't silently
+  // add stock a second time.
+  addStock: decimalString.default(0),
 });
 
 export const listProductsQuerySchema = paginationQuerySchema.extend({
