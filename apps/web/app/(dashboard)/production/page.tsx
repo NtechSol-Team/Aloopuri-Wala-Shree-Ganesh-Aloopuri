@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
-  Plus, Pencil, Factory, Boxes, AlertTriangle, Warehouse, Printer,
+  Plus, Pencil, Trash2, Factory, Boxes, AlertTriangle, Warehouse, Printer,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR, formatQty, ist } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
-import { useRawMaterials, type RawMaterial } from '@/hooks/useProducts';
+import { useAuthStore } from '@/store/auth.store';
+import { useRawMaterials, useDeleteRawMaterial, type RawMaterial } from '@/hooks/useProducts';
 import { useBatches, useGodownStock, fetchBatchDetail } from '@/hooks/useProduction';
 import { printBatchLabel } from '@/lib/print';
 import { RawMaterialFormDialog } from '@/components/products/raw-material-form-dialog';
@@ -55,6 +56,19 @@ function MaterialsTab() {
   const { data, isLoading } = useRawMaterials();
   const [editing, setEditing] = useState<RawMaterial | null>(null);
   const [creating, setCreating] = useState(false);
+  const del = useDeleteRawMaterial();
+  // Matches the API: only Main Owner/Admin may delete a raw material (deleting
+  // one used in a BOM is refused server-side too, so this is just avoiding a
+  // pointless round trip for godown, who can still create/edit).
+  const canDelete = useAuthStore((s) => s.user?.role) === 'SUPER_ADMIN';
+
+  const remove = (m: RawMaterial) => {
+    if (!window.confirm(`Delete the raw material "${m.name}"? This can't be undone.`)) return;
+    del.mutate(m.id, {
+      onSuccess: () => toast.success('Raw material deleted'),
+      onError: (e) => toast.error(apiErrorMessage(e)),
+    });
+  };
 
   return (
     <Card className="overflow-hidden">
@@ -82,7 +96,14 @@ function MaterialsTab() {
                   </TD>
                   <TD className="text-right">{formatQty(m.reorderLevel, m.unit.decimalPlaces)}</TD>
                   <TD className="text-right">{formatINR(m.costPerUnit)}</TD>
-                  <TD className="text-right"><Button variant="ghost" size="icon" onClick={() => setEditing(m)}><Pencil className="h-4 w-4" /></Button></TD>
+                  <TD>
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="icon" title="Edit" onClick={() => setEditing(m)}><Pencil className="h-4 w-4" /></Button>
+                      {canDelete && (
+                        <Button variant="ghost" size="icon" title="Delete" onClick={() => remove(m)}><Trash2 className="h-4 w-4 text-danger" /></Button>
+                      )}
+                    </div>
+                  </TD>
                 </TR>
               );
             })}

@@ -236,3 +236,14 @@ export function useSaveRawMaterial() {
     },
   });
 }
+
+export function useDeleteRawMaterial() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete(`/raw-materials/${id}`)).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['raw-materials'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
