@@ -23,6 +23,7 @@ const schema = z.object({
   mrp: z.coerce.number().nonnegative(),
   taxPercent: z.coerce.number().min(0).max(100),
   reorderLevel: z.coerce.number().nonnegative(),
+  openingStock: z.coerce.number().nonnegative(),
   batchTrackingEnabled: z.boolean(),
   isPosEnabled: z.boolean(),
   trackInventory: z.boolean(),
@@ -44,7 +45,7 @@ export function ProductFormDialog({
   const { data: units } = useUnits();
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { taxPercent: 5, basePrice: 0, mrp: 0, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: false, trackInventory: true },
+    defaultValues: { taxPercent: 5, basePrice: 0, mrp: 0, reorderLevel: 0, openingStock: 0, batchTrackingEnabled: true, isPosEnabled: false, trackInventory: true },
   });
 
   const unitList = units ?? [];
@@ -62,10 +63,10 @@ export function ProductFormDialog({
           ? {
               name: product.name, sku: product.sku, categoryId: product.category.id, unitId: product.unit.id,
               basePrice: Number(product.basePrice), mrp: Number(product.mrp), taxPercent: Number(product.taxPercent),
-              reorderLevel: Number(product.reorderLevel), batchTrackingEnabled: product.batchTrackingEnabled,
+              reorderLevel: Number(product.reorderLevel), openingStock: 0, batchTrackingEnabled: product.batchTrackingEnabled,
               isPosEnabled: product.isPosEnabled, trackInventory: product.trackInventory,
             }
-          : { name: '', sku: '', categoryId: categories[0]?.id ?? '', unitId: unitList[0]?.id ?? '', basePrice: 0, mrp: 0, taxPercent: 5, reorderLevel: 0, batchTrackingEnabled: true, isPosEnabled: false, trackInventory: true },
+          : { name: '', sku: '', categoryId: categories[0]?.id ?? '', unitId: unitList[0]?.id ?? '', basePrice: 0, mrp: 0, taxPercent: 5, reorderLevel: 0, openingStock: 0, batchTrackingEnabled: true, isPosEnabled: false, trackInventory: true },
       );
     }
     // unitList only seeds the default for a brand-new product.
@@ -73,8 +74,11 @@ export function ProductFormDialog({
   }, [open, product, categories, reset]);
 
   const onSubmit = (values: FormValues) => {
+    // openingStock is create-only — the field is hidden on edit and the server ignores
+    // it on update anyway, but there's no reason to send a value the user never saw.
+    const { openingStock, ...rest } = values;
     save.mutate(
-      { id: product?.id, ...values },
+      { id: product?.id, ...rest, ...(product ? {} : { openingStock }) },
       {
         onSuccess: () => {
           toast.success(product ? 'Product updated' : 'Product created');
@@ -124,6 +128,15 @@ export function ProductFormDialog({
             <Field label="Reorder Level">
               <Input type="number" step={stepFor(decimals)} {...register('reorderLevel')} />
             </Field>
+            {!product && (
+              <Field
+                label="Opening Stock"
+                error={errors.openingStock?.message}
+                hint="Added to Godown stock on creation. Manage stock afterwards from Inventory."
+              >
+                <Input type="number" step={stepFor(decimals)} {...register('openingStock')} />
+              </Field>
+            )}
             <label className="sm:col-span-2 flex items-center gap-2 text-body">
               <input type="checkbox" {...register('batchTrackingEnabled')} className="h-4 w-4" />
               Enable batch tracking
@@ -147,12 +160,13 @@ export function ProductFormDialog({
   );
 }
 
-function Field({ label, error, children, className }: { label: string; error?: string; children: React.ReactNode; className?: string }) {
+function Field({ label, error, hint, children, className }: { label: string; error?: string; hint?: string; children: React.ReactNode; className?: string }) {
   return (
     <div className={`space-y-1.5 ${className ?? ''}`}>
       <Label>{label}</Label>
       {children}
       {error && <p className="text-caption text-danger">{error}</p>}
+      {!error && hint && <p className="text-caption text-muted-foreground">{hint}</p>}
     </div>
   );
 }

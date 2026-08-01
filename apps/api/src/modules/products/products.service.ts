@@ -145,10 +145,16 @@ export async function getProduct(id: string) {
 }
 
 export async function createProduct(input: CreateProductInput, createdById: string) {
+  const { openingStock, ...productInput } = input;
+  const unit = await unitFor(input.unitId);
+  assertQuantityPrecision(openingStock, unit, 'openingStock');
+
   const product = await prisma.$transaction(async (tx) => {
-    const created = await tx.product.create({ data: { ...input, createdById }, select: productSelect });
-    // Initialise the stock ledgers for this product.
-    await tx.godownStock.create({ data: { productId: created.id, quantity: 0 } });
+    const created = await tx.product.create({ data: { ...productInput, createdById }, select: productSelect });
+    // Initialise the stock ledgers for this product. Opening stock — if given —
+    // lands at the Godown, the canonical starting point for finished goods; from
+    // there it moves on through production, transfers and Fulfil.
+    await tx.godownStock.create({ data: { productId: created.id, quantity: openingStock } });
     await tx.mainBranchStock.create({ data: { productId: created.id, quantity: 0 } });
     return created;
   });

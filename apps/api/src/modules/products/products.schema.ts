@@ -38,8 +38,14 @@ export const createProductSchema = z.object({
   // Catalog products default to NOT sellable at POS; the "Add POS Item" flow sends true.
   isPosEnabled: z.boolean().default(false),
   trackInventory: z.boolean().default(true),
+  // One-time initial balance for a product entering the system with stock already on
+  // hand (e.g. migrating from another system). Lands in the Godown ledger — the
+  // canonical starting point for finished goods — same as an existing raw material's
+  // opening currentStock. Deliberately not on the update schema: after creation, stock
+  // only moves through production, transfers and Fulfil, never by editing the product.
+  openingStock: decimalString.default(0),
 });
-export const updateProductSchema = createProductSchema.partial().extend({
+export const updateProductSchema = createProductSchema.omit({ openingStock: true }).partial().extend({
   isActive: z.boolean().optional(),
   isPosEnabled: z.boolean().optional(),
 });

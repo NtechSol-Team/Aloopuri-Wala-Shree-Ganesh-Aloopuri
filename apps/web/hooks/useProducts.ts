@@ -125,6 +125,8 @@ type ProductPayload = {
   name: string; sku: string; categoryId: string; unitId: string;
   basePrice: number; mrp: number; taxPercent: number; reorderLevel: number; batchTrackingEnabled: boolean;
   isPosEnabled: boolean; trackInventory: boolean;
+  // Create-only — the server ignores it on update. See products.schema.ts.
+  openingStock?: number;
 };
 
 export function useSaveProduct() {
