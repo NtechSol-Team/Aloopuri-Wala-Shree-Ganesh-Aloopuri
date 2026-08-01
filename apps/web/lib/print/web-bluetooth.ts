@@ -11,10 +11,16 @@
  *
  * The service/characteristic UUIDs below cover the BLE bridges found on the
  * common Chinese thermal-printer modules (JK/Goojprt/Xprinter/ISSC/HM-10…).
+ *
+ * Every stage of the connection lifecycle logs under the `[print/ble]` tag so a
+ * dropped link can be diagnosed from the DevTools console instead of guessed at
+ * — BLE modules drop an idle GATT link readily, and the drop is otherwise
+ * completely silent.
  */
 
 // ── Minimal Web Bluetooth typings (not in TS's dom lib) ─────────────────────
 interface BluetoothRemoteGATTCharacteristicLike {
+  uuid?: string;
   properties: { write: boolean; writeWithoutResponse: boolean };
   writeValueWithResponse?: (data: Uint8Array) => Promise<void>;
   writeValueWithoutResponse?: (data: Uint8Array) => Promise<void>;
@@ -54,6 +60,12 @@ export function webBluetoothSupported(): boolean {
   return !!getBluetooth();
 }
 
+// ── Diagnostics ──────────────────────────────────────────────────────────────
+const TAG = '[print/ble]';
+const log = (...a: unknown[]) => console.info(TAG, ...a);
+const warn = (...a: unknown[]) => console.warn(TAG, ...a);
+const fail = (...a: unknown[]) => console.error(TAG, ...a);
+
 // ── Known printer BLE services ───────────────────────────────────────────────
 const PRINTER_SERVICES: string[] = [
   '000018f0-0000-1000-8000-00805f9b34fb', // common ESC/POS BLE service (char 2af1)
@@ -64,6 +76,13 @@ const PRINTER_SERVICES: string[] = [
   '0000fee7-0000-1000-8000-00805f9b34fb', // some Goojprt/JP modules
 ];
 
+/**
+ * Name prefixes thermal printers actually advertise, used to narrow the chooser
+ * for the (common) printers that advertise no service UUIDs at all. Covers the
+ * TVS-E RP series plus the usual OEM module names.
+ */
+const PRINTER_NAME_PREFIXES = ['RP', 'RPP', 'TVS', 'PT-', 'POS', 'XP-', 'MTP', 'MPT', 'GP-', 'JP', 'BlueTooth Printer', 'Printer'];
+
 const WRITE_CHUNK = 120;   // safe for un-negotiated MTUs across cheap modules
 const CHUNK_DELAY_MS = 15; // pacing for writeWithoutResponse fire-and-forget
 
@@ -72,6 +91,15 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class WebBluetoothPrinter {
   private device: BluetoothDeviceLike | null = null;
   private characteristic: BluetoothRemoteGATTCharacteristicLike | null = null;
+  /**
+   * Devices already carrying our disconnect listener. `connectTo` runs again on
+   * every redial, and addEventListener would stack a fresh copy each time —
+   * leaking a handler per reconnect and firing N times on the next drop. A
+   * WeakSet keeps this from pinning device objects in memory.
+   */
+  private listenerBound = new WeakSet<BluetoothDeviceLike>();
+  /** When the current link came up, so a drop can report how long it survived. */
+  private connectedAt = 0;
 
   get connectedName(): string | null {
     return this.device?.gatt?.connected ? this.device.name ?? 'BLE printer' : null;
@@ -80,17 +108,29 @@ export class WebBluetoothPrinter {
   /**
    * Show the browser's device picker (must be called from a user gesture) and
    * connect. Returns the picked device's id/name for persistence.
+   *
+   * Filtered by known printer services and name prefixes by default, so the
+   * chooser stops listing every phone, watch and speaker in range. Printers
+   * that advertise neither are unreachable that way, so `allDevices` reopens
+   * the unfiltered chooser as an explicit escape hatch.
    */
-  async pick(): Promise<{ id: string; name: string }> {
+  async pick(opts: { allDevices?: boolean } = {}): Promise<{ id: string; name: string }> {
     const bt = getBluetooth();
     if (!bt) throw new Error('Web Bluetooth is not supported in this browser');
-    const device = await bt.requestDevice({
-      // Two-stage net: prefer devices advertising a known printer service, but
-      // let the user pick anything (some printers advertise no services at all
-      // until connected). optionalServices whitelists what we may then access.
-      acceptAllDevices: true,
-      optionalServices: PRINTER_SERVICES,
-    });
+
+    log('requestDevice →', opts.allDevices ? 'ALL devices (unfiltered)' : 'filtered to printers');
+    const device = await bt.requestDevice(
+      opts.allDevices
+        ? { acceptAllDevices: true, optionalServices: PRINTER_SERVICES }
+        : {
+            filters: [
+              ...PRINTER_SERVICES.map((s) => ({ services: [s] })),
+              ...PRINTER_NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
+            ],
+            optionalServices: PRINTER_SERVICES,
+          },
+    );
+    log('picked', device.name ?? '(unnamed)', device.id);
     await this.connectTo(device);
     return { id: device.id, name: device.name ?? 'BLE printer' };
   }
@@ -102,14 +142,22 @@ export class WebBluetoothPrinter {
    */
   async reconnectKnown(deviceId: string): Promise<boolean> {
     const bt = getBluetooth();
-    if (!bt?.getDevices) return false;
+    if (!bt?.getDevices) {
+      log('reconnectKnown skipped — this browser has no getDevices()');
+      return false;
+    }
     try {
       const devices = await bt.getDevices();
       const device = devices.find((d) => d.id === deviceId);
-      if (!device) return false;
+      if (!device) {
+        warn('reconnectKnown: saved device not in granted list', deviceId);
+        return false;
+      }
+      log('reconnectKnown →', device.name ?? '(unnamed)', deviceId);
       await this.connectTo(device);
       return true;
-    } catch {
+    } catch (e) {
+      warn('reconnectKnown failed', e);
       return false;
     }
   }
@@ -117,22 +165,43 @@ export class WebBluetoothPrinter {
   private async connectTo(device: BluetoothDeviceLike): Promise<void> {
     if (!device.gatt) throw new Error('Device has no GATT server');
     this.device = device;
-    device.addEventListener('gattserverdisconnected', () => { this.characteristic = null; });
+
+    if (!this.listenerBound.has(device)) {
+      device.addEventListener('gattserverdisconnected', () => {
+        const heldFor = this.connectedAt ? ((Date.now() - this.connectedAt) / 1000).toFixed(1) : '?';
+        // The drop that used to be invisible. BLE modules commonly close an idle
+        // link after a few seconds; seeing the duration here is what tells you
+        // whether that's what happened.
+        warn(`gattserverdisconnected — ${device.name ?? '(unnamed)'} dropped after ${heldFor}s`);
+        this.characteristic = null;
+        this.connectedAt = 0;
+      });
+      this.listenerBound.add(device);
+    }
+
+    log('gatt.connect →', device.name ?? '(unnamed)');
     const server = await device.gatt.connect();
+    this.connectedAt = Date.now();
+    log('gatt connected, discovering services…');
 
     // Find the first writable characteristic under a known printer service.
     const services = await server.getPrimaryServices();
+    log('services found:', services.map((s) => s.uuid).join(', ') || '(none)');
     for (const svc of services) {
       if (!PRINTER_SERVICES.includes(svc.uuid)) continue;
       for (const ch of await svc.getCharacteristics()) {
         if (ch.properties.write || ch.properties.writeWithoutResponse) {
           this.characteristic = ch;
+          log('using characteristic', ch.uuid ?? '(uuid n/a)', 'on service', svc.uuid,
+            `(write=${ch.properties.write}, writeWithoutResponse=${ch.properties.writeWithoutResponse})`);
           return;
         }
       }
     }
+    fail('no writable characteristic under any known printer service — disconnecting');
     device.gatt.disconnect();
     this.characteristic = null;
+    this.connectedAt = 0;
     throw new Error(
       'No writable printer service found — this printer does not expose BLE printing. Use the SCFC Print Bridge app instead.',
     );
@@ -142,6 +211,7 @@ export class WebBluetoothPrinter {
     if (this.characteristic && this.device?.gatt?.connected) return;
     if (this.device?.gatt && !this.device.gatt.connected) {
       // Session device exists but link dropped (printer power-cycled) — redial.
+      log('link is down, redialling the session device');
       await this.connectTo(this.device);
       return;
     }
@@ -152,23 +222,43 @@ export class WebBluetoothPrinter {
   async write(bytes: Uint8Array): Promise<void> {
     const ch = this.characteristic;
     if (!ch || !this.device?.gatt?.connected) throw new Error('BLE printer not connected');
+
+    const chunks = Math.ceil(bytes.length / WRITE_CHUNK);
     const useNoResponse = ch.properties.writeWithoutResponse && !!ch.writeValueWithoutResponse;
-    for (let i = 0; i < bytes.length; i += WRITE_CHUNK) {
-      const chunk = bytes.subarray(i, i + WRITE_CHUNK);
-      if (useNoResponse) {
-        await ch.writeValueWithoutResponse!(chunk);
-        await sleep(CHUNK_DELAY_MS); // let the module's UART buffer drain
-      } else if (ch.writeValueWithResponse) {
-        await ch.writeValueWithResponse(chunk);
-      } else {
-        await ch.writeValue(chunk);
+    log(`write ${bytes.length} bytes in ${chunks} chunk(s), mode=${useNoResponse ? 'withoutResponse' : 'withResponse'}`);
+
+    const startedAt = Date.now();
+    let sent = 0;
+    try {
+      for (let i = 0; i < bytes.length; i += WRITE_CHUNK) {
+        // A mid-write drop otherwise surfaces as an opaque GATT error; naming it
+        // tells you the link died rather than the printer rejecting the data.
+        if (!this.device?.gatt?.connected) {
+          throw new Error(`link dropped mid-write after ${sent}/${bytes.length} bytes`);
+        }
+        const chunk = bytes.subarray(i, i + WRITE_CHUNK);
+        if (useNoResponse) {
+          await ch.writeValueWithoutResponse!(chunk);
+          await sleep(CHUNK_DELAY_MS); // let the module's UART buffer drain
+        } else if (ch.writeValueWithResponse) {
+          await ch.writeValueWithResponse(chunk);
+        } else {
+          await ch.writeValue(chunk);
+        }
+        sent += chunk.length;
       }
+      log(`write complete — ${sent} bytes in ${Date.now() - startedAt}ms`);
+    } catch (e) {
+      fail(`write failed after ${sent}/${bytes.length} bytes (${Date.now() - startedAt}ms)`, e);
+      throw e;
     }
   }
 
   disconnect(): void {
+    log('disconnect() called by app');
     this.device?.gatt?.disconnect();
     this.characteristic = null;
+    this.connectedAt = 0;
   }
 }
 

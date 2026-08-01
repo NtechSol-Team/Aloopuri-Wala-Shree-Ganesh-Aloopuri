@@ -69,16 +69,18 @@ export function PrinterSettingsDialog({ open, onOpenChange }: { open: boolean; o
     }
   };
 
-  const pairWebBt = async () => {
-    setBusy('webbt');
+  // allDevices reopens the unfiltered chooser: the normal one is narrowed to
+  // known printer services/names, which hides printers advertising neither.
+  const pairWebBt = async (allDevices = false) => {
+    setBusy(allDevices ? 'webbt-all' : 'webbt');
     try {
-      const dev = await webBtPrinter.pick();
+      const dev = await webBtPrinter.pick({ allDevices });
       update({ webBtDeviceId: dev.id, webBtName: dev.name });
       toast.success(`Connected to ${dev.name}`);
     } catch (e) {
       // User closing the chooser throws — don't nag about that.
       const msg = e instanceof Error ? e.message : String(e);
-      if (!/cancelled|canceled|chooser/i.test(msg)) toast.error(msg);
+      if (!/cancelled|canceled|chooser|No device selected/i.test(msg)) toast.error(msg);
     } finally {
       setBusy(null);
     }
@@ -230,9 +232,18 @@ export function PrinterSettingsDialog({ open, onOpenChange }: { open: boolean; o
                 {webBtPrinter.connectedName ? ' (connected)' : ' (will reconnect on print)'}
               </p>
             )}
-            <Button variant="secondary" loading={busy === 'webbt'} onClick={() => void pairWebBt()}>
-              <Bluetooth className="h-4 w-4" /> {settings.webBtName ? 'Change printer…' : 'Connect printer…'}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" loading={busy === 'webbt'} onClick={() => void pairWebBt()}>
+                <Bluetooth className="h-4 w-4" /> {settings.webBtName ? 'Change printer…' : 'Connect printer…'}
+              </Button>
+              <Button variant="ghost" size="sm" loading={busy === 'webbt-all'} onClick={() => void pairWebBt(true)}>
+                Printer not listed?
+              </Button>
+            </div>
+            <p className="text-caption text-muted-foreground">
+              The chooser only lists likely printers. If yours isn&apos;t there, use
+              <span className="font-medium"> Printer not listed?</span> to show every Bluetooth device in range.
+            </p>
           </div>
         )}
 

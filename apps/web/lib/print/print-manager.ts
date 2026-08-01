@@ -83,6 +83,9 @@ export async function printRaw(bytes: Uint8Array, opts: { statusCheck?: boolean 
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      // Logged as well as returned: callers only surface `error` as a toast, so
+      // without this the stack and the preceding [print/ble] trace are lost.
+      console.error('[print/ble] printRaw failed', e);
       return {
         ok: false,
         code: /not connected/i.test(msg) ? 'no-printer' : 'write-failed',
@@ -91,5 +94,6 @@ export async function printRaw(bytes: Uint8Array, opts: { statusCheck?: boolean 
     }
   }
 
+  console.warn('[print] no raw transport available — transport setting is', s.transport);
   return { ok: false, code: 'unsupported', error: 'No Bluetooth printer transport available' };
 }
