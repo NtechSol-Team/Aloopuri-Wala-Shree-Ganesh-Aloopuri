@@ -35,6 +35,8 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
   const { data: outlets } = useOutlets();
   const range = periodRange(period, custom);
   const effectiveOutletId = lockedOutletId ?? outletId;
+  // Every row would repeat the outlet you already drilled into.
+  const showOutletColumn = isAdmin && !lockedOutletId;
   const { data, isLoading } = useBills({
     status: status || undefined, overdueOnly: overdueOnly || undefined, sort,
     ...(isAdmin && effectiveOutletId ? { outletId: effectiveOutletId } : {}),
@@ -107,7 +109,7 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
           <Table>
             <THead>
               <TR>
-                <TH>Bill #</TH>{isAdmin && <TH>Outlet</TH>}<TH>Date</TH><TH>Due</TH>
+                <TH>Bill #</TH>{showOutletColumn && <TH>Outlet</TH>}<TH>Date</TH><TH>Due</TH>
                 <TH className="text-right">Total</TH><TH className="text-right">Balance</TH><TH>Status</TH><TH className="text-right">Actions</TH>
               </TR>
             </THead>
@@ -116,7 +118,7 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
                 return (
                   <TR key={b.id}>
                     <TD className="font-medium">{b.billNumber}</TD>
-                    {isAdmin && <TD>{b.outlet.name}</TD>}
+                    {showOutletColumn && <TD>{b.outlet.name}</TD>}
                     <TD>{format(ist(b.billDate), 'dd MMM yyyy')}</TD>
                     <TD className={cn(b.isOverdue && 'font-semibold text-danger')}>{format(ist(b.dueDate), 'dd MMM yyyy')}</TD>
                     <TD className="text-right">{formatINR(b.grandTotal)}</TD>

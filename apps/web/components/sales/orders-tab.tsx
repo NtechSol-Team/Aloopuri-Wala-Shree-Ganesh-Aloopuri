@@ -87,6 +87,8 @@ export function OrdersTab({ lockedOutletId }: { lockedOutletId?: string } = {}) 
 
   const range = periodRange(period, custom);
   const effectiveOutletId = lockedOutletId ?? outletId;
+  // Every row would repeat the outlet you already drilled into.
+  const showOutletColumn = isFulfiller && !lockedOutletId;
   const { data, isLoading } = useOrders({
     ...(isFulfiller && effectiveOutletId ? { outletId: effectiveOutletId } : {}),
     ...range,
@@ -210,7 +212,7 @@ export function OrdersTab({ lockedOutletId }: { lockedOutletId?: string } = {}) 
             <THead>
               <TR>
                 <TH>Order #</TH>
-                {isFulfiller && <TH>Outlet</TH>}
+                {showOutletColumn && <TH>Outlet</TH>}
                 <TH>Items</TH>
                 <TH>Date</TH>
                 <TH className="text-right">Amount</TH>
@@ -233,7 +235,7 @@ export function OrdersTab({ lockedOutletId }: { lockedOutletId?: string } = {}) 
                         </span>
                       )}
                     </TD>
-                    {isFulfiller && <TD>{o.outlet.name}</TD>}
+                    {showOutletColumn && <TD>{o.outlet.name}</TD>}
                     <TD className="max-w-xs">
                       <div className="space-y-0.5">
                         {o.items.map((i) => (

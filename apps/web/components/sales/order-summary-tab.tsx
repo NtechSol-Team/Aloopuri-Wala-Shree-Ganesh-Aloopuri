@@ -53,9 +53,12 @@ export function OrderSummaryTab({ lockedOutletId }: { lockedOutletId?: string } 
 
   return (
     <div className="space-y-5">
-      <p className="text-body text-muted-foreground">
-        Product-wise quantities ordered each day. Cancelled orders are left out.
-      </p>
+      <div>
+        <h2 className="text-card-title font-semibold">Ordered Quantities</h2>
+        <p className="text-caption text-muted-foreground">
+          How much of each product was ordered, day by day. Cancelled orders are left out.
+        </p>
+      </div>
 
       <Card className="flex flex-wrap items-end gap-3 p-3">
         <div className="space-y-1.5">

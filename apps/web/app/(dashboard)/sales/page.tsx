@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ShoppingCart, ReceiptText, ClipboardList, Store, ChevronRight, ArrowLeft, Layers } from 'lucide-react';
+import { ShoppingCart, ReceiptText, Store, ChevronRight, ArrowLeft, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
@@ -11,20 +11,19 @@ import { BillsTab } from '@/components/sales/bills-tab';
 import { OrderSummaryTab } from '@/components/sales/order-summary-tab';
 
 /**
- * Sales groups the customer-facing flow: the orders outlets place, the bills those
- * orders raise once fulfilled, and a product-wise summary of what was ordered.
+ * Two halves of the same flow, picked at the top: Order is what outlets asked for,
+ * Sale is what they were billed for.
  *
- * The main owner lands on a card per franchise and drills into one, which pins every
- * tab to that outlet. "All Franchises" keeps the unscoped view, where each tab still
- * has its own outlet picker. A franchise owner skips the picker entirely — they are
- * scoped to their own outlet server-side regardless.
+ * For the main owner, Order opens on today's product-wise totals — what actually has
+ * to be packed — with a card per franchise underneath; picking one shows just that
+ * outlet's orders. Sale is the same card-then-drill pattern over bills. A franchise
+ * owner has only their own outlet, so they skip the cards and land straight on the list.
  */
-type Tab = 'orders' | 'bills' | 'summary';
+type Section = 'orders' | 'sales';
 
-const TABS: Array<[Tab, string, typeof ShoppingCart]> = [
-  ['orders', 'Orders', ShoppingCart],
-  ['bills', 'Bills', ReceiptText],
-  ['summary', 'Order Summary', ClipboardList],
+const SECTIONS: Array<[Section, string, typeof ShoppingCart]> = [
+  ['orders', 'Order', ShoppingCart],
+  ['sales', 'Sale', ReceiptText],
 ];
 
 /** null = nothing picked yet (show the cards); 'all' = every outlet, unscoped. */
@@ -33,45 +32,29 @@ type Scope = { id: string | 'all'; name: string } | null;
 export default function SalesPage() {
   const role = useAuthStore((s) => s.user?.role);
   const isAdmin = role === 'SUPER_ADMIN' || role === 'GODOWN_MANAGER';
+  const [section, setSection] = useState<Section>('orders');
   const [scope, setScope] = useState<Scope>(null);
 
-  if (isAdmin && !scope) return <OutletPicker onPick={setScope} />;
+  // Switching section drops back to the cards — the outlet picked for orders isn't
+  // necessarily the one you want to read bills for.
+  const switchSection = (next: Section) => {
+    setSection(next);
+    setScope(null);
+  };
 
   const lockedOutletId = scope && scope.id !== 'all' ? scope.id : undefined;
-  return (
-    <SalesTabs
-      lockedOutletId={lockedOutletId}
-      header={
-        isAdmin && scope ? (
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setScope(null)}>
-              <ArrowLeft className="h-4 w-4" /> All outlets
-            </Button>
-            <div>
-              <p className="text-body font-semibold">{scope.name}</p>
-              <p className="text-caption text-muted-foreground">Orders, bills and ordered quantities</p>
-            </div>
-          </div>
-        ) : null
-      }
-    />
-  );
-}
-
-function SalesTabs({ lockedOutletId, header }: { lockedOutletId?: string; header?: React.ReactNode }) {
-  const [tab, setTab] = useState<Tab>('orders');
+  const showCards = isAdmin && !scope;
 
   return (
     <div className="space-y-5">
-      {header}
       <div className="flex gap-2 overflow-x-auto border-b border-border scrollbar-thin">
-        {TABS.map(([key, label, Icon]) => (
+        {SECTIONS.map(([key, label, Icon]) => (
           <button
             key={key}
-            onClick={() => setTab(key)}
+            onClick={() => switchSection(key)}
             className={cn(
               'flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-2 text-body font-medium transition-colors',
-              tab === key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground',
+              section === key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground',
             )}
           >
             <Icon className="h-4 w-4" /> {label}
@@ -79,22 +62,47 @@ function SalesTabs({ lockedOutletId, header }: { lockedOutletId?: string; header
         ))}
       </div>
 
-      {tab === 'orders' && <OrdersTab lockedOutletId={lockedOutletId} />}
-      {tab === 'bills' && <BillsTab lockedOutletId={lockedOutletId} />}
-      {tab === 'summary' && <OrderSummaryTab lockedOutletId={lockedOutletId} />}
+      {scope && (
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setScope(null)}>
+            <ArrowLeft className="h-4 w-4" /> All outlets
+          </Button>
+          <div>
+            <p className="text-body font-semibold">{scope.name}</p>
+            <p className="text-caption text-muted-foreground">
+              {section === 'orders' ? 'Orders placed by this outlet' : 'Bills raised for this outlet'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {section === 'orders' ? (
+        showCards ? (
+          <>
+            {/* What has to be packed today, across every outlet — the first thing
+                the owner needs before drilling into who ordered it. */}
+            <OrderSummaryTab />
+            <OutletPicker label="Pick a franchise to see every order it has placed." onPick={setScope} />
+          </>
+        ) : (
+          <OrdersTab lockedOutletId={lockedOutletId} />
+        )
+      ) : showCards ? (
+        <OutletPicker label="Pick a franchise to see every bill raised for it." onPick={setScope} />
+      ) : (
+        <BillsTab lockedOutletId={lockedOutletId} />
+      )}
     </div>
   );
 }
 
-function OutletPicker({ onPick }: { onPick: (s: Scope) => void }) {
+function OutletPicker({ label, onPick }: { label: string; onPick: (s: Scope) => void }) {
   const { data: outlets } = useOutlets();
   const active = (outlets ?? []).filter((o) => o.isActive);
 
   return (
     <div className="space-y-3">
-      <p className="text-caption text-muted-foreground">
-        Pick a franchise to see everything it has ordered and been billed for, or view them all together.
-      </p>
+      <p className="text-caption text-muted-foreground">{label}</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <OutletCard
           name="All Franchises"
