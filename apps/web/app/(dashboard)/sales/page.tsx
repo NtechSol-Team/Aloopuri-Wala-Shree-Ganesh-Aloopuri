@@ -16,8 +16,9 @@ import { OrderSummaryTab } from '@/components/sales/order-summary-tab';
  *
  * For the main owner, Order opens on today's product-wise totals — what actually has
  * to be packed — with a card per franchise underneath; picking one shows just that
- * outlet's orders. Sale is the same card-then-drill pattern over bills. A franchise
- * owner has only their own outlet, so they skip the cards and land straight on the list.
+ * outlet's orders. Sale has no cards: it is every bill in one list, filterable by
+ * franchise from within the tab. A franchise owner has only their own outlet, so they
+ * skip the cards and land straight on the list.
  */
 type Section = 'orders' | 'sales';
 
@@ -62,16 +63,14 @@ export default function SalesPage() {
         ))}
       </div>
 
-      {scope && (
+      {section === 'orders' && scope && (
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="sm" onClick={() => setScope(null)}>
             <ArrowLeft className="h-4 w-4" /> All outlets
           </Button>
           <div>
             <p className="text-body font-semibold">{scope.name}</p>
-            <p className="text-caption text-muted-foreground">
-              {section === 'orders' ? 'Orders placed by this outlet' : 'Bills raised for this outlet'}
-            </p>
+            <p className="text-caption text-muted-foreground">Orders placed by this outlet</p>
           </div>
         </div>
       )}
@@ -87,10 +86,10 @@ export default function SalesPage() {
         ) : (
           <OrdersTab lockedOutletId={lockedOutletId} />
         )
-      ) : showCards ? (
-        <OutletPicker label="Pick a franchise to see every bill raised for it." onPick={setScope} />
       ) : (
-        <BillsTab lockedOutletId={lockedOutletId} />
+        // Bills are one flat list of every sale, no outlet drill-down — the tab's
+        // own franchise filter is there to narrow it when that's wanted.
+        <BillsTab />
       )}
     </div>
   );
