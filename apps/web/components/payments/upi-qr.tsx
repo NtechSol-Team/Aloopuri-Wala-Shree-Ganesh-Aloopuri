@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Smartphone } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { formatINR } from '@/lib/utils';
 
 /**
@@ -46,15 +47,17 @@ export function UpiQr({ amount, reference, outletName }: { amount: number; refer
   // Most UPI apps only show the first ~50 chars of the note before truncating,
   // so this stays short rather than spelling out "Order"/"Bill".
   const note = outletName ? `${outletName} · ${reference}` : reference;
+  const uri = upiUri(amount, note);
 
   useEffect(() => {
     let cancelled = false;
     setDataUrl(null);
     setError(null);
-    QRCode.toDataURL(upiUri(amount, note), { width: 480, margin: 1, errorCorrectionLevel: 'M' })
+    QRCode.toDataURL(uri, { width: 480, margin: 1, errorCorrectionLevel: 'M' })
       .then((url) => { if (!cancelled) setDataUrl(url); })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not build the QR code'); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- uri is derived from amount/note, both already deps
   }, [amount, note]);
 
   return (
@@ -62,9 +65,26 @@ export function UpiQr({ amount, reference, outletName }: { amount: number; refer
       <div>
         <p className="text-caption text-muted-foreground">Pay to</p>
         <p className="text-label font-bold leading-tight">{PAYEE_NAME}</p>
+        <p className="mt-1 text-2xl font-extrabold leading-none">{formatINR(amount)}</p>
       </div>
 
-      <div className="flex h-[220px] w-[220px] items-center justify-center rounded-lg bg-white p-2">
+      {/* upi://pay is a real URI scheme — on a phone with a UPI app installed,
+          this hands off straight to it (GPay/PhonePe/Paytm/BHIM, whichever the
+          OS picks or asks about), amount and note already filled in. On a
+          device with no UPI app — most likely a desktop browser — it simply
+          does nothing useful, which is why the QR below always stays visible
+          as the way to pay from a different device. */}
+      <Button asChild className="w-full">
+        <a href={uri}>
+          <Smartphone className="h-4 w-4" /> Pay in UPI App
+        </a>
+      </Button>
+
+      <div className="flex items-center gap-3 self-stretch text-caption text-muted-foreground">
+        <span className="h-px flex-1 bg-border" /> or scan from another device <span className="h-px flex-1 bg-border" />
+      </div>
+
+      <div className="flex h-[200px] w-[200px] items-center justify-center rounded-lg bg-white p-2">
         {error ? (
           <p className="px-2 text-caption text-danger">{error}</p>
         ) : dataUrl ? (
@@ -75,15 +95,8 @@ export function UpiQr({ amount, reference, outletName }: { amount: number; refer
         )}
       </div>
 
-      <div>
-        <p className="text-2xl font-extrabold leading-none">{formatINR(amount)}</p>
-        <p className="mt-1 text-caption text-muted-foreground">
-          UPI ID <span className="font-semibold text-foreground">{PAYEE_VPA}</span>
-        </p>
-      </div>
-
       <p className="text-caption text-muted-foreground">
-        Scan with any UPI app — GPay, PhonePe, BHIM or Paytm. The amount is already filled in.
+        UPI ID <span className="font-semibold text-foreground">{PAYEE_VPA}</span>
       </p>
     </div>
   );
