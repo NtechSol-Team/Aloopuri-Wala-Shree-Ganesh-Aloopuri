@@ -7,13 +7,15 @@ import { AppError } from '../../shared/utils/AppError';
  * Finished goods + raw materials held at the godown. Queries FROM Product (not
  * GodownStock) and left-joins the stock row, so a product with no GodownStock row yet
  * (e.g. created without Opening Stock) still shows up here at 0 instead of silently
- * disappearing from the register.
+ * disappearing from the register. Excludes trackInventory=false products (POS/menu
+ * items made to order, never godown-stocked) — same distinction the Edit Product
+ * dialog's "Track finished-goods stock" toggle documents.
  */
 export async function getGodown() {
   return cache.getOrSet('inventory:godown', [CacheTag.INVENTORY], async () => {
     const [products, rawMaterials] = await Promise.all([
       prisma.product.findMany({
-        where: { isDeleted: false },
+        where: { isDeleted: false, trackInventory: true },
         orderBy: { name: 'asc' },
         select: {
           id: true, name: true, sku: true, reorderLevel: true,
