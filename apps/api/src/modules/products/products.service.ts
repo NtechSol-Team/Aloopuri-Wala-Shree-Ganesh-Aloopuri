@@ -180,7 +180,14 @@ export async function updateProduct(id: string, input: UpdateProductInput) {
     // gets back already reflects this save, the same read-your-write guarantee
     // every other mutation in this API gives.
     if (addStock) {
-      await tx.godownStock.update({ where: { productId: id }, data: { quantity: { increment: addStock } } });
+      // upsert, not update — older products (or ones created via the POS-item flow)
+      // may never have had a GodownStock row, and Add Stock is exactly when one
+      // should be created rather than 404ing on a plain update.
+      await tx.godownStock.upsert({
+        where: { productId: id },
+        create: { productId: id, quantity: addStock },
+        update: { quantity: { increment: addStock } },
+      });
     }
     return tx.product.update({ where: { id }, data: productInput, select: productSelect });
   });
