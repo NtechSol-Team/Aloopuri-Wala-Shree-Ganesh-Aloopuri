@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { OutletOrderStatus } from '@prisma/client';
 import { paginationQuerySchema } from '../../shared/utils/pagination';
+import { istDate } from '../../shared/utils/date';
 
 export const createOrderSchema = z.object({
   outletId: z.string().uuid().optional(), // only honoured for super admin
@@ -29,6 +30,9 @@ export const verifyOrderPaymentSchema = z.object({
 export const listOrdersQuerySchema = paginationQuerySchema.extend({
   status: z.nativeEnum(OutletOrderStatus).optional(),
   outletId: z.string().uuid().optional(),
+  /** Inclusive IST calendar-day bounds on orderDate. */
+  from: istDate.optional(),
+  to: istDate.optional(),
 });
 
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;

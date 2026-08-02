@@ -5,6 +5,7 @@ import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { nextDocNumber } from '../../shared/utils/docNumber';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
+import { istRange } from '../../shared/utils/date';
 import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
 import { enqueue, JobName } from '../../jobs/queue';
@@ -87,15 +88,14 @@ function scopeFilter(user: AuthUser): Prisma.BillWhereInput {
 }
 
 export async function listBills(user: AuthUser, query: ListBillsQuery) {
+  const dateRange = istRange(query.from, query.to);
   const where: Prisma.BillWhereInput = {
     isDeleted: false,
     ...scopeFilter(user),
     ...(query.outletId ? { outletId: query.outletId } : {}),
     ...(query.status ? { status: query.status } : {}),
     ...(query.overdueOnly ? { status: { in: ['UNPAID', 'PARTIALLY_PAID'] }, dueDate: { lt: new Date() } } : {}),
-    ...(query.from || query.to
-      ? { billDate: { ...(query.from ? { gte: query.from } : {}), ...(query.to ? { lte: query.to } : {}) } }
-      : {}),
+    ...(dateRange ? { billDate: dateRange } : {}),
   };
   const { skip, take } = toSkipTake(query);
   const orderBy: Prisma.BillOrderByWithRelationInput =

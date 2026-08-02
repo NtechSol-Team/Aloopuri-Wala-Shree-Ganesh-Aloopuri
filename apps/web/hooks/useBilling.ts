@@ -30,7 +30,7 @@ export interface BillDetail extends Omit<BillListItem, 'outlet'> {
   payments: Array<{ id: string; paymentNumber: string; amount: string; method: string; paymentDate: string }>;
 }
 
-export function useBills(params: { status?: BillStatus; overdueOnly?: boolean; sort?: string } = {}) {
+export function useBills(params: { status?: BillStatus; overdueOnly?: boolean; sort?: string; outletId?: string; from?: string; to?: string } = {}) {
   return useQuery({
     queryKey: ['bills', params],
     queryFn: async () => (await api.get<ApiSuccess<BillListItem[]>>('/billing', { params: { limit: 100, ...params } })).data.data,

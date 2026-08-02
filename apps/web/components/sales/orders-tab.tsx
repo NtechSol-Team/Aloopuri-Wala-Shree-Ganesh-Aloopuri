@@ -10,16 +10,19 @@ import {
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiErrorMessage } from '@/lib/api';
-import { cn, formatINR, formatQty, ist } from '@/lib/utils';
+import { cn, formatINR, formatQty, ist, todayIso } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
 import { useProducts } from '@/hooks/useProducts';
+import { useOutlets } from '@/hooks/useOutlets';
 import { stepFor } from '@/hooks/useUnits';
+import { PERIODS, periodRange, type PeriodKey } from '@/lib/period';
 import {
   useCreateOrder, useOrders, useFulfilOrder,
   ORDER_STATUS_BADGE, ORDER_STATUS_LABEL,
@@ -62,7 +65,6 @@ export function OrdersTab() {
   // Main owner and godown both work the fulfilment queue; a franchise owner only
   // ever sees their own outlet's orders.
   const isFulfiller = role === 'SUPER_ADMIN' || role === 'GODOWN_MANAGER';
-  const { data, isLoading } = useOrders();
 
   const [tab, setTab] = useState<Bucket>('CONFIRMED');
   const [placing, setPlacing] = useState(false);
@@ -70,7 +72,19 @@ export function OrdersTab() {
   const [payBillFor, setPayBillFor] = useState<PayTarget | null>(null);
   const [killFor, setKillFor] = useState<Order | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
+  const [period, setPeriod] = useState<PeriodKey>('all');
+  const [custom, setCustom] = useState({ from: todayIso(), to: todayIso() });
+  // Outlet filter only means anything for the fulfiller — a franchise owner is
+  // already scoped server-side to their own outlet regardless of this value.
+  const [outletId, setOutletId] = useState('');
+  const { data: outlets } = useOutlets();
   const fulfil = useFulfilOrder();
+
+  const range = periodRange(period, custom);
+  const { data, isLoading } = useOrders({
+    ...(isFulfiller && outletId ? { outletId } : {}),
+    ...range,
+  });
 
   const orders = data ?? [];
   const counts = useMemo(() => {
@@ -118,6 +132,36 @@ export function OrdersTab() {
           </Button>
         )}
       </div>
+
+      <Card className="flex flex-wrap items-end gap-3 p-3">
+        <div className="space-y-1.5">
+          <Label>Period</Label>
+          <Select className="w-40" value={period} onChange={(e) => setPeriod(e.target.value as PeriodKey)}>
+            {PERIODS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </Select>
+        </div>
+        {period === 'custom' && (
+          <>
+            <div className="space-y-1.5">
+              <Label>From</Label>
+              <Input type="date" value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>To</Label>
+              <Input type="date" value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
+            </div>
+          </>
+        )}
+        {isFulfiller && (
+          <div className="space-y-1.5">
+            <Label>Franchise</Label>
+            <Select className="w-48" value={outletId} onChange={(e) => setOutletId(e.target.value)}>
+              <option value="">All franchises</option>
+              {(outlets ?? []).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </Select>
+          </div>
+        )}
+      </Card>
 
       {isFulfiller && (
         <div className="flex gap-1 overflow-x-auto rounded-lg border border-border bg-card p-1 scrollbar-thin">

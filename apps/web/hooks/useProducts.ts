@@ -40,7 +40,7 @@ export interface Product {
   trackInventory: boolean;
   avgCost: string;
   category: { id: string; name: string; type: CategoryType };
-  godownStock: { quantity: string };
+  godownStock: { quantity: string } | null;
 }
 
 export interface RawMaterial {

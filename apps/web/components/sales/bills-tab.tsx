@@ -5,16 +5,20 @@ import { format } from 'date-fns';
 import { Download, Printer, Eye, ReceiptText, IndianRupee } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Badge, statusBadgeVariant } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { cn, formatINR, ist } from '@/lib/utils';
+import { cn, formatINR, ist, todayIso } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
 import { useBills, useBill, useOpenBillPdf, usePrintBillPdf, type BillStatus } from '@/hooks/useBilling';
+import { useOutlets } from '@/hooks/useOutlets';
 import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
 import { apiErrorMessage } from '@/lib/api';
+import { PERIODS, periodRange, type PeriodKey } from '@/lib/period';
 import toast from 'react-hot-toast';
 
 export function BillsTab() {
@@ -22,7 +26,18 @@ export function BillsTab() {
   const [status, setStatus] = useState<BillStatus | ''>('');
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [sort, setSort] = useState('billDate');
-  const { data, isLoading } = useBills({ status: status || undefined, overdueOnly: overdueOnly || undefined, sort });
+  const [period, setPeriod] = useState<PeriodKey>('all');
+  const [custom, setCustom] = useState({ from: todayIso(), to: todayIso() });
+  // Outlet filter only means anything for the admin — a franchise owner is
+  // already scoped server-side to their own outlet regardless of this value.
+  const [outletId, setOutletId] = useState('');
+  const { data: outlets } = useOutlets();
+  const range = periodRange(period, custom);
+  const { data, isLoading } = useBills({
+    status: status || undefined, overdueOnly: overdueOnly || undefined, sort,
+    ...(isAdmin && outletId ? { outletId } : {}),
+    ...range,
+  });
   const [detailId, setDetailId] = useState<string | null>(null);
   const [payTarget, setPayTarget] = useState<PayTarget | null>(null);
   const openPdf = useOpenBillPdf();
@@ -30,6 +45,36 @@ export function BillsTab() {
 
   return (
     <div className="space-y-5">
+      <Card className="flex flex-wrap items-end gap-3 p-3">
+        <div className="space-y-1.5">
+          <Label>Period</Label>
+          <Select className="w-40" value={period} onChange={(e) => setPeriod(e.target.value as PeriodKey)}>
+            {PERIODS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </Select>
+        </div>
+        {period === 'custom' && (
+          <>
+            <div className="space-y-1.5">
+              <Label>From</Label>
+              <Input type="date" value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>To</Label>
+              <Input type="date" value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
+            </div>
+          </>
+        )}
+        {isAdmin && (
+          <div className="space-y-1.5">
+            <Label>Franchise</Label>
+            <Select className="w-48" value={outletId} onChange={(e) => setOutletId(e.target.value)}>
+              <option value="">All franchises</option>
+              {(outlets ?? []).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </Select>
+          </div>
+        )}
+      </Card>
+
       <div className="flex flex-wrap items-center gap-3">
         <Select className="w-44" value={status} onChange={(e) => setStatus(e.target.value as BillStatus | '')}>
           <option value="">All statuses</option>

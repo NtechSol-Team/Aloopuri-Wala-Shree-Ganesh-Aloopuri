@@ -144,7 +144,7 @@ export function ProductFormDialog({
               <Field
                 label="Add Stock"
                 error={errors.addStock?.message}
-                hint={`Current Godown stock: ${formatQty(product.godownStock.quantity, decimals)} ${product.unit.name}. Adds on top — leave at 0 to make no change.`}
+                hint={`Current Godown stock: ${formatQty(product.godownStock?.quantity ?? 0, decimals)} ${product.unit.name}. Adds on top — leave at 0 to make no change.`}
               >
                 <Input type="number" step={stepFor(decimals)} {...register('addStock')} />
               </Field>

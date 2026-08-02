@@ -87,7 +87,15 @@ export function paymentInfoFor(order: Order): { status: 'PENDING' | 'PARTIAL' | 
 
 export interface RazorpayOrderIntent { orderId: string; amount: number; currency: string; keyId: string }
 
-export function useOrders(params: { status?: OrderStatus } = {}) {
+/** Inclusive ISO dates (yyyy-MM-dd), read as IST calendar days on the server. */
+export interface OrderFilters {
+  status?: OrderStatus;
+  outletId?: string;
+  from?: string;
+  to?: string;
+}
+
+export function useOrders(params: OrderFilters = {}) {
   return useQuery({
     queryKey: ['orders', params],
     queryFn: async () => (await api.get<ApiSuccess<Order[]>>('/orders', { params: { limit: 100, ...params } })).data.data,

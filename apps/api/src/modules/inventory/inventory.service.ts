@@ -1,15 +1,25 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 
-/** Finished goods + raw materials held at the godown. */
+/**
+ * Finished goods + raw materials held at the godown. Queries FROM Product (not
+ * GodownStock) and left-joins the stock row, so a product with no GodownStock row yet
+ * (e.g. created without Opening Stock) still shows up here at 0 instead of silently
+ * disappearing from the register.
+ */
 export async function getGodown() {
   return cache.getOrSet('inventory:godown', [CacheTag.INVENTORY], async () => {
-    const [finishedGoods, rawMaterials] = await Promise.all([
-      prisma.godownStock.findMany({
-        where: { isDeleted: false, product: { isDeleted: false } },
-        orderBy: { product: { name: 'asc' } },
-        select: { quantity: true, product: { select: { id: true, name: true, sku: true, unit: { select: { id: true, name: true, decimalPlaces: true } }, reorderLevel: true } } },
+    const [products, rawMaterials] = await Promise.all([
+      prisma.product.findMany({
+        where: { isDeleted: false },
+        orderBy: { name: 'asc' },
+        select: {
+          id: true, name: true, sku: true, reorderLevel: true,
+          unit: { select: { id: true, name: true, decimalPlaces: true } },
+          godownStock: { select: { quantity: true } },
+        },
       }),
       prisma.rawMaterial.findMany({
         where: { isDeleted: false },
@@ -17,6 +27,10 @@ export async function getGodown() {
         select: { id: true, name: true, unit: { select: { id: true, name: true, decimalPlaces: true } }, currentStock: true, reorderLevel: true, costPerUnit: true, supplierName: true },
       }),
     ]);
+    const finishedGoods = products.map(({ godownStock, ...product }) => ({
+      quantity: godownStock?.quantity ?? new Prisma.Decimal(0),
+      product,
+    }));
     return { finishedGoods, rawMaterials };
   });
 }

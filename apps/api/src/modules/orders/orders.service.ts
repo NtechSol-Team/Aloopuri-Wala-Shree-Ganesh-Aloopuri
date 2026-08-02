@@ -7,6 +7,7 @@ import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { nextDocNumber } from '../../shared/utils/docNumber';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
+import { istRange } from '../../shared/utils/date';
 import { assertProductQuantities } from '../../shared/utils/quantity';
 import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
@@ -191,10 +192,12 @@ export async function listOrders(user: AuthUser, query: ListOrdersQuery) {
   const scoped = user.role === UserRole.FRANCHISE_OWNER || user.role === UserRole.CASHIER;
   const scopeKey = scoped ? (user.outletId ?? '__none__') : (query.outletId ?? '__all__');
   return cache.getOrSet(`orders:list:${scopeKey}:${JSON.stringify(query)}`, [CacheTag.ORDERS], async () => {
+    const dateRange = istRange(query.from, query.to);
     const where: Prisma.OutletOrderWhereInput = {
       isDeleted: false,
       ...(scoped ? { outletId: user.outletId ?? '__none__' } : query.outletId ? { outletId: query.outletId } : {}),
       ...(query.status ? { status: query.status } : {}),
+      ...(dateRange ? { orderDate: dateRange } : {}),
     };
     const { skip, take } = toSkipTake(query);
     const [rows, total] = await Promise.all([
