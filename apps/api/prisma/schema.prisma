@@ -332,6 +332,7 @@ model Outlet {
   posSessions     PosSession[]
   directTransfers StockTransfer[]      @relation("OutletDirectTransfers")
   specialPrices   OutletProductPrice[]
+  stockMovements  StockMovement[]
   documents       OutletDocument[]
   expenses        Expense[]
   supplierBills   SupplierBill[]
@@ -483,6 +484,7 @@ model Product {
   batchComponentItems ProductionBatchItem[] @relation("BatchComponent")
   posItems            PosTransactionItem[]
   outletSpecialPrices OutletProductPrice[]
+  stockMovements      StockMovement[]
 
   @@index([categoryId])
   @@index([unitId])
@@ -772,6 +774,45 @@ model OutletStock {
   @@map("outlet_stock")
 }
 
+// Why a godown quantity moved. Reversals carry the opposite sign of what they undo.
+enum StockMovementReason {
+  ORDER_PLACED
+  ORDER_CANCELLED
+  ORDER_FULFILLED
+}
+
+// Append-only history of godown stock changes driven by outlet orders.
+//
+// Godown stock is otherwise a bare running total with no trail, so this is what
+// answers "why is this product down 40 units today". Rows are never updated or
+// deleted — a reversal is a new row with the opposite sign, so the sum of
+// quantityDelta for a product always reconciles against GodownStock.quantity.
+model StockMovement {
+  id        String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId String              @map("product_id") @db.Uuid
+  outletId  String?             @map("outlet_id") @db.Uuid
+  orderId   String?             @map("order_id") @db.Uuid
+  reason    StockMovementReason
+  // Signed: negative leaves the godown, positive returns to it.
+  quantityDelta Decimal         @map("quantity_delta") @db.Decimal(12, 4)
+  // Godown quantity immediately after this movement, so history reads without
+  // replaying every prior row.
+  balanceAfter  Decimal         @map("balance_after") @db.Decimal(12, 4)
+  notes         String?
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdById   String?         @map("created_by") @db.Uuid
+
+  product Product      @relation(fields: [productId], references: [id])
+  outlet  Outlet?      @relation(fields: [outletId], references: [id])
+  order   OutletOrder? @relation(fields: [orderId], references: [id])
+
+  @@index([productId, createdAt])
+  @@index([orderId])
+  @@index([outletId])
+  @@index([createdAt])
+  @@map("stock_movements")
+}
+
 // ─────────────────────────────── STOCK TRANSFERS ────────────────────────────
 
 model StockTransfer {
@@ -839,6 +880,11 @@ model OutletOrder {
   // Whether the resulting bill carries GST — taken from the outlet's billing
   // preference at placement, since that determines the price the outlet pays.
   isGstBill          Boolean            @default(true) @map("is_gst_bill")
+  // Set at placement once the ordered quantities have been taken out of the godown.
+  // NULL means stock was never deducted up-front — true of every order placed before
+  // deduct-on-placement existed, so Fulfil still has to deduct those the old way and
+  // Cancel must not hand back stock that was never taken. See orders.service.ts.
+  stockDeductedAt    DateTime?          @map("stock_deducted_at") @db.Timestamptz(6)
   // Legacy credit-approval trail, kept so historical orders keep their audit record.
   approvedAt         DateTime?          @map("approved_at") @db.Timestamptz(6)
   approvedById       String?            @map("approved_by") @db.Uuid
@@ -856,6 +902,7 @@ model OutletOrder {
   bill     Bill?
   // Advance payments taken before this order was fulfilled.
   payments Payment[]
+  stockMovements StockMovement[]
 
   @@index([outletId, status])
   @@index([status, orderDate])

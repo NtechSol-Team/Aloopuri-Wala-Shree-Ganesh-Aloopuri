@@ -35,7 +35,19 @@ export const listOrdersQuerySchema = paginationQuerySchema.extend({
   to: istDate.optional(),
 });
 
+/**
+ * Product-wise ordered quantities, grouped by IST calendar day. Cancelled orders
+ * are excluded by default — the point is what was actually asked for.
+ */
+export const orderSummaryQuerySchema = z.object({
+  outletId: z.string().uuid().optional(),
+  from: istDate.optional(),
+  to: istDate.optional(),
+  includeCancelled: z.coerce.boolean().optional(),
+});
+
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
+export type OrderSummaryQuery = z.infer<typeof orderSummaryQuerySchema>;
 export type RejectOrderInput = z.infer<typeof rejectOrderSchema>;
 export type VerifyOrderPaymentInput = z.infer<typeof verifyOrderPaymentSchema>;
 export type ListOrdersQuery = z.infer<typeof listOrdersQuerySchema>;

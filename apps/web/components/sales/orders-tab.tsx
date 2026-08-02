@@ -60,7 +60,12 @@ function inBucket(order: Order, bucket: Bucket): boolean {
   }
 }
 
-export function OrdersTab() {
+/**
+ * `lockedOutletId` pins the tab to one franchise — set when the admin has drilled
+ * in from an outlet card, where the picker would just be a way to contradict the
+ * card you clicked. Left undefined the tab spans every outlet, as before.
+ */
+export function OrdersTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
   const role = useAuthStore((s) => s.user?.role);
   // Main owner and godown both work the fulfilment queue; a franchise owner only
   // ever sees their own outlet's orders.
@@ -81,8 +86,9 @@ export function OrdersTab() {
   const fulfil = useFulfilOrder();
 
   const range = periodRange(period, custom);
+  const effectiveOutletId = lockedOutletId ?? outletId;
   const { data, isLoading } = useOrders({
-    ...(isFulfiller && outletId ? { outletId } : {}),
+    ...(isFulfiller && effectiveOutletId ? { outletId: effectiveOutletId } : {}),
     ...range,
   });
 
@@ -120,7 +126,9 @@ export function OrdersTab() {
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-body text-muted-foreground">
-          {isFulfiller ? 'Incoming stock orders from all outlets, by stage.' : 'Order stock from the main branch.'}
+          {isFulfiller
+            ? `Incoming stock orders from ${lockedOutletId ? 'this outlet' : 'all outlets'}, by stage.`
+            : 'Order stock from the main branch.'}
         </p>
         {isFulfiller ? (
           <Button variant="secondary" onClick={() => setPrinterOpen(true)}>
@@ -152,7 +160,7 @@ export function OrdersTab() {
             </div>
           </>
         )}
-        {isFulfiller && (
+        {isFulfiller && !lockedOutletId && (
           <div className="space-y-1.5">
             <Label>Franchise</Label>
             <Select className="w-48" value={outletId} onChange={(e) => setOutletId(e.target.value)}>

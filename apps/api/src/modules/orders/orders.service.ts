@@ -1,13 +1,13 @@
 import {
   Prisma, BillStatus, FulfillmentSource, OrderPaymentMode, OutletOrderStatus,
-  PaymentChannel, PaymentMethod, PaymentStatus, UserRole,
+  PaymentChannel, PaymentMethod, PaymentStatus, StockMovementReason, UserRole,
 } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { nextDocNumber } from '../../shared/utils/docNumber';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
-import { istRange } from '../../shared/utils/date';
+import { IST_AT, istRange } from '../../shared/utils/date';
 import { assertProductQuantities } from '../../shared/utils/quantity';
 import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
@@ -16,7 +16,7 @@ import { env } from '../../config/env';
 import { billingService } from '../billing/billing.service';
 import type { AuthUser } from '../../shared/types/api';
 import type {
-  CreateOrderInput, ListOrdersQuery, RejectOrderInput, VerifyOrderPaymentInput,
+  CreateOrderInput, ListOrdersQuery, OrderSummaryQuery, RejectOrderInput, VerifyOrderPaymentInput,
 } from './orders.schema';
 
 const orderInclude = {
@@ -60,6 +60,50 @@ function sourceStockModel(source: FulfillmentSource) {
         find: (tx: Prisma.TransactionClient, productId: string) => tx.mainBranchStock.findUnique({ where: { productId } }),
         dec: (tx: Prisma.TransactionClient, productId: string, qty: Prisma.Decimal) => tx.mainBranchStock.update({ where: { productId }, data: { quantity: { decrement: qty } } }),
       };
+}
+
+/**
+ * Apply a signed change to a product's godown stock and record why.
+ *
+ * `quantityDelta` is negative to take stock out, positive to put it back. Uses
+ * upsert rather than update because plenty of products have never had a
+ * GodownStock row (they were created without opening stock), and an order for one
+ * of those must still be recorded rather than blowing up on a missing row.
+ *
+ * Deliberately does NOT refuse to go negative: outlets order freely, most products
+ * are not stock-counted rigorously, and a negative godown figure is a truthful
+ * "we owe this much" signal rather than a reason to block a franchise's order.
+ */
+async function moveGodownStockTx(
+  tx: Prisma.TransactionClient,
+  input: {
+    productId: string;
+    quantityDelta: Prisma.Decimal;
+    reason: StockMovementReason;
+    orderId: string;
+    outletId: string;
+    userId: string | null;
+    notes?: string;
+  },
+) {
+  const stock = await tx.godownStock.upsert({
+    where: { productId: input.productId },
+    create: { productId: input.productId, quantity: input.quantityDelta },
+    update: { quantity: { increment: input.quantityDelta } },
+    select: { quantity: true },
+  });
+  await tx.stockMovement.create({
+    data: {
+      productId: input.productId,
+      outletId: input.outletId,
+      orderId: input.orderId,
+      reason: input.reason,
+      quantityDelta: input.quantityDelta,
+      balanceAfter: stock.quantity,
+      notes: input.notes,
+      createdById: input.userId,
+    },
+  });
 }
 
 function resolveOutletId(user: AuthUser, requested?: string): string {
@@ -115,10 +159,13 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
   const productIds = input.items.map((i) => i.productId);
   const products = await prisma.product.findMany({
     where: { id: { in: productIds }, isDeleted: false, isActive: true, isPosEnabled: false },
-    select: { id: true, mrp: true },
+    select: { id: true, mrp: true, trackInventory: true },
   });
   if (products.length !== new Set(productIds).size) throw AppError.badRequest('One or more products are invalid');
   const priceOf = new Map(products.map((p) => [p.id, p.mrp]));
+  // Products that keep no stock ledger are ordered and billed, but nothing is
+  // decremented for them — the same rule POS sales already follow.
+  const tracksStock = new Map(products.map((p) => [p.id, p.trackInventory]));
   await assertProductQuantities(input.items.map((i) => ({ productId: i.productId, quantity: i.requestedQuantity })));
 
   const outlet = await prisma.outlet.findFirst({ where: { id: outletId, isDeleted: false }, select: { id: true, pricingMode: true, gstBilling: true } });
@@ -132,12 +179,15 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
 
   const order = await prisma.$transaction(async (tx) => {
     const orderNumber = await nextDocNumber(tx, 'ORDER');
-    return tx.outletOrder.create({
+    const placed = await tx.outletOrder.create({
       data: {
         orderNumber,
         outletId,
         status: OutletOrderStatus.CONFIRMED,
         confirmedAt: new Date(),
+        // Stock leaves the godown as part of this same transaction, so the order
+        // is born already marked as deducted — Fulfil must not take it a second time.
+        stockDeductedAt: new Date(),
         isGstBill: outlet.gstBilling,
         notes: input.notes,
         createdById: user.id,
@@ -154,9 +204,25 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
       },
       include: orderInclude,
     });
+
+    // Commit the goods to this outlet the moment the order is placed, so the
+    // godown figure the owner sees already accounts for what's been ordered.
+    for (const item of input.items) {
+      if (!tracksStock.get(item.productId)) continue;
+      await moveGodownStockTx(tx, {
+        productId: item.productId,
+        quantityDelta: new Prisma.Decimal(item.requestedQuantity).negated(),
+        reason: StockMovementReason.ORDER_PLACED,
+        orderId: placed.id,
+        outletId,
+        userId: user.id,
+        notes: `Order ${orderNumber} placed`,
+      });
+    }
+    return placed;
   });
 
-  cache.invalidateTags(CacheTag.ORDERS, CacheTag.DASHBOARD, CacheTag.outlet(outletId));
+  cache.invalidateTags(CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.DASHBOARD, CacheTag.outlet(outletId));
 
   // Auto-print trigger: fire the instant the order lands, regardless of what
   // happens next (online payment vs. credit approval) — godown/admin start
@@ -205,6 +271,60 @@ export async function listOrders(user: AuthUser, query: ListOrdersQuery) {
       prisma.outletOrder.count({ where }),
     ]);
     return { rows: rows.map((o) => ({ ...o, totals: numericTotals(o) })), meta: buildPaginationMeta(query, total) };
+  });
+}
+
+/**
+ * Product-wise ordered quantities, bucketed by IST calendar day.
+ *
+ * Answers "how much of each product did the outlets order today" — the packing
+ * list view, rather than the money view the order list gives. Raw SQL because
+ * Prisma's groupBy can't bucket a timestamp into a day, let alone an IST one.
+ */
+export async function getOrderSummary(user: AuthUser, query: OrderSummaryQuery) {
+  const scoped = user.role === UserRole.FRANCHISE_OWNER || user.role === UserRole.CASHIER;
+  // A franchise owner only ever sees their own outlet, whatever they ask for.
+  const outletId = scoped ? (user.outletId ?? '__none__') : query.outletId;
+  const range = istRange(query.from, query.to);
+  const scopeKey = `${outletId ?? '__all__'}:${JSON.stringify(query)}`;
+
+  return cache.getOrSet(`orders:summary:${scopeKey}`, [CacheTag.ORDERS], async () => {
+    const rows = await prisma.$queryRaw<Array<{
+      day: string; productId: string; productName: string; sku: string;
+      unitName: string; decimalPlaces: number; quantity: number; orderCount: number;
+    }>>`
+      SELECT to_char(date_trunc('day', o.order_date ${Prisma.raw(IST_AT)}), 'YYYY-MM-DD') AS day,
+             p.id   AS "productId",
+             p.name AS "productName",
+             p.sku  AS sku,
+             u.name AS "unitName",
+             u.decimal_places AS "decimalPlaces",
+             COALESCE(SUM(COALESCE(i.confirmed_quantity, i.requested_quantity)), 0)::float AS quantity,
+             COUNT(DISTINCT o.id)::int AS "orderCount"
+      FROM outlet_orders o
+      JOIN outlet_order_items i ON i.order_id = o.id AND i.is_deleted = false
+      JOIN products p ON p.id = i.product_id
+      JOIN units u ON u.id = p.unit_id
+      WHERE o.is_deleted = false
+        ${query.includeCancelled ? Prisma.empty : Prisma.sql`AND o.status <> 'CANCELLED'::"OutletOrderStatus"`}
+        ${outletId ? Prisma.sql`AND o.outlet_id = ${outletId}::uuid` : Prisma.empty}
+        -- Bounds are pre-converted in JS (istRange), so order_date stays bare and
+        -- its index can still range-seek. Same reasoning as the expense trend.
+        ${range?.gte ? Prisma.sql`AND o.order_date >= ${range.gte}` : Prisma.empty}
+        ${range?.lt ? Prisma.sql`AND o.order_date < ${range.lt}` : Prisma.empty}
+      GROUP BY 1, 2, 3, 4, 5, 6
+      ORDER BY 1 DESC, quantity DESC`;
+
+    // Fold the flat rows into one entry per day, so the client renders a section
+    // per date without regrouping it again.
+    const byDay = new Map<string, { day: string; totalQuantity: number; products: typeof rows }>();
+    for (const row of rows) {
+      const bucket = byDay.get(row.day) ?? { day: row.day, totalQuantity: 0, products: [] };
+      bucket.products.push(row);
+      bucket.totalQuantity += row.quantity;
+      byDay.set(row.day, bucket);
+    }
+    return { days: [...byDay.values()] };
   });
 }
 
@@ -473,23 +593,40 @@ export async function fulfilOrder(user: AuthUser, id: string) {
   }
 
   const model = sourceStockModel(FulfillmentSource.GODOWN);
+  // Orders placed since deduct-on-placement landed already had their stock taken
+  // out of the godown; fulfilling one only has to hand the goods to the outlet.
+  // Anything older (stockDeductedAt null) still gets deducted here, the old way.
+  const alreadyDeducted = order.stockDeductedAt !== null;
 
   const { updated, bill, isNewBill } = await prisma.$transaction(async (tx) => {
     // Check every line before moving anything, so a shortfall can't leave the
-    // order half-fulfilled.
-    for (const item of order.items) {
-      const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
-      const stock = await model.find(tx, item.productId);
-      if (!stock || new Prisma.Decimal(stock.quantity).lessThan(qty)) {
-        throw AppError.insufficientStock(
-          `Not enough ${model.label} stock for ${item.product.name}: need ${qty}, have ${stock?.quantity ?? 0}`,
-        );
+    // order half-fulfilled. Only meaningful for orders that haven't been
+    // deducted yet — for the rest the stock left the godown at placement.
+    if (!alreadyDeducted) {
+      for (const item of order.items) {
+        const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
+        const stock = await model.find(tx, item.productId);
+        if (!stock || new Prisma.Decimal(stock.quantity).lessThan(qty)) {
+          throw AppError.insufficientStock(
+            `Not enough ${model.label} stock for ${item.product.name}: need ${qty}, have ${stock?.quantity ?? 0}`,
+          );
+        }
       }
     }
 
     for (const item of order.items) {
       const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
-      await model.dec(tx, item.productId, qty);
+      if (!alreadyDeducted) {
+        await moveGodownStockTx(tx, {
+          productId: item.productId,
+          quantityDelta: qty.negated(),
+          reason: StockMovementReason.ORDER_FULFILLED,
+          orderId: id,
+          outletId: order.outletId,
+          userId: user.id,
+          notes: `Order ${order.orderNumber} fulfilled (stock taken at fulfilment)`,
+        });
+      }
       await tx.outletStock.upsert({
         where: { outletId_productId: { outletId: order.outletId, productId: item.productId } },
         create: { outletId: order.outletId, productId: item.productId, quantity: qty },
@@ -520,6 +657,9 @@ export async function fulfilOrder(user: AuthUser, id: string) {
         // so historical orders and new ones read consistently.
         dispatchedAt: now,
         deliveredAt: now,
+        // A legacy order's stock came out just now, so stamp it — every delivered
+        // order then carries the moment its stock actually left the godown.
+        ...(alreadyDeducted ? {} : { stockDeductedAt: now }),
         fulfillmentSource: FulfillmentSource.GODOWN,
       },
       include: orderInclude,
@@ -585,18 +725,40 @@ export async function cancelOrder(user: AuthUser, id: string, input: RejectOrder
     );
   }
 
-  const updated = await prisma.outletOrder.update({
-    where: { id },
-    data: {
-      status: OutletOrderStatus.CANCELLED,
-      cancelledAt: new Date(),
-      cancelledById: user.id,
-      cancellationReason: input.reason,
-    },
-    include: orderInclude,
+  const updated = await prisma.$transaction(async (tx) => {
+    // Stock was committed to this outlet when the order was placed, so calling the
+    // order off has to hand it back — otherwise the goods would simply vanish from
+    // the godown. Reverse the movements that were actually written rather than
+    // recomputing from the order lines: a product whose trackInventory was switched
+    // off after placement never had stock taken, and re-deriving would invent it.
+    const taken = await tx.stockMovement.findMany({
+      where: { orderId: id, reason: StockMovementReason.ORDER_PLACED },
+      select: { productId: true, quantityDelta: true },
+    });
+    for (const movement of taken) {
+      await moveGodownStockTx(tx, {
+        productId: movement.productId,
+        quantityDelta: new Prisma.Decimal(movement.quantityDelta).negated(),
+        reason: StockMovementReason.ORDER_CANCELLED,
+        orderId: id,
+        outletId: order.outletId,
+        userId: user.id,
+        notes: `Order ${order.orderNumber} cancelled — stock returned`,
+      });
+    }
+    return tx.outletOrder.update({
+      where: { id },
+      data: {
+        status: OutletOrderStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancelledById: user.id,
+        cancellationReason: input.reason,
+      },
+      include: orderInclude,
+    });
   });
 
-  cache.invalidateTags(CacheTag.ORDERS, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
+  cache.invalidateTags(CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
   await emitRealtime(
     RealtimeEvent.ORDER_STATUS_CHANGED,
     { orderId: id, orderNumber: order.orderNumber, status: updated.status, outletName: order.outlet.name, reason: input.reason ?? null },
@@ -606,7 +768,7 @@ export async function cancelOrder(user: AuthUser, id: string, input: RejectOrder
 }
 
 export const ordersService = {
-  createOrder, listOrders, getOrder,
+  createOrder, listOrders, getOrder, getOrderSummary,
   createOrderPaymentIntent, verifyOrderPayment, confirmPaidOrderFromWebhook,
   fulfilOrder, cancelOrder,
 };

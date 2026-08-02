@@ -9,8 +9,8 @@ import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { created, ok, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import { UserRole } from '@prisma/client';
-import { createOrderSchema, listOrdersQuerySchema, rejectOrderSchema, verifyOrderPaymentSchema } from './orders.schema';
-import type { CreateOrderInput, ListOrdersQuery, RejectOrderInput, VerifyOrderPaymentInput } from './orders.schema';
+import { createOrderSchema, listOrdersQuerySchema, orderSummaryQuerySchema, rejectOrderSchema, verifyOrderPaymentSchema } from './orders.schema';
+import type { CreateOrderInput, ListOrdersQuery, OrderSummaryQuery, RejectOrderInput, VerifyOrderPaymentInput } from './orders.schema';
 import { ordersService } from './orders.service';
 
 const idParam = z.object({ id: z.string().uuid() });
@@ -38,6 +38,15 @@ router.post(
   validate({ body: createOrderSchema }),
   asyncHandler(async (req: Request, res: Response) =>
     created(res, await ordersService.createOrder(user(req), req.body as CreateOrderInput), 'Order placed — sent for fulfilment'),
+  ),
+);
+
+// Must be declared before '/:id', or "summary" is parsed as an order id.
+router.get(
+  '/summary',
+  validate({ query: orderSummaryQuerySchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await ordersService.getOrderSummary(user(req), req.query as unknown as OrderSummaryQuery)),
   ),
 );
 

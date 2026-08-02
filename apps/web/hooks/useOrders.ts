@@ -102,6 +102,31 @@ export function useOrders(params: OrderFilters = {}) {
   });
 }
 
+export interface OrderSummaryProduct {
+  productId: string;
+  productName: string;
+  sku: string;
+  unitName: string;
+  decimalPlaces: number;
+  quantity: number;
+  orderCount: number;
+}
+
+export interface OrderSummaryDay {
+  day: string;
+  totalQuantity: number;
+  products: OrderSummaryProduct[];
+}
+
+/** Product-wise ordered quantities per IST day — the packing view, not the money view. */
+export function useOrderSummary(params: { outletId?: string; from?: string; to?: string } = {}) {
+  return useQuery({
+    queryKey: ['orders', 'summary', params],
+    queryFn: async () =>
+      (await api.get<ApiSuccess<{ days: OrderSummaryDay[] }>>('/orders/summary', { params })).data.data,
+  });
+}
+
 /** Every order mutation ripples into the same downstream views — invalidate them together. */
 function useOrderMutation<TVars, TData>(fn: (vars: TVars) => Promise<TData>) {
   const qc = useQueryClient();

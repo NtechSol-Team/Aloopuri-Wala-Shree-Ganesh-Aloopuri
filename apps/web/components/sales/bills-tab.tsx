@@ -21,7 +21,8 @@ import { apiErrorMessage } from '@/lib/api';
 import { PERIODS, periodRange, type PeriodKey } from '@/lib/period';
 import toast from 'react-hot-toast';
 
-export function BillsTab() {
+/** See OrdersTab — `lockedOutletId` pins the tab to the outlet card that was clicked. */
+export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
   const isAdmin = useAuthStore((s) => s.user?.role) === 'SUPER_ADMIN';
   const [status, setStatus] = useState<BillStatus | ''>('');
   const [overdueOnly, setOverdueOnly] = useState(false);
@@ -33,9 +34,10 @@ export function BillsTab() {
   const [outletId, setOutletId] = useState('');
   const { data: outlets } = useOutlets();
   const range = periodRange(period, custom);
+  const effectiveOutletId = lockedOutletId ?? outletId;
   const { data, isLoading } = useBills({
     status: status || undefined, overdueOnly: overdueOnly || undefined, sort,
-    ...(isAdmin && outletId ? { outletId } : {}),
+    ...(isAdmin && effectiveOutletId ? { outletId: effectiveOutletId } : {}),
     ...range,
   });
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -64,7 +66,7 @@ export function BillsTab() {
             </div>
           </>
         )}
-        {isAdmin && (
+        {isAdmin && !lockedOutletId && (
           <div className="space-y-1.5">
             <Label>Franchise</Label>
             <Select className="w-48" value={outletId} onChange={(e) => setOutletId(e.target.value)}>
