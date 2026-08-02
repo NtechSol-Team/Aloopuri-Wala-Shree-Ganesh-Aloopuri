@@ -974,6 +974,10 @@ model Payment {
   razorpaySignature String?        @map("razorpay_signature")
   status            PaymentStatus  @default(SUCCESS)
   notes             String?
+  /// The bank's own UTR/transaction reference, for a payment nothing here confirmed
+  /// automatically (UPI-QR, bank transfer) — lets the person recording it cross-check
+  /// against the bank statement later instead of matching on amount and date alone.
+  referenceNumber   String?        @map("reference_number")
   receiptPhotoUrl   String?        @map("receipt_photo_url")
   isDeleted         Boolean        @default(false) @map("is_deleted")
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)

@@ -22,7 +22,7 @@ import { useProducts } from '@/hooks/useProducts';
 import { stepFor } from '@/hooks/useUnits';
 import {
   useCreateOrder, useOrders, useFulfilOrder,
-  ACTIVE_ORDER_STATUSES, ORDER_STATUS_BADGE, ORDER_STATUS_LABEL,
+  ORDER_STATUS_BADGE, ORDER_STATUS_LABEL,
   amountDue, isPendingPayment, isCompleted, paymentInfoFor,
   type Order,
 } from '@/hooks/useOrders';
@@ -79,10 +79,6 @@ export function OrdersTab() {
     return c;
   }, [orders]);
 
-  // An outlet may only have one order awaiting fulfilment; "Order Stock" stays
-  // disabled until it ships.
-  const activeOrder = orders.find((o) => ACTIVE_ORDER_STATUSES.includes(o.status)) ?? null;
-
   const visible = isFulfiller ? orders.filter((o) => inBucket(o, tab)) : orders;
 
   // Reprints the same slip the printer produced when the order landed — but with
@@ -117,13 +113,11 @@ export function OrdersTab() {
             <Printer className="h-4 w-4" /> Printer Settings
           </Button>
         ) : (
-          <Button onClick={() => setPlacing(true)} disabled={!!activeOrder} title={activeOrder ? 'You already have an order awaiting fulfilment' : undefined}>
+          <Button onClick={() => setPlacing(true)}>
             <Plus className="h-4 w-4" /> Order Stock
           </Button>
         )}
       </div>
-
-      {!isFulfiller && activeOrder && <OutletActiveBanner order={activeOrder} onPay={() => setPayFor(activeOrder)} />}
 
       {isFulfiller && (
         <div className="flex gap-1 overflow-x-auto rounded-lg border border-border bg-card p-1 scrollbar-thin">
@@ -156,7 +150,7 @@ export function OrdersTab() {
           <p className="text-body text-muted-foreground">
             {isFulfiller ? `Nothing in ${TABS.find((t) => t.bucket === tab)?.label.toLowerCase()}.` : 'No orders yet.'}
           </p>
-          {!isFulfiller && !activeOrder && <Button onClick={() => setPlacing(true)}><Plus className="h-4 w-4" /> Place your first order</Button>}
+          {!isFulfiller && <Button onClick={() => setPlacing(true)}><Plus className="h-4 w-4" /> Place your first order</Button>}
         </Card>
       ) : (
         <Card className="overflow-hidden">
@@ -277,25 +271,6 @@ export function OrdersTab() {
       <RejectOrderDialog order={killFor} mode="cancel" onClose={() => setKillFor(null)} />
       <PrinterSettingsDialog open={printerOpen} onOpenChange={setPrinterOpen} />
     </div>
-  );
-}
-
-/** Tells the outlet where their in-flight order stands, and what they can do now. */
-function OutletActiveBanner({ order, onPay }: { order: Order; onPay: () => void }) {
-  return (
-    <Card className="flex flex-col gap-3 border-l-4 border-l-primary p-4 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <p className="flex items-center gap-2 text-label font-semibold">
-          {order.orderNumber}
-          <Badge variant={ORDER_STATUS_BADGE[order.status]}>{ORDER_STATUS_LABEL[order.status]}</Badge>
-        </p>
-        <p className="mt-0.5 text-caption text-muted-foreground">
-          Your order is with the main branch for fulfilment. You can pay now or once it&apos;s delivered —
-          either way, you can place a new order after this one ships.
-        </p>
-      </div>
-      <Button onClick={onPay}><CreditCard className="h-4 w-4" /> Pay now · {formatINR(order.totals.grandTotal)}</Button>
-    </Card>
   );
 }
 

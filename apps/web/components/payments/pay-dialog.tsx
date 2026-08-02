@@ -2,16 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Banknote, CreditCard } from 'lucide-react';
+import { Banknote } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { apiErrorMessage } from '@/lib/api';
 import { formatINR } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
-import { useRecordCash, useRazorpayOrder, useVerifyRazorpay } from '@/hooks/usePayments';
-import { openRazorpayCheckout } from '@/lib/razorpay';
+import { useRecordCash } from '@/hooks/usePayments';
+import { UpiQr } from '@/components/payments/upi-qr';
 
 export interface PayTarget {
   id: string;
@@ -20,58 +21,47 @@ export interface PayTarget {
   outletName: string;
 }
 
+type TakenBy = 'CASH' | 'UPI' | 'BANK_TRANSFER';
+const TAKEN_BY_LABEL: Record<TakenBy, string> = {
+  CASH: 'Cash',
+  UPI: 'UPI (scanned the QR)',
+  BANK_TRANSFER: 'Bank transfer',
+};
+
+/**
+ * Settle a bill. The outlet pays against the shop's UPI QR (or hands over cash);
+ * whoever can actually see the money arrive — owner or godown — records it here.
+ * There's no gateway callback to do that automatically, which is why recording
+ * stays gated to those roles rather than left to the paying outlet.
+ */
 export function PayDialog({ bill, onClose }: { bill: PayTarget | null; onClose: () => void }) {
   const open = !!bill;
   const role = useAuthStore((s) => s.user?.role);
-  const userName = useAuthStore((s) => s.user?.name);
-  const userEmail = useAuthStore((s) => s.user?.email);
-  const userPhone = useAuthStore((s) => s.user?.phone);
   // Matches the backend's own gate on POST /payments/cash — godown now fulfils
-  // orders too, so they're just as likely to be the one physically taking cash.
-  const canRecordCash = role === 'SUPER_ADMIN' || role === 'GODOWN_MANAGER';
+  // orders too, so they're just as likely to be the one taking payment.
+  const canRecord = role === 'SUPER_ADMIN' || role === 'GODOWN_MANAGER';
   const balance = Number(bill?.balanceDue ?? 0);
 
   const [amount, setAmount] = useState(0);
+  const [method, setMethod] = useState<TakenBy>('CASH');
+  const [reference, setReference] = useState('');
   const cash = useRecordCash();
-  const createOrder = useRazorpayOrder();
-  const verify = useVerifyRazorpay();
-  const [onlineBusy, setOnlineBusy] = useState(false);
 
-  useEffect(() => { if (bill) setAmount(Number(bill.balanceDue)); }, [bill]);
+  useEffect(() => {
+    if (bill) { setAmount(Number(bill.balanceDue)); setMethod('CASH'); setReference(''); }
+  }, [bill]);
 
   if (!bill) return null;
 
-  const payCash = () => {
+  // Nothing here verified the transfer happened — this is only ever a note the
+  // recorder chose to type against the bank statement, so it's optional even
+  // for UPI/bank transfer, not something we can require and enforce.
+  const record = () => {
     if (amount <= 0 || amount > balance) { toast.error(`Enter an amount up to ${formatINR(balance)}`); return; }
-    cash.mutate({ billId: bill.id, amount }, {
-      onSuccess: () => { toast.success('Cash payment recorded'); onClose(); },
+    cash.mutate({ billId: bill.id, amount, method, referenceNumber: reference.trim() || undefined }, {
+      onSuccess: () => { toast.success('Payment recorded'); onClose(); },
       onError: (e) => toast.error(apiErrorMessage(e)),
     });
-  };
-
-  const payOnline = async () => {
-    setOnlineBusy(true);
-    try {
-      const order = await createOrder.mutateAsync(bill.id);
-      const opened = await openRazorpayCheckout({
-        order,
-        customerName: userName,
-        customerEmail: userEmail,
-        customerContact: userPhone,
-        onSuccess: (r) => {
-          verify.mutate(
-            { billId: bill.id, razorpayOrderId: r.razorpay_order_id, razorpayPaymentId: r.razorpay_payment_id, razorpaySignature: r.razorpay_signature },
-            { onSuccess: () => { toast.success('Payment successful'); onClose(); }, onError: (e) => toast.error(apiErrorMessage(e)) },
-          );
-        },
-        onDismiss: () => setOnlineBusy(false),
-      });
-      if (!opened) toast.error('Could not load the payment gateway');
-    } catch (e) {
-      toast.error(apiErrorMessage(e, 'Could not start payment'));
-    } finally {
-      setOnlineBusy(false);
-    }
   };
 
   return (
@@ -83,24 +73,44 @@ export function PayDialog({ bill, onClose }: { bill: PayTarget | null; onClose: 
         </DialogHeader>
 
         <div className="space-y-4">
-          <Button className="w-full" size="lg" loading={onlineBusy || createOrder.isPending || verify.isPending} onClick={payOnline}>
-            <CreditCard className="h-4 w-4" /> Pay Online (UPI / Card / Net Banking)
-          </Button>
+          {balance > 0 && <UpiQr amount={balance} reference={bill.billNumber} outletName={bill.outletName} />}
 
-          {canRecordCash && (
+          {canRecord ? (
             <>
               <div className="flex items-center gap-3 text-caption text-muted-foreground">
-                <span className="h-px flex-1 bg-border" /> or record cash <span className="h-px flex-1 bg-border" />
+                <span className="h-px flex-1 bg-border" /> record the payment <span className="h-px flex-1 bg-border" />
               </div>
               <div className="space-y-1.5">
-                <Label>Cash amount received</Label>
+                <Label>Received by</Label>
+                <Select value={method} onChange={(e) => setMethod(e.target.value as TakenBy)}>
+                  {(Object.keys(TAKEN_BY_LABEL) as TakenBy[]).map((m) => (
+                    <option key={m} value={m}>{TAKEN_BY_LABEL[m]}</option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Amount received</Label>
                 <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(Number(e.target.value))} max={balance} />
                 <p className="text-caption text-muted-foreground">Partial payments are allowed.</p>
               </div>
-              <Button variant="secondary" className="w-full" loading={cash.isPending} onClick={payCash}>
-                <Banknote className="h-4 w-4" /> Record Cash Payment
+              {method !== 'CASH' && (
+                <div className="space-y-1.5">
+                  <Label>Bank reference / UTR <span className="text-muted-foreground">(optional)</span></Label>
+                  <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="From your bank's SMS or statement" />
+                  <p className="text-caption text-muted-foreground">
+                    Nothing here confirms the transfer — only check your own bank app or statement before recording.
+                    This just makes it easy to match later.
+                  </p>
+                </div>
+              )}
+              <Button className="w-full" loading={cash.isPending} onClick={record}>
+                <Banknote className="h-4 w-4" /> Record Payment
               </Button>
             </>
+          ) : (
+            <p className="text-center text-caption text-muted-foreground">
+              After paying, the main branch will confirm receipt and update this bill.
+            </p>
           )}
         </div>
 

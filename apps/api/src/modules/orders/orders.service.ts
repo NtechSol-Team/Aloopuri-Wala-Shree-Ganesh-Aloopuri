@@ -46,13 +46,6 @@ const orderInclude = {
 
 type OrderWithItems = Prisma.OutletOrderGetPayload<{ include: typeof orderInclude }>;
 
-/**
- * Statuses in which an outlet already has an order in flight. While any of these
- * exist, the outlet cannot place another one — they must receive the current
- * order first (or cancel it, if it hasn't been confirmed yet).
- */
-export const ACTIVE_ORDER_STATUSES = [OutletOrderStatus.CONFIRMED] as const;
-
 /** Where confirmed stock is decremented from at dispatch — chosen by the admin when dispatching. */
 function sourceStockModel(source: FulfillmentSource) {
   return source === FulfillmentSource.GODOWN
@@ -115,16 +108,8 @@ export function orderTotals(order: OrderWithItems) {
 export async function createOrder(user: AuthUser, input: CreateOrderInput) {
   const outletId = resolveOutletId(user, input.outletId);
 
-  const blocking = await prisma.outletOrder.findFirst({
-    where: { outletId, isDeleted: false, status: { in: [...ACTIVE_ORDER_STATUSES] } },
-    orderBy: { orderDate: 'desc' },
-    select: { orderNumber: true, status: true },
-  });
-  if (blocking) {
-    throw AppError.invalidState(
-      `You already have an order awaiting fulfilment (${blocking.orderNumber}). Please wait for it to be fulfilled before placing a new one.`,
-    );
-  }
+  // Outlets can place as many orders as they like, whether or not earlier ones
+  // have been fulfilled yet — there is no one-at-a-time gate here anymore.
 
   const productIds = input.items.map((i) => i.productId);
   const products = await prisma.product.findMany({

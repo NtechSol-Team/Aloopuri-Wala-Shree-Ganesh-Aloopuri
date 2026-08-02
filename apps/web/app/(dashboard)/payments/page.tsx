@@ -97,13 +97,14 @@ function ReceivablesView() {
         <CardContent className="p-0">
           {!payments?.length ? <p className="py-10 text-center text-body text-muted-foreground">No payments recorded yet.</p> : (
             <Table>
-              <THead><TR><TH>Payment #</TH><TH>Outlet</TH><TH>Bill</TH><TH>Method</TH><TH className="text-right">Amount</TH><TH>Date</TH></TR></THead>
+              <THead><TR><TH>Payment #</TH><TH>Outlet</TH><TH>Bill</TH><TH>Method</TH><TH>Reference</TH><TH className="text-right">Amount</TH><TH>Date</TH></TR></THead>
               <TBody>
                 {payments.map((p) => (
                   <TR key={p.id}>
                     <TD className="font-medium">{p.paymentNumber}</TD><TD>{p.outlet.name}</TD>
                     <TD className="text-muted-foreground">{p.bill?.billNumber ?? '—'}</TD>
                     <TD><Badge variant={p.channel === 'DIGITAL' ? 'info' : 'neutral'}>{p.method}</Badge></TD>
+                    <TD className="text-caption text-muted-foreground">{p.referenceNumber ?? '—'}</TD>
                     <TD className="text-right font-medium text-success">{formatINR(p.amount)}</TD>
                     <TD>{format(ist(p.paymentDate), 'dd MMM yyyy')}</TD>
                   </TR>

@@ -21,6 +21,7 @@ interface RecordPaymentArgs {
   receivedById?: string;
   createdById?: string;
   notes?: string;
+  referenceNumber?: string;
   receiptPhotoUrl?: string;
   razorpay?: { orderId: string; paymentId: string; signature: string };
 }
@@ -53,6 +54,7 @@ async function recordPayment(args: RecordPaymentArgs) {
         receivedById: args.receivedById,
         createdById: args.createdById,
         notes: args.notes,
+        referenceNumber: args.referenceNumber,
         receiptPhotoUrl: args.receiptPhotoUrl,
         status: PaymentStatus.SUCCESS,
         razorpayOrderId: args.razorpay?.orderId,
@@ -86,11 +88,15 @@ export async function recordCashPayment(input: CashPaymentInput, user: AuthUser)
   return recordPayment({
     billId: input.billId,
     amount: new Prisma.Decimal(input.amount),
-    channel: PaymentChannel.CASH,
-    method: PaymentMethod.CASH,
+    // Channel follows the method: only literal cash is CASH, everything else
+    // (UPI against the collection QR, a bank transfer) moved digitally even
+    // though a person keyed it in.
+    channel: input.method === PaymentMethod.CASH ? PaymentChannel.CASH : PaymentChannel.DIGITAL,
+    method: input.method,
     receivedById: user.id,
     createdById: user.id,
     notes: input.notes,
+    referenceNumber: input.referenceNumber,
     receiptPhotoUrl: input.receiptPhotoUrl,
   });
 }
@@ -156,6 +162,7 @@ export async function listPayments(user: AuthUser, query: ListPaymentsQuery) {
       where, orderBy: { paymentDate: 'desc' }, skip, take,
       select: {
         id: true, paymentNumber: true, amount: true, channel: true, method: true, paymentDate: true,
+        referenceNumber: true, notes: true,
         bill: { select: { billNumber: true } }, outlet: { select: { name: true } },
       },
     }),

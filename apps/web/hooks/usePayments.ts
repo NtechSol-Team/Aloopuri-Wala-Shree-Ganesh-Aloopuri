@@ -19,6 +19,8 @@ export interface PaymentRow {
   channel: string;
   method: string;
   paymentDate: string;
+  referenceNumber: string | null;
+  notes: string | null;
   bill: { billNumber: string } | null;
   outlet: { name: string };
 }
@@ -48,10 +50,11 @@ export function usePayments(params: { outletId?: string } = {}) {
   });
 }
 
+/** Records money taken in person — literal cash, or a UPI transfer the owner has seen land. */
 export function useRecordCash() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { billId: string; amount: number; notes?: string }) =>
+    mutationFn: async (input: { billId: string; amount: number; method?: 'CASH' | 'UPI' | 'BANK_TRANSFER'; referenceNumber?: string; notes?: string }) =>
       (await api.post('/payments/cash', input)).data,
     onSuccess: () => invalidateAll(qc),
   });

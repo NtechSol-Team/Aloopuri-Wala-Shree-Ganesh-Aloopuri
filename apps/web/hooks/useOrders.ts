@@ -10,9 +10,6 @@ export type OrderStatus = 'CONFIRMED' | 'DELIVERED' | 'CANCELLED';
 export type FulfillmentSource = 'MAIN_BRANCH' | 'GODOWN';
 export type OrderPaymentMode = 'ONLINE' | 'CREDIT';
 
-/** An order still in flight — an outlet may only have one awaiting fulfilment. */
-export const ACTIVE_ORDER_STATUSES: OrderStatus[] = ['CONFIRMED'];
-
 /**
  * CONFIRMED reads as "Confirm Orders" because that is the queue it represents:
  * placed orders waiting for the main owner or godown to fulfil them.
