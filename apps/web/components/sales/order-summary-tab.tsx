@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { format } from 'date-fns';
-import { ClipboardList, Package } from 'lucide-react';
+import { ClipboardList, CornerDownRight, Package } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -43,6 +43,8 @@ export function OrderSummaryTab({ lockedOutletId }: { lockedOutletId?: string } 
   const { data: outlets } = useOutlets();
 
   const effectiveOutletId = lockedOutletId ?? outletId;
+  // With a single outlet in scope the per-outlet rows just repeat its name.
+  const showOutletBreakdown = !effectiveOutletId;
   const range = periodRange(period, custom);
   const { data, isLoading } = useOrderSummary({
     ...(isFulfiller && effectiveOutletId ? { outletId: effectiveOutletId } : {}),
@@ -117,14 +119,34 @@ export function OrderSummaryTab({ lockedOutletId }: { lockedOutletId?: string } 
               </THead>
               <TBody>
                 {day.products.map((p) => (
-                  <TR key={p.productId}>
-                    <TD className="font-medium">{p.productName}</TD>
-                    <TD className="text-muted-foreground">{p.sku}</TD>
-                    <TD className="text-right font-semibold tabular-nums">
-                      {formatQty(p.quantity, p.decimalPlaces)} {p.unitName}
-                    </TD>
-                    <TD className="text-right tabular-nums text-muted-foreground">{p.orderCount}</TD>
-                  </TR>
+                  <Fragment key={p.productId}>
+                    <TR>
+                      <TD className="font-medium">{p.productName}</TD>
+                      <TD className="text-muted-foreground">{p.sku}</TD>
+                      <TD className="text-right font-semibold tabular-nums">
+                        {formatQty(p.quantity, p.decimalPlaces)} {p.unitName}
+                      </TD>
+                      <TD className="text-right tabular-nums text-muted-foreground">{p.orderCount}</TD>
+                    </TR>
+                    {/* Who wants it. Pointless when the whole tab is already pinned to
+                        one outlet — every line would name that same outlet. */}
+                    {showOutletBreakdown && p.outlets.map((o) => (
+                      <TR key={`${p.productId}:${o.outletId}`} className="border-0 bg-surface/40">
+                        <TD className="py-1.5 pl-8 text-caption text-muted-foreground" colSpan={2}>
+                          <span className="inline-flex items-center gap-1.5">
+                            <CornerDownRight className="h-3 w-3 shrink-0" />
+                            {o.outletName}
+                          </span>
+                        </TD>
+                        <TD className="py-1.5 text-right text-caption tabular-nums text-muted-foreground">
+                          {formatQty(o.quantity, p.decimalPlaces)} {p.unitName}
+                        </TD>
+                        <TD className="py-1.5 text-right text-caption tabular-nums text-muted-foreground">
+                          {o.orderCount}
+                        </TD>
+                      </TR>
+                    ))}
+                  </Fragment>
                 ))}
               </TBody>
             </Table>

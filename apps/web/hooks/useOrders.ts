@@ -102,6 +102,13 @@ export function useOrders(params: OrderFilters = {}) {
   });
 }
 
+export interface OrderSummaryOutlet {
+  outletId: string;
+  outletName: string;
+  quantity: number;
+  orderCount: number;
+}
+
 export interface OrderSummaryProduct {
   productId: string;
   productName: string;
@@ -110,6 +117,8 @@ export interface OrderSummaryProduct {
   decimalPlaces: number;
   quantity: number;
   orderCount: number;
+  /** Who wants it, biggest share first. */
+  outlets: OrderSummaryOutlet[];
 }
 
 export interface OrderSummaryDay {

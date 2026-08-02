@@ -275,11 +275,13 @@ export async function listOrders(user: AuthUser, query: ListOrdersQuery) {
 }
 
 /**
- * Product-wise ordered quantities, bucketed by IST calendar day.
+ * Product-wise ordered quantities, bucketed by IST calendar day, each product
+ * broken down by the outlets that ordered it.
  *
- * Answers "how much of each product did the outlets order today" — the packing
- * list view, rather than the money view the order list gives. Raw SQL because
- * Prisma's groupBy can't bucket a timestamp into a day, let alone an IST one.
+ * Answers "how much of each product did the outlets order today, and who wants
+ * it" — the packing list view, rather than the money view the order list gives.
+ * Raw SQL because Prisma's groupBy can't bucket a timestamp into a day, let
+ * alone an IST one.
  */
 export async function getOrderSummary(user: AuthUser, query: OrderSummaryQuery) {
   const scoped = user.role === UserRole.FRANCHISE_OWNER || user.role === UserRole.CASHIER;
@@ -289,9 +291,12 @@ export async function getOrderSummary(user: AuthUser, query: OrderSummaryQuery) 
   const scopeKey = `${outletId ?? '__all__'}:${JSON.stringify(query)}`;
 
   return cache.getOrSet(`orders:summary:${scopeKey}`, [CacheTag.ORDERS], async () => {
+    // Grouped per outlet as well as per product; the product- and day-level totals
+    // are folded up from these rows below, so every level agrees by construction.
     const rows = await prisma.$queryRaw<Array<{
       day: string; productId: string; productName: string; sku: string;
-      unitName: string; decimalPlaces: number; quantity: number; orderCount: number;
+      unitName: string; decimalPlaces: number; outletId: string; outletName: string;
+      quantity: number; orderCount: number;
     }>>`
       SELECT to_char(date_trunc('day', o.order_date ${Prisma.raw(IST_AT)}), 'YYYY-MM-DD') AS day,
              p.id   AS "productId",
@@ -299,12 +304,15 @@ export async function getOrderSummary(user: AuthUser, query: OrderSummaryQuery) 
              p.sku  AS sku,
              u.name AS "unitName",
              u.decimal_places AS "decimalPlaces",
+             ot.id   AS "outletId",
+             ot.name AS "outletName",
              COALESCE(SUM(COALESCE(i.confirmed_quantity, i.requested_quantity)), 0)::float AS quantity,
              COUNT(DISTINCT o.id)::int AS "orderCount"
       FROM outlet_orders o
       JOIN outlet_order_items i ON i.order_id = o.id AND i.is_deleted = false
       JOIN products p ON p.id = i.product_id
       JOIN units u ON u.id = p.unit_id
+      JOIN outlets ot ON ot.id = o.outlet_id
       WHERE o.is_deleted = false
         ${query.includeCancelled ? Prisma.empty : Prisma.sql`AND o.status <> 'CANCELLED'::"OutletOrderStatus"`}
         ${outletId ? Prisma.sql`AND o.outlet_id = ${outletId}::uuid` : Prisma.empty}
@@ -312,19 +320,46 @@ export async function getOrderSummary(user: AuthUser, query: OrderSummaryQuery) 
         -- its index can still range-seek. Same reasoning as the expense trend.
         ${range?.gte ? Prisma.sql`AND o.order_date >= ${range.gte}` : Prisma.empty}
         ${range?.lt ? Prisma.sql`AND o.order_date < ${range.lt}` : Prisma.empty}
-      GROUP BY 1, 2, 3, 4, 5, 6
-      ORDER BY 1 DESC, quantity DESC`;
+      GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+      ORDER BY 1 DESC`;
 
-    // Fold the flat rows into one entry per day, so the client renders a section
-    // per date without regrouping it again.
-    const byDay = new Map<string, { day: string; totalQuantity: number; products: typeof rows }>();
+    type OutletLine = { outletId: string; outletName: string; quantity: number; orderCount: number };
+    type ProductLine = {
+      productId: string; productName: string; sku: string; unitName: string;
+      decimalPlaces: number; quantity: number; orderCount: number; outlets: OutletLine[];
+    };
+
+    // Fold the flat rows into day → product → outlets, so the client renders each
+    // date's section without regrouping it again.
+    const byDay = new Map<string, { day: string; totalQuantity: number; products: Map<string, ProductLine> }>();
     for (const row of rows) {
-      const bucket = byDay.get(row.day) ?? { day: row.day, totalQuantity: 0, products: [] };
-      bucket.products.push(row);
-      bucket.totalQuantity += row.quantity;
-      byDay.set(row.day, bucket);
+      const day = byDay.get(row.day) ?? { day: row.day, totalQuantity: 0, products: new Map() };
+      const product = day.products.get(row.productId) ?? {
+        productId: row.productId, productName: row.productName, sku: row.sku,
+        unitName: row.unitName, decimalPlaces: row.decimalPlaces,
+        quantity: 0, orderCount: 0, outlets: [],
+      };
+      product.quantity += row.quantity;
+      // An order belongs to exactly one outlet, so per-outlet distinct counts never
+      // overlap and summing them gives the product's true order count.
+      product.orderCount += row.orderCount;
+      product.outlets.push({
+        outletId: row.outletId, outletName: row.outletName,
+        quantity: row.quantity, orderCount: row.orderCount,
+      });
+      day.products.set(row.productId, product);
+      day.totalQuantity += row.quantity;
+      byDay.set(row.day, day);
     }
-    return { days: [...byDay.values()] };
+
+    const days = [...byDay.values()].map((d) => ({
+      day: d.day,
+      totalQuantity: d.totalQuantity,
+      products: [...d.products.values()]
+        .map((p) => ({ ...p, outlets: p.outlets.sort((a, b) => b.quantity - a.quantity) }))
+        .sort((a, b) => b.quantity - a.quantity),
+    }));
+    return { days };
   });
 }
 
