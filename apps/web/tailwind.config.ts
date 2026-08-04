@@ -77,6 +77,18 @@ const config: Config = {
       keyframes: {
         'accordion-down': { from: { height: '0' }, to: { height: 'var(--radix-accordion-content-height)' } },
         'accordion-up': { from: { height: 'var(--radix-accordion-content-height)' }, to: { height: '0' } },
+        // UPI-app-style success tick: the circle pops in with a slight overshoot,
+        // then the check stroke draws itself in — see order-success-check.tsx.
+        'pop-in': {
+          '0%': { transform: 'scale(0)', opacity: '0' },
+          '60%': { transform: 'scale(1.15)', opacity: '1' },
+          '100%': { transform: 'scale(1)' },
+        },
+        'check-draw': { from: { strokeDashoffset: '100' }, to: { strokeDashoffset: '0' } },
+      },
+      animation: {
+        'pop-in': 'pop-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
+        'check-draw': 'check-draw 0.35s 0.25s cubic-bezier(0.65, 0, 0.35, 1) forwards',
       },
     },
   },

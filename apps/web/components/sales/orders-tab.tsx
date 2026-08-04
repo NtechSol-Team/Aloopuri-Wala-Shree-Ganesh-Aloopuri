@@ -32,6 +32,7 @@ import {
 import { printOrderPickList } from '@/lib/print';
 import { PrinterSettingsDialog } from '@/components/printer-settings-dialog';
 import { OrderPaymentDialog } from '@/components/orders/order-payment-dialog';
+import { OrderSuccessScreen } from '@/components/orders/order-success-check';
 import { RejectOrderDialog } from '@/components/orders/reject-order-dialog';
 import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
 
@@ -338,9 +339,16 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
   const { data: products } = useProducts({ isPosEnabled: false });
   const create = useCreateOrder();
   const [rows, setRows] = useState<CartRow[]>([]);
+  // Set the instant the order lands, so the dialog swaps to the success tick instead
+  // of jumping straight to "how will you pay" — a beat of "yes, that went through"
+  // before the next decision, the way a UPI app confirms a payment before moving on.
+  const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
 
   useEffect(() => {
-    if (open) setRows(products?.rows[0] ? [{ productId: products.rows[0].id, requestedQuantity: 5 }] : []);
+    if (open) {
+      setRows(products?.rows[0] ? [{ productId: products.rows[0].id, requestedQuantity: 5 }] : []);
+      setPlacedOrder(null);
+    }
   }, [open, products]);
 
   const list = products?.rows ?? [];
@@ -354,42 +362,63 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
   const submit = () => {
     if (!rows.length || rows.some((r) => r.requestedQuantity <= 0)) { toast.error('Add valid items'); return; }
     create.mutate({ items: rows }, {
-      // Placing no longer confirms anything — go straight to choosing how to pay.
-      onSuccess: (order) => { onOpenChange(false); onPlaced(order); },
+      onSuccess: (order) => setPlacedOrder(order),
       onError: (e) => toast.error(apiErrorMessage(e)),
     });
+  };
+
+  // Placing no longer confirms anything — the success beat above hands off straight
+  // to choosing how to pay.
+  const proceedToPayment = () => {
+    if (!placedOrder) return;
+    onOpenChange(false);
+    onPlaced(placedOrder);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>Order Stock</DialogTitle></DialogHeader>
-        <div className="space-y-2">
-          {rows.map((row, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <Select className="flex-1" value={row.productId} onChange={(e) => upd(i, { productId: e.target.value })}>
-                {list.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatINR(p.mrp)}/{p.unit.name}</option>)}
-              </Select>
-              <Input
-                type="number"
-                className="w-24"
-                step={stepFor(list.find((p) => p.id === row.productId)?.unit.decimalPlaces ?? 0)}
-                value={row.requestedQuantity}
-                onChange={(e) => upd(i, { requestedQuantity: Number(e.target.value) })}
-              />
-              <Button variant="ghost" size="icon" onClick={() => rm(i)}><Trash2 className="h-4 w-4 text-danger" /></Button>
+        {placedOrder ? (
+          <>
+            <DialogHeader><DialogTitle>Order Stock</DialogTitle></DialogHeader>
+            <OrderSuccessScreen
+              title="Order Placed!"
+              summary={<span>{placedOrder.orderNumber} · {placedOrder.items.length} item{placedOrder.items.length === 1 ? '' : 's'} · {formatINR(placedOrder.totals.grandTotal)}</span>}
+              continueLabel="Choose how to pay"
+              onDone={proceedToPayment}
+            />
+          </>
+        ) : (
+          <>
+            <DialogHeader><DialogTitle>Order Stock</DialogTitle></DialogHeader>
+            <div className="space-y-2">
+              {rows.map((row, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Select className="flex-1" value={row.productId} onChange={(e) => upd(i, { productId: e.target.value })}>
+                    {list.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatINR(p.mrp)}/{p.unit.name}</option>)}
+                  </Select>
+                  <Input
+                    type="number"
+                    className="w-24"
+                    step={stepFor(list.find((p) => p.id === row.productId)?.unit.decimalPlaces ?? 0)}
+                    value={row.requestedQuantity}
+                    onChange={(e) => upd(i, { requestedQuantity: Number(e.target.value) })}
+                  />
+                  <Button variant="ghost" size="icon" onClick={() => rm(i)}><Trash2 className="h-4 w-4 text-danger" /></Button>
+                </div>
+              ))}
+              <Button variant="secondary" size="sm" onClick={add}><Plus className="h-4 w-4" /> Add item</Button>
+              <div className="flex justify-between border-t border-border pt-2 text-label font-semibold">
+                <span>Estimated total</span><span>{formatINR(total)}</span>
+              </div>
+              <p className="text-caption text-muted-foreground">You&apos;ll choose how to pay — online or on credit — in the next step.</p>
             </div>
-          ))}
-          <Button variant="secondary" size="sm" onClick={add}><Plus className="h-4 w-4" /> Add item</Button>
-          <div className="flex justify-between border-t border-border pt-2 text-label font-semibold">
-            <span>Estimated total</span><span>{formatINR(total)}</span>
-          </div>
-          <p className="text-caption text-muted-foreground">You&apos;ll choose how to pay — online or on credit — in the next step.</p>
-        </div>
-        <DialogFooter>
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={submit} loading={create.isPending}>Place Order</Button>
-        </DialogFooter>
+            <DialogFooter>
+              <Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button onClick={submit} loading={create.isPending}>Place Order</Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
