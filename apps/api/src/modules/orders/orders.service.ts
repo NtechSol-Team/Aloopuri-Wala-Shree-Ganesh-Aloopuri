@@ -144,11 +144,11 @@ export function orderTotals(order: OrderWithItems) {
  * Place an order. It goes straight into the fulfilment queue (CONFIRMED) — there
  * is no payment or credit-approval gate in front of it.
  *
- * Prices are still resolved and snapshotted now (outlet special price → catalog
- * MRP), and GST comes from the outlet's billing preference, so the amount the
- * outlet will owe is fixed at placement even though the bill is only raised at
- * Fulfil. The outlet may pay any time from here on: before fulfilment the money
- * is held as an advance against the order, after it against the bill.
+ * Two things happen here that used to wait for Fulfil: the ordered quantities come
+ * out of the godown, and the bill is raised. So an order is a real, payable
+ * document from the moment it's placed — it shows under Sales immediately and the
+ * outlet can settle it whenever. Fulfil is now purely the physical hand-over
+ * (godown → outlet stock), and cancelling before that voids the bill it raised.
  */
 export async function createOrder(user: AuthUser, input: CreateOrderInput) {
   const outletId = resolveOutletId(user, input.outletId);
@@ -177,7 +177,7 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
     : [];
   const specialOf = new Map(specials.map((s) => [s.productId, s.price]));
 
-  const order = await prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx) => {
     const orderNumber = await nextDocNumber(tx, 'ORDER');
     const placed = await tx.outletOrder.create({
       data: {
@@ -219,10 +219,26 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
         notes: `Order ${orderNumber} placed`,
       });
     }
-    return placed;
+
+    // Raise the bill now rather than at Fulfil. createBillForOrderTx needs the
+    // product rows and the outlet's credit period, which orderInclude doesn't carry.
+    const forBill = await tx.outletOrder.findUniqueOrThrow({
+      where: { id: placed.id },
+      include: { items: { include: { product: true } }, outlet: true },
+    });
+    const bill = await billingService.createBillForOrderTx(tx, forBill, user.id);
+    return { placed, bill };
   });
 
-  cache.invalidateTags(CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.DASHBOARD, CacheTag.outlet(outletId));
+  cache.invalidateTags(
+    CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.BILLS, CacheTag.DASHBOARD, CacheTag.outlet(outletId),
+  );
+  // Queues the PDF and announces the bill — same post-commit work Fulfil used to do.
+  await billingService.afterBillGenerated({ ...created.bill, outletId });
+
+  // Re-read so the response carries the bill that was just raised; the row created
+  // above was fetched before it existed.
+  const order = await loadForTransition(created.placed.id);
 
   // Auto-print trigger: fire the instant the order lands, regardless of what
   // happens next (online payment vs. credit approval) — godown/admin start
@@ -244,8 +260,8 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
         qty: Number(i.confirmedQuantity ?? i.requestedQuantity),
         price: Number(i.unitPriceSnapshot ?? i.product.mrp),
       })),
-      // A just-placed order has no bill and no payment yet, so the slip always
-      // prints "collect this much" — which is exactly what the packer needs.
+      // A just-placed order is billed but never yet paid, so the slip always prints
+      // "collect this much" — which is exactly what the packer needs.
       payment: { status: 'PENDING' as const, amountDue: Number(orderTotals(order).grandTotal) },
     },
     { global: true, outletId },
@@ -433,11 +449,18 @@ async function outstandingBillFor(orderId: string) {
 /**
  * What this order still needs paying, and where that money should attach.
  *
- * Before Fulfil there is no bill, so the whole order total is payable as an advance.
- * After Fulfil the bill is the source of truth, so only its remaining balance is.
+ * The bill is the source of truth whenever one exists — which, since bills are
+ * raised at placement, is every order from here on. The advance-against-the-order
+ * branch below only still applies to orders raised under the older flow, where the
+ * bill didn't appear until Fulfil; Fulfil moves that money onto the bill.
  */
 async function payableFor(order: OrderWithItems): Promise<{ amount: Prisma.Decimal; billId: string | null }> {
-  if (order.status === OutletOrderStatus.CONFIRMED) {
+  const bill = await outstandingBillFor(order.id);
+  if (bill) return { amount: new Prisma.Decimal(bill.balanceDue), billId: bill.id };
+
+  // No outstanding bill: either it's fully settled/cancelled, or this is a legacy
+  // order still awaiting Fulfil. Only the latter is payable, as an advance.
+  if (order.status === OutletOrderStatus.CONFIRMED && !order.bill) {
     const alreadyAdvanced = await prisma.payment.aggregate({
       where: { orderId: order.id, billId: null, isDeleted: false, status: PaymentStatus.SUCCESS },
       _sum: { amount: true },
@@ -445,9 +468,7 @@ async function payableFor(order: OrderWithItems): Promise<{ amount: Prisma.Decim
     const paid = new Prisma.Decimal(alreadyAdvanced._sum.amount ?? 0);
     return { amount: orderTotals(order).grandTotal.sub(paid), billId: null };
   }
-  const bill = await outstandingBillFor(order.id);
-  if (!bill) return { amount: new Prisma.Decimal(0), billId: null };
-  return { amount: new Prisma.Decimal(bill.balanceDue), billId: bill.id };
+  return { amount: new Prisma.Decimal(0), billId: null };
 }
 
 /**
@@ -669,9 +690,9 @@ export async function fulfilOrder(user: AuthUser, id: string) {
       });
     }
 
-    // A handful of orders were already CONFIRMED — with a bill already raised under
-    // the old approve/pay-first flow — at the moment this workflow was simplified.
-    // Fulfilling one of those must not raise a second bill; reuse the one it already has.
+    // Orders are billed at placement, so normally the bill is already there and gets
+    // reused — raising a second one here would double-charge the outlet. The create
+    // branch is only for orders placed before that change, which reach Fulfil unbilled.
     const isNewBill = !order.bill;
     const raised: { id: string; billNumber: string; grandTotal: Prisma.Decimal } = order.bill
       ?? await (async () => {
@@ -735,14 +756,13 @@ export async function cancelOrder(user: AuthUser, id: string, input: RejectOrder
   if (order.status !== OutletOrderStatus.CONFIRMED) {
     throw AppError.invalidState('Only an order awaiting fulfilment can be cancelled');
   }
-  // A small population of orders were already CONFIRMED — with a bill already raised
-  // under the old approve/pay-first flow — at the moment this workflow was simplified.
-  // Cancelling one of those is a credit note, not a status flip: there is no bill-void
-  // path yet, so refuse rather than leave a real unpaid bill orphaned against a
-  // cancelled order.
-  if (order.bill) {
+  // Every order is billed at placement now, so a bill existing is normal and can't
+  // be a reason to refuse — it gets voided below. Money already banked against it is
+  // a different matter: that's a refund, which this flow can't do, so refuse instead
+  // of leaving a paid bill attached to a cancelled order.
+  if (order.bill && new Prisma.Decimal(order.bill.grandTotal).sub(order.bill.balanceDue).greaterThan(0)) {
     throw AppError.invalidState(
-      `${order.orderNumber} already has bill ${order.bill.billNumber} raised against it and cannot be cancelled here. Handle it via Billing instead.`,
+      `${order.orderNumber} already has payments recorded against bill ${order.bill.billNumber}. Refund those before cancelling the order.`,
     );
   }
   // An outlet may pay online at order time, before any bill exists. That money is
@@ -781,6 +801,17 @@ export async function cancelOrder(user: AuthUser, id: string, input: RejectOrder
         notes: `Order ${order.orderNumber} cancelled — stock returned`,
       });
     }
+
+    // Void the bill raised at placement. Kept as a CANCELLED row rather than deleted
+    // so the number stays accounted for and the history still reads honestly; nothing
+    // was paid against it (guarded above), so there is no balance to unwind.
+    if (order.bill) {
+      await tx.bill.update({
+        where: { id: order.bill.id },
+        data: { status: BillStatus.CANCELLED, balanceDue: 0 },
+      });
+    }
+
     return tx.outletOrder.update({
       where: { id },
       data: {
@@ -793,7 +824,7 @@ export async function cancelOrder(user: AuthUser, id: string, input: RejectOrder
     });
   });
 
-  cache.invalidateTags(CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
+  cache.invalidateTags(CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.BILLS, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
   await emitRealtime(
     RealtimeEvent.ORDER_STATUS_CHANGED,
     { orderId: id, orderNumber: order.orderNumber, status: updated.status, outletName: order.outlet.name, reason: input.reason ?? null },

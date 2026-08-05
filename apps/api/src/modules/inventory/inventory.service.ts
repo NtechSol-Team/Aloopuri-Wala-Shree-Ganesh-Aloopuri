@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
+import { istRange } from '../../shared/utils/date';
 
 /**
  * Finished goods + raw materials held at the godown. Queries FROM Product (not
@@ -62,6 +63,36 @@ export async function getOutlet(outletId: string) {
   });
 }
 
+/**
+ * Godown stock movement history, newest first.
+ *
+ * The stock ledgers only carry a running total, so this is the trail that explains
+ * how each product got to its current figure — every row records what moved, why,
+ * for which order/outlet, and the resulting balance.
+ */
+export async function getMovements(query: { productId?: string; outletId?: string; from?: Date; to?: Date; limit?: number }) {
+  const dateRange = istRange(query.from, query.to);
+  const where: Prisma.StockMovementWhereInput = {
+    ...(query.productId ? { productId: query.productId } : {}),
+    ...(query.outletId ? { outletId: query.outletId } : {}),
+    ...(dateRange ? { createdAt: dateRange } : {}),
+  };
+  return cache.getOrSet(`inventory:movements:${JSON.stringify(query)}`, [CacheTag.INVENTORY], async () => {
+    const rows = await prisma.stockMovement.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(query.limit ?? 200, 500),
+      select: {
+        id: true, reason: true, quantityDelta: true, balanceAfter: true, notes: true, createdAt: true,
+        product: { select: { id: true, name: true, sku: true, unit: { select: { name: true, decimalPlaces: true } } } },
+        outlet: { select: { id: true, name: true } },
+        order: { select: { id: true, orderNumber: true } },
+      },
+    });
+    return rows;
+  });
+}
+
 /** Top-line inventory KPIs across all locations. */
 export async function getSummary() {
   return cache.getOrSet('inventory:summary', [CacheTag.INVENTORY, CacheTag.DASHBOARD], async () => {
@@ -83,4 +114,4 @@ export async function getSummary() {
   });
 }
 
-export const inventoryService = { getGodown, getMainBranch, getOutlet, getSummary };
+export const inventoryService = { getGodown, getMainBranch, getOutlet, getMovements, getSummary };

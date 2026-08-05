@@ -32,3 +32,25 @@ export function useOutletInventory(outletId: string | null) {
     queryFn: async () => (await api.get<ApiSuccess<{ outlet: { id: string; name: string }; items: StockRow[] }>>(`/inventory/outlet/${outletId}`)).data.data,
   });
 }
+
+export type StockMovementReason = 'ORDER_PLACED' | 'ORDER_CANCELLED' | 'ORDER_FULFILLED';
+
+export interface StockMovementRow {
+  id: string;
+  reason: StockMovementReason;
+  /** Signed: negative left the godown, positive came back. */
+  quantityDelta: string;
+  balanceAfter: string;
+  notes: string | null;
+  createdAt: string;
+  product: { id: string; name: string; sku: string; unit: { name: string; decimalPlaces: number } };
+  outlet: { id: string; name: string } | null;
+  order: { id: string; orderNumber: string } | null;
+}
+
+export function useStockMovements(params: { outletId?: string; from?: string; to?: string } = {}) {
+  return useQuery({
+    queryKey: ['inventory', 'movements', params],
+    queryFn: async () => (await api.get<ApiSuccess<StockMovementRow[]>>('/inventory/movements', { params })).data.data,
+  });
+}

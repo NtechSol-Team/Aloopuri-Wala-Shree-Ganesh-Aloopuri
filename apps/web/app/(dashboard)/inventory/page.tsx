@@ -1,20 +1,25 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Warehouse, Boxes, AlertTriangle } from 'lucide-react';
+import { format } from 'date-fns';
+import { Warehouse, Boxes, AlertTriangle, ArrowLeftRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
-import { cn, formatINR, formatQty } from '@/lib/utils';
-import { useInventorySummary, useGodownInventory, useOutletInventory, type StockRow } from '@/hooks/useInventory';
+import { cn, formatINR, formatQty, ist, todayIso } from '@/lib/utils';
+import { PERIODS, periodRange, type PeriodKey } from '@/lib/period';
+import { useInventorySummary, useGodownInventory, useOutletInventory, useStockMovements, type StockRow, type StockMovementReason } from '@/hooks/useInventory';
 import { useOutlets } from '@/hooks/useOutlets';
 
 // Stock lives at the godown and at the outlets — main-branch stock is no longer
-// tracked as a location anyone works from, so it isn't shown here at all.
-type Tab = 'godown' | 'outlets';
+// tracked as a location anyone works from, so it isn't shown here at all. Movements
+// is the audit trail behind those two: why each godown figure is what it is.
+type Tab = 'godown' | 'outlets' | 'movements';
 
 export default function InventoryPage() {
   const [tab, setTab] = useState<Tab>('godown');
@@ -35,13 +40,14 @@ export default function InventoryPage() {
       </div>
 
       <div className="flex gap-1 overflow-x-auto border-b border-border scrollbar-thin">
-        {([['godown', 'Godown'], ['outlets', 'Outlets']] as const).map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)} className={cn('border-b-2 px-4 py-2 text-body font-medium transition-colors', tab === key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{label}</button>
+        {([['godown', 'Godown'], ['outlets', 'Outlets'], ['movements', 'Stock Movement']] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)} className={cn('shrink-0 border-b-2 px-4 py-2 text-body font-medium transition-colors', tab === key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{label}</button>
         ))}
       </div>
 
       {tab === 'godown' && <GodownTab />}
       {tab === 'outlets' && <OutletsTab />}
+      {tab === 'movements' && <MovementsTab />}
     </div>
   );
 }
@@ -97,6 +103,104 @@ function OutletsTab() {
       </div>
       {isLoading || !data ? <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div> : <StockTable rows={data.items} />}
     </Card>
+  );
+}
+
+/** How each movement reason should read and colour in the ledger. */
+const REASON_META: Record<StockMovementReason, { label: string; variant: 'danger' | 'success' | 'info' }> = {
+  ORDER_PLACED: { label: 'Order placed', variant: 'danger' },
+  ORDER_FULFILLED: { label: 'Fulfilled', variant: 'danger' },
+  ORDER_CANCELLED: { label: 'Order cancelled', variant: 'success' },
+};
+
+/**
+ * Every godown stock change, newest first. The stock tables only carry a running
+ * total, so this is what explains how a product reached the figure it shows —
+ * what moved, why, for whom, and the balance it left behind.
+ */
+function MovementsTab() {
+  const { data: outlets } = useOutlets();
+  const [period, setPeriod] = useState<PeriodKey>('all');
+  const [custom, setCustom] = useState({ from: todayIso(), to: todayIso() });
+  const [outletId, setOutletId] = useState('');
+  const range = periodRange(period, custom);
+  const { data, isLoading } = useStockMovements({ ...(outletId ? { outletId } : {}), ...range });
+  const rows = data ?? [];
+
+  return (
+    <div className="space-y-4">
+      <Card className="flex flex-wrap items-end gap-3 p-3">
+        <div className="space-y-1.5">
+          <Label>Period</Label>
+          <Select className="w-40" value={period} onChange={(e) => setPeriod(e.target.value as PeriodKey)}>
+            {PERIODS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </Select>
+        </div>
+        {period === 'custom' && (
+          <>
+            <div className="space-y-1.5">
+              <Label>From</Label>
+              <Input type="date" value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>To</Label>
+              <Input type="date" value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
+            </div>
+          </>
+        )}
+        <div className="space-y-1.5">
+          <Label>Franchise</Label>
+          <Select className="w-48" value={outletId} onChange={(e) => setOutletId(e.target.value)}>
+            <option value="">All franchises</option>
+            {(outlets ?? []).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+          </Select>
+        </div>
+      </Card>
+
+      {isLoading ? (
+        <CardSkeleton />
+      ) : !rows.length ? (
+        <Card className="flex flex-col items-center gap-3 py-16 text-center">
+          <ArrowLeftRight className="h-8 w-8 text-muted-foreground" />
+          <p className="text-body text-muted-foreground">No stock movements in this period.</p>
+        </Card>
+      ) : (
+        <Card className="overflow-hidden">
+          <Table>
+            <THead>
+              <TR>
+                <TH>When</TH><TH>Product</TH><TH>Reason</TH><TH>Order</TH><TH>Franchise</TH>
+                <TH className="text-right">Change</TH><TH className="text-right">Balance After</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {rows.map((m) => {
+                const delta = Number(m.quantityDelta);
+                const meta = REASON_META[m.reason];
+                return (
+                  <TR key={m.id}>
+                    <TD className="whitespace-nowrap text-muted-foreground">{format(ist(m.createdAt), 'dd MMM, HH:mm')}</TD>
+                    <TD>
+                      <span className="font-medium">{m.product.name}</span>
+                      <span className="block text-caption text-muted-foreground">{m.product.sku}</span>
+                    </TD>
+                    <TD><Badge variant={meta.variant}>{meta.label}</Badge></TD>
+                    <TD className="text-muted-foreground">{m.order?.orderNumber ?? '—'}</TD>
+                    <TD className="text-muted-foreground">{m.outlet?.name ?? '—'}</TD>
+                    <TD className={cn('text-right font-semibold tabular-nums', delta < 0 ? 'text-danger' : 'text-success')}>
+                      {delta > 0 ? '+' : ''}{formatQty(delta, m.product.unit.decimalPlaces)} {m.product.unit.name}
+                    </TD>
+                    <TD className="text-right tabular-nums">
+                      {formatQty(m.balanceAfter, m.product.unit.decimalPlaces)} {m.product.unit.name}
+                    </TD>
+                  </TR>
+                );
+              })}
+            </TBody>
+          </Table>
+        </Card>
+      )}
+    </div>
   );
 }
 

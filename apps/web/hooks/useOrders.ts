@@ -55,17 +55,17 @@ export interface Order {
 }
 
 /**
- * Whether a delivered order still owes money. "Pending Payment" and "Completed" are
- * not statuses — they are the two halves of DELIVERED, split on the bill's balance,
- * so settling a bill moves an order between them without any status change.
+ * What this order still owes on its bill. Bills are raised at placement now, so an
+ * order can owe money well before it's delivered — this deliberately doesn't gate on
+ * status, or every newly-placed order would read as owing nothing.
  */
 export function amountDue(order: Order): number {
-  if (order.status !== 'DELIVERED' || !order.bill) return 0;
+  if (!order.bill || order.bill.status === 'CANCELLED') return 0;
   return Number(order.bill.balanceDue);
 }
 
 export function isPendingPayment(order: Order): boolean {
-  return amountDue(order) > 0;
+  return order.status !== 'CANCELLED' && amountDue(order) > 0;
 }
 
 export function isCompleted(order: Order): boolean {
