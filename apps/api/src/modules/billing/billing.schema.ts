@@ -19,7 +19,11 @@ export const listBillsQuerySchema = paginationQuerySchema.extend({
  */
 export const createManualBillSchema = z.object({
   outletId: z.string().uuid(),
-  billDate: istDate,
+  // Back-entry is for sales that already happened. A future date would sit in a
+  // period that hasn't been reported yet and break ageing/overdue arithmetic.
+  billDate: istDate.refine((d) => d.getTime() <= Date.now() + 24 * 60 * 60 * 1000, {
+    message: 'Bill date cannot be in the future',
+  }),
   isGstBill: z.boolean().optional(),
   /**
    * Whether this back-entry should move stock as well as raise the bill. Defaults

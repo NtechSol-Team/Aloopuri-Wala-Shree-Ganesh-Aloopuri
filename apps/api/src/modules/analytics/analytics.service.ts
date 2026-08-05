@@ -264,7 +264,7 @@ export async function getOutletDetail(outletId: string) {
       `WITH months AS (
          SELECT generate_series(date_trunc('month', now()) - interval '11 months', date_trunc('month', now()), interval '1 month') AS m
        ),
-       o AS (SELECT date_trunc('month', order_date) m, count(*)::int c FROM outlet_orders WHERE outlet_id=$1::uuid AND is_deleted=false GROUP BY 1),
+       o AS (SELECT date_trunc('month', order_date) m, count(*)::int c FROM outlet_orders WHERE outlet_id=$1::uuid AND is_deleted=false AND status<>'CANCELLED' GROUP BY 1),
        b AS (SELECT date_trunc('month', bill_date) m, SUM(grand_total) v FROM bills WHERE outlet_id=$1::uuid AND is_deleted=false AND status<>'CANCELLED' GROUP BY 1),
        p AS (SELECT date_trunc('month', payment_date) m, SUM(amount) v FROM payments WHERE outlet_id=$1::uuid AND is_deleted=false GROUP BY 1)
        SELECT to_char(months.m,'YYYY-MM') AS month, COALESCE(o.c,0)::int AS orders, COALESCE(b.v,0)::float AS billed, COALESCE(p.v,0)::float AS paid
@@ -283,11 +283,11 @@ export async function getOutletDetail(outletId: string) {
     // Lifetime summary
     prisma.$queryRawUnsafe<Array<{ lifetime_orders: number; total_billed: number; total_paid: number; outstanding: number; last_order: Date | null }>>(
       `SELECT
-         (SELECT count(*) FROM outlet_orders WHERE outlet_id=$1::uuid AND is_deleted=false)::int AS lifetime_orders,
+         (SELECT count(*) FROM outlet_orders WHERE outlet_id=$1::uuid AND is_deleted=false AND status<>'CANCELLED')::int AS lifetime_orders,
          (SELECT COALESCE(SUM(grand_total),0) FROM bills WHERE outlet_id=$1::uuid AND is_deleted=false AND status<>'CANCELLED')::float AS total_billed,
          (SELECT COALESCE(SUM(amount_paid),0) FROM bills WHERE outlet_id=$1::uuid AND is_deleted=false AND status<>'CANCELLED')::float AS total_paid,
          (SELECT COALESCE(SUM(balance_due),0) FROM bills WHERE outlet_id=$1::uuid AND is_deleted=false AND status IN ('UNPAID','PARTIALLY_PAID'))::float AS outstanding,
-         (SELECT MAX(order_date) FROM outlet_orders WHERE outlet_id=$1::uuid AND is_deleted=false) AS last_order`,
+         (SELECT MAX(order_date) FROM outlet_orders WHERE outlet_id=$1::uuid AND is_deleted=false AND status<>'CANCELLED') AS last_order`,
       outletId,
     ),
     // This month / last month / same month last year (orders + billed)
@@ -297,7 +297,7 @@ export async function getOutletDetail(outletId: string) {
                 ('last', date_trunc('month', now()) - interval '1 month'),
                 ('yoy',  date_trunc('month', now()) - interval '1 year')
        ) AS b(bucket, m)
-       LEFT JOIN (SELECT date_trunc('month', order_date) m, count(*) c FROM outlet_orders WHERE outlet_id=$1::uuid AND is_deleted=false GROUP BY 1) o ON o.m=b.m
+       LEFT JOIN (SELECT date_trunc('month', order_date) m, count(*) c FROM outlet_orders WHERE outlet_id=$1::uuid AND is_deleted=false AND status<>'CANCELLED' GROUP BY 1) o ON o.m=b.m
        LEFT JOIN (SELECT date_trunc('month', bill_date) m, SUM(grand_total) v FROM bills WHERE outlet_id=$1::uuid AND is_deleted=false AND status<>'CANCELLED' GROUP BY 1) bl ON bl.m=b.m`,
       outletId,
     ),

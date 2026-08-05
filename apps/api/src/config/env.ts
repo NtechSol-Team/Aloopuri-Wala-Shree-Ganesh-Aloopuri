@@ -41,6 +41,9 @@ const envSchema = z.object({
   GSTZEN_API_URL: z.string().default('https://my.gstzen.in/api/gstin-validator/'),
 
   UPLOAD_DIR: z.string().default('uploads'),
+  // Files that must never be served statically — bill PDFs carry customer GSTIN,
+  // addresses and line items, and their filenames are guessable invoice numbers.
+  PRIVATE_STORAGE_DIR: z.string().default('storage'),
   // 5MB used to be the default, but a modern phone/tablet camera photo (the
   // realistic source for a POS item photo) routinely runs 8-15MB, so that
   // limit was rejecting ordinary photos outright.

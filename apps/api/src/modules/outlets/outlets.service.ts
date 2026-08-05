@@ -1,3 +1,5 @@
+import { Prisma, UserRole } from '@prisma/client';
+import type { AuthUser } from '../../shared/types/api';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
@@ -15,13 +17,40 @@ const outletSelect = {
   assignedMenuId: true, assignedMenu: { select: { id: true, name: true } },
 } as const;
 
-export async function listOutlets() {
-  return cache.getOrSet('outlets:list', [CacheTag.OUTLETS], () =>
-    prisma.outlet.findMany({ where: { isDeleted: false }, orderBy: { name: 'asc' }, select: outletSelect }),
+/**
+ * Outlets the caller may see. A franchise owner or cashier gets only their own —
+ * these rows carry each outlet's GSTIN, FSSAI, address and credit terms, which are
+ * another franchise's business identity and none of theirs. Back-office roles get
+ * the full list, which is what the inventory, user-assignment and sales filters need.
+ */
+function visibleOutletFilter(user: AuthUser): Prisma.OutletWhereInput {
+  if (user.role === UserRole.FRANCHISE_OWNER || user.role === UserRole.CASHIER) {
+    return { id: user.outletId ?? '__none__' };
+  }
+  return {};
+}
+
+export async function listOutlets(user: AuthUser) {
+  const scope = visibleOutletFilter(user);
+  const key = scope.id ? `outlets:list:${String(scope.id)}` : 'outlets:list';
+  return cache.getOrSet(key, [CacheTag.OUTLETS], () =>
+    prisma.outlet.findMany({ where: { isDeleted: false, ...scope }, orderBy: { name: 'asc' }, select: outletSelect }),
   );
 }
 
-export async function getOutlet(id: string) {
+/** Existence check for internal callers — no visibility scoping, they act as admin. */
+async function assertOutletExists(id: string) {
+  const outlet = await prisma.outlet.findFirst({ where: { id, isDeleted: false }, select: { id: true } });
+  if (!outlet) throw AppError.notFound('Outlet not found');
+  return outlet;
+}
+
+export async function getOutlet(user: AuthUser, id: string) {
+  // Checked, not spread into the where clause: spreading {id: <their own>} over the
+  // requested id silently hands back their own outlet for any id they ask for, which
+  // reads as success while answering a different question.
+  const scope = visibleOutletFilter(user);
+  if (scope.id && scope.id !== id) throw AppError.notFound('Outlet not found');
   const outlet = await prisma.outlet.findFirst({ where: { id, isDeleted: false }, select: outletSelect });
   if (!outlet) throw AppError.notFound('Outlet not found');
   return outlet;
@@ -36,7 +65,7 @@ export async function createOutlet(input: CreateOutletInput, createdById: string
 }
 
 export async function updateOutlet(id: string, input: UpdateOutletInput) {
-  await getOutlet(id);
+  await assertOutletExists(id);
   if (input.code) {
     const clash = await prisma.outlet.findFirst({ where: { code: input.code, id: { not: id } } });
     if (clash) throw AppError.conflict('An outlet with this code already exists', 'code');
@@ -53,7 +82,7 @@ export async function updateOutlet(id: string, input: UpdateOutletInput) {
  * Busts POS cache so the counter reloads the new menu on its next fetch.
  */
 export async function assignMenu(id: string, assignedMenuId: string | null) {
-  await getOutlet(id);
+  await assertOutletExists(id);
   if (assignedMenuId) {
     const menu = await prisma.menu.findFirst({ where: { id: assignedMenuId, isDeleted: false }, select: { id: true } });
     if (!menu) throw AppError.badRequest('That menu does not exist', undefined, 'assignedMenuId');
@@ -71,7 +100,7 @@ export async function assignMenu(id: string, assignedMenuId: string | null) {
  * outlet at all — stay behind the developer window.
  */
 export async function updateOutletProfile(id: string, input: OutletProfileInput) {
-  await getOutlet(id);
+  await assertOutletExists(id);
   const outlet = await prisma.outlet.update({ where: { id }, data: input, select: outletSelect });
   cache.invalidateTags(CacheTag.OUTLETS, CacheTag.outlet(id));
   return outlet;
@@ -79,7 +108,7 @@ export async function updateOutletProfile(id: string, input: OutletProfileInput)
 
 /** Every active product with this outlet's special price, if one is set (null = falls back to catalog price). */
 export async function getOutletPrices(outletId: string) {
-  await getOutlet(outletId);
+  await assertOutletExists(outletId);
   const [products, specials] = await Promise.all([
     prisma.product.findMany({
       where: { isDeleted: false, isActive: true },
@@ -94,7 +123,7 @@ export async function getOutletPrices(outletId: string) {
 
 /** Replace this outlet's entire special-price list (blank/omitted product = fall back to catalog price). */
 export async function setOutletPrices(outletId: string, input: SetOutletPricesInput) {
-  await getOutlet(outletId);
+  await assertOutletExists(outletId);
   await prisma.$transaction(async (tx) => {
     await tx.outletProductPrice.deleteMany({ where: { outletId } });
     if (input.items.length > 0) {

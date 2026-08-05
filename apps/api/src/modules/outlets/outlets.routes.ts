@@ -36,7 +36,7 @@ const actor = (req: Request) => user(req).id;
 router.post('/dev/verify', requireDeveloperKey, asyncHandler(async (_req: Request, res: Response) => ok(res, { unlocked: true }, 'Developer access granted')));
 
 // List active outlets — used by inventory, user assignment, order/billing filters.
-router.get('/', asyncHandler(async (_req: Request, res: Response) => ok(res, await outletsService.listOutlets())));
+router.get('/', asyncHandler(async (req: Request, res: Response) => ok(res, await outletsService.listOutlets(user(req)))));
 
 router.post(
   '/',
@@ -45,7 +45,7 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => created(res, await outletsService.createOutlet(req.body as CreateOutletInput, actor(req)), 'Outlet created')),
 );
 
-router.get('/:id', validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await outletsService.getOutlet(req.params.id))));
+router.get('/:id', validate({ params: idParam }), asyncHandler(async (req: Request, res: Response) => ok(res, await outletsService.getOutlet(user(req), req.params.id))));
 
 router.patch(
   '/:id',

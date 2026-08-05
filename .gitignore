@@ -41,3 +41,5 @@ coverage/
 # Uploads (local file storage)
 apps/api/uploads/*
 !apps/api/uploads/.gitkeep
+# Private storage — bill PDFs, never served statically
+apps/api/storage/

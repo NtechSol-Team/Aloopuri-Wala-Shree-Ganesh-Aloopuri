@@ -56,7 +56,18 @@ export function createApp(): Express {
     }),
   );
 
-  // Static file serving for uploaded product photos / generated PDFs.
+  // Bills are NOT public. They used to be written under UPLOAD_DIR and served by the
+  // static handler below, which made every invoice downloadable by anyone who could
+  // count — the filenames are sequential bill numbers, not the random UUIDs the
+  // caching note below assumes. PDFs now live outside UPLOAD_DIR (see
+  // generateBillPdf) and are only reachable through the authenticated
+  // GET /billing/:id/pdf. This block stays as a hard stop so any file left behind by
+  // the old behaviour is refused rather than silently kept online.
+  app.use('/uploads/bills', (_req, res) => {
+    res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } });
+  });
+
+  // Static file serving for uploaded product photos.
   // Filenames are random UUIDs (a re-upload gets a new name), so clients can
   // cache aggressively — the POS tablet then loads its ~30 card photos from
   // disk instead of re-requesting them on every terminal load.

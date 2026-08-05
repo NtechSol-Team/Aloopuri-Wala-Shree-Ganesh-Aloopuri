@@ -98,7 +98,7 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
           </div>
           <div className="space-y-1.5">
             <Label>Bill date</Label>
-            <Input type="date" value={billDate} onChange={(e) => setBillDate(e.target.value)} />
+            <Input type="date" value={billDate} max={todayIso()} onChange={(e) => setBillDate(e.target.value)} />
           </div>
         </div>
 

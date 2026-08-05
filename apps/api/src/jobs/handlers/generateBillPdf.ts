@@ -3,10 +3,10 @@ import fs from 'node:fs';
 import type { Job } from 'pg-boss';
 import { prisma } from '../../config/prisma';
 import { logger } from '../../config/logger';
-import { env } from '../../config/env';
 import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
 import { renderBillPdf } from '../../modules/billing/billing.pdf';
+import { billPdfPath } from '../../modules/billing/billing.storage';
 
 export interface GenerateBillPdfPayload {
   billId: string;
@@ -25,16 +25,20 @@ export async function generateBillPdfHandler(jobs: Job<GenerateBillPdfPayload>[]
       continue;
     }
 
-    const dir = path.resolve(process.cwd(), env.UPLOAD_DIR, 'bills');
-    fs.mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, `${bill.billNumber}.pdf`);
+    // Deliberately NOT under UPLOAD_DIR: that directory is served publicly, and bill
+    // filenames are sequential invoice numbers, so anything written there is
+    // downloadable by anyone who counts upwards. See billPdfPath().
+    const filePath = billPdfPath(bill.billNumber);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
     // Best-effort disk cache — on ephemeral filesystems (e.g. Render's free tier) this
     // won't survive a restart, so the actual download endpoint (GET /billing/:id/pdf)
     // never relies on it and regenerates fresh from the DB instead.
     await renderBillPdf(bill, fs.createWriteStream(filePath));
 
-    const pdfUrl = `/uploads/bills/${bill.billNumber}.pdf`;
+    // The authenticated API route, not a static file path — a bill PDF is only ever
+    // fetched with an Authorization header.
+    const pdfUrl = `/api/v1/billing/${bill.id}/pdf`;
     await prisma.bill.update({ where: { id: bill.id }, data: { pdfUrl } });
 
     await emitRealtime(

@@ -14,6 +14,7 @@ import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
 import { enqueue, JobName } from '../../jobs/queue';
 import type { AuthUser } from '../../shared/types/api';
+import { removeBillPdf } from './billing.storage';
 import type { CreateManualBillInput, ListBillsQuery } from './billing.schema';
 
 type OrderForBill = Prisma.OutletOrderGetPayload<{
@@ -24,9 +25,11 @@ type OrderForBill = Prisma.OutletOrderGetPayload<{
  * Create a bill from a (confirmed) outlet order, inside an existing transaction.
  * Server computes all money — never trusts client amounts. Line items are locked.
  */
-export async function createBillForOrderTx(tx: Prisma.TransactionClient, order: OrderForBill, userId: string) {
-  const billNumber = await nextDocNumber(tx, 'BILL');
-  const now = new Date();
+export async function createBillForOrderTx(tx: Prisma.TransactionClient, order: OrderForBill, userId: string, billedAt?: Date) {
+  // Number from the date the bill carries: a back-entered December sale belongs to
+  // December's book, not to whichever year it happened to be typed in.
+  const now = billedAt ?? new Date();
+  const billNumber = await nextDocNumber(tx, 'BILL', now);
 
   const items = order.items.map((it) => {
     const qty = new Prisma.Decimal(it.confirmedQuantity ?? it.requestedQuantity);
@@ -93,12 +96,30 @@ function scopeFilter(user: AuthUser): Prisma.BillWhereInput {
 
 export async function listBills(user: AuthUser, query: ListBillsQuery) {
   const dateRange = istRange(query.from, query.to);
+  // An outlet-scoped user is pinned to their own outlet and the requested outletId is
+  // ignored — spreading it after the scope would let anyone read another franchise's
+  // bills by passing ?outletId=. Only an unscoped (back-office) caller may pick one.
+  const scoped = scopeFilter(user);
+  const outletFilter = scoped.outletId ? { outletId: scoped.outletId } : query.outletId ? { outletId: query.outletId } : {};
+  // overdueOnly narrows to the unpaid statuses; an explicit status has to agree with
+  // that rather than be silently replaced by it.
+  const overdue = query.overdueOnly
+    ? {
+        status: query.status
+          ? { in: ([query.status] as BillStatus[]).filter((s) => s === BillStatus.UNPAID || s === BillStatus.PARTIALLY_PAID) }
+          : { in: [BillStatus.UNPAID, BillStatus.PARTIALLY_PAID] },
+        dueDate: { lt: new Date() },
+      }
+    : query.status
+      ? { status: query.status }
+      : {};
   const where: Prisma.BillWhereInput = {
-    isDeleted: false,
-    ...scopeFilter(user),
-    ...(query.outletId ? { outletId: query.outletId } : {}),
-    ...(query.status ? { status: query.status } : {}),
-    ...(query.overdueOnly ? { status: { in: ['UNPAID', 'PARTIALLY_PAID'] }, dueDate: { lt: new Date() } } : {}),
+    // Cancelled bills are soft-deleted, so asking for them explicitly is the only way
+    // to see them — that's the audit view that explains gaps in the number series.
+    isDeleted: query.status === BillStatus.CANCELLED ? undefined : false,
+    ...scoped,
+    ...outletFilter,
+    ...overdue,
     ...(dateRange ? { billDate: dateRange } : {}),
   };
   const { skip, take } = toSkipTake(query);
@@ -170,7 +191,7 @@ export async function createManualBill(user: AuthUser, input: CreateManualBillIn
   const billedAt = input.billDate;
 
   const { bill } = await prisma.$transaction(async (tx) => {
-    const orderNumber = await nextDocNumber(tx, 'ORDER');
+    const orderNumber = await nextDocNumber(tx, 'ORDER', billedAt);
     const order = await tx.outletOrder.create({
       data: {
         orderNumber,
@@ -235,14 +256,8 @@ export async function createManualBill(user: AuthUser, input: CreateManualBillIn
       });
     }
 
-    const raised = await createBillForOrderTx(tx, order, user.id);
-    // createBillForOrderTx stamps today; a back-entry has to carry its own date.
-    const dated = await tx.bill.update({
-      where: { id: raised.id },
-      data: { billDate: billedAt, dueDate: addDays(billedAt, outlet.creditPeriodDays) },
-      select: { id: true, billNumber: true, grandTotal: true },
-    });
-    return { bill: dated };
+    const raised = await createBillForOrderTx(tx, order, user.id, billedAt);
+    return { bill: { id: raised.id, billNumber: raised.billNumber, grandTotal: raised.grandTotal } };
   });
 
   await afterBillGenerated({ ...bill, outletId: outlet.id });
@@ -347,6 +362,8 @@ export async function deleteBill(user: AuthUser, id: string) {
     }
   });
 
+  // Drop the cached PDF too — leaving it behind kept a "deleted" invoice readable.
+  await removeBillPdf(bill.billNumber);
   cache.invalidateTags(
     CacheTag.BILLS, CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.PAYMENTS,
     CacheTag.ANALYTICS, CacheTag.DASHBOARD, CacheTag.outlet(bill.outletId),

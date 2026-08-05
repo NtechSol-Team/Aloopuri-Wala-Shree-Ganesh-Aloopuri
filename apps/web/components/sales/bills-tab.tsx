@@ -98,6 +98,9 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
           <option value="UNPAID">Unpaid</option>
           <option value="PARTIALLY_PAID">Partially paid</option>
           <option value="PAID">Paid</option>
+          {/* Cancelled bills are removed from the books, so they only appear when
+              asked for — this is the view that explains gaps in the number series. */}
+          {isAdmin && <option value="CANCELLED">Cancelled (deleted)</option>}
         </Select>
         <Select className="w-44" value={sort} onChange={(e) => setSort(e.target.value)}>
           <option value="billDate">Newest first</option>
