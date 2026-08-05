@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR, todayIso } from '@/lib/utils';
+import { cn, formatINR, istDateInput, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/store/auth.store';
 import { useRawMaterials, useProducts } from '@/hooks/useProducts';
@@ -94,7 +94,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
       setIsGstBill(editBill.isGstBill);
       setSupplier(editBill.supplierName ?? ''); setGstin(editBill.supplierGstin ?? '');
       setSupplierState(''); setShowSuggestions(false);
-      setInvoice(editBill.invoiceNumber ?? ''); setBillDate(editBill.billDate.slice(0, 10));
+      setInvoice(editBill.invoiceNumber ?? ''); setBillDate(istDateInput(editBill.billDate));
       setMethod(editBill.paymentMethod ?? 'CASH');
       const paid = Number(editBill.amountPaid);
       const total = Number(editBill.totalAmount);

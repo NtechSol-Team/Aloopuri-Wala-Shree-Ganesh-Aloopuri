@@ -31,8 +31,27 @@ export function ist(value?: string | number | Date | null): Date {
  * between midnight and 05:30 IST it hands back yesterday.
  */
 export function todayIso(): string {
-  const d = ist();
+  return isoDate(ist());
+}
+
+/** yyyy-MM-dd from an already-IST-shifted Date. Internal to the two helpers below. */
+function isoDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * A stored timestamp as the IST calendar date, for pre-filling `<input type="date">`
+ * and for date columns in exports.
+ *
+ * Never use `value.slice(0, 10)` for this. The API stores a bare date as IST
+ * midnight — 6 Aug becomes 2026-08-05T18:30:00Z — so slicing the UTC string hands
+ * back the 5th. Worse, saving that edited form stores the 5th as IST midnight and
+ * the next edit reads the 4th, so the date walks backwards one day per round-trip.
+ */
+export function istDateInput(value: string | number | Date | null | undefined): string {
+  if (value == null) return '';
+  const d = ist(value);
+  return Number.isNaN(d.getTime()) ? '' : isoDate(d);
 }
 
 // Cached formatters: toLocaleString with options builds a fresh Intl.NumberFormat

@@ -889,6 +889,10 @@ model OutletOrder {
   // Whether the resulting bill carries GST — taken from the outlet's billing
   // preference at placement, since that determines the price the outlet pays.
   isGstBill          Boolean            @default(true) @map("is_gst_bill")
+  // Back-entry by the main owner for a sale that happened but never got recorded —
+  // the goods already moved and the date is whatever the owner types, so these are
+  // created straight as DELIVERED rather than going through the fulfilment queue.
+  isManualEntry      Boolean            @default(false) @map("is_manual_entry")
   // Set at placement once the ordered quantities have been taken out of the godown.
   // NULL means stock was never deducted up-front — true of every order placed before
   // deduct-on-placement existed, so Fulfil still has to deduct those the old way and

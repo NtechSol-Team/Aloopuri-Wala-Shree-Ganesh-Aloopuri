@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { formatINR, formatQty, ist, todayIso } from '@/lib/utils';
+import { formatINR, formatQty, ist, istDateInput, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import {
   useAssets, useSaveAsset, useDeleteAsset,
@@ -174,7 +174,7 @@ function AssetFormDialog({ open, onOpenChange, asset }: {
             serialNumber: asset.serialNumber ?? '',
             quantity: Number(asset.quantity),
             purchaseCost: Number(asset.purchaseCost),
-            purchaseDate: asset.purchaseDate.slice(0, 10),
+            purchaseDate: istDateInput(asset.purchaseDate),
             supplierName: asset.supplierName ?? '',
             invoiceNumber: asset.invoiceNumber ?? '',
             location: asset.location,

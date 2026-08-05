@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR, ist, todayIso } from '@/lib/utils';
+import { cn, formatINR, ist, istDateInput, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import {
   useEmployees, useSaveEmployee, useDeleteEmployee,
@@ -188,10 +188,10 @@ function EmployeeFormDialog({ open, onOpenChange, employee }: {
             name: employee.name,
             mobile: employee.mobile ?? '',
             email: employee.email ?? '',
-            dateOfBirth: employee.dateOfBirth ? employee.dateOfBirth.slice(0, 10) : '',
+            dateOfBirth: istDateInput(employee.dateOfBirth),
             gender: employee.gender ?? '',
             address: employee.address ?? '',
-            joiningDate: employee.joiningDate.slice(0, 10),
+            joiningDate: istDateInput(employee.joiningDate),
             employmentType: employee.employmentType,
             status: employee.status,
             department: employee.department ?? '',

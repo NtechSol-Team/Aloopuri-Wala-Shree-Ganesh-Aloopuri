@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { format } from 'date-fns';
-import { Download, Printer, Eye, ReceiptText, IndianRupee } from 'lucide-react';
+import { Download, Printer, Eye, ReceiptText, IndianRupee, Plus, Trash2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,8 @@ import { useAuthStore } from '@/store/auth.store';
 import { useBills, useBill, useOpenBillPdf, usePrintBillPdf, type BillStatus } from '@/hooks/useBilling';
 import { useOutlets } from '@/hooks/useOutlets';
 import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
+import { ManualBillDialog } from '@/components/sales/manual-bill-dialog';
+import { DeleteBillDialog, type DeleteTarget } from '@/components/sales/delete-bill-dialog';
 import { apiErrorMessage } from '@/lib/api';
 import { PERIODS, periodRange, type PeriodKey } from '@/lib/period';
 import toast from 'react-hot-toast';
@@ -44,11 +46,22 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
   });
   const [detailId, setDetailId] = useState<string | null>(null);
   const [payTarget, setPayTarget] = useState<PayTarget | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const openPdf = useOpenBillPdf();
   const printPdf = usePrintBillPdf();
 
   return (
     <div className="space-y-5">
+      {isAdmin && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-body text-muted-foreground">
+            Every sales bill raised for the franchises.
+          </p>
+          {/* Back-entry only — deliberately nothing to do with the POS counter flow. */}
+          <Button onClick={() => setManualOpen(true)}><Plus className="h-4 w-4" /> Manual Sales Bill</Button>
+        </div>
+      )}
       <Card className="flex flex-wrap items-end gap-3 p-3">
         <div className="space-y-1.5">
           <Label>Period</Label>
@@ -150,6 +163,14 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
                         >
                           <Download className="h-4 w-4" />
                         </Button>
+                        {isAdmin && (
+                          <Button
+                            variant="ghost" size="icon" title="Delete bill"
+                            onClick={() => setDeleteTarget({ id: b.id, billNumber: b.billNumber, grandTotal: b.grandTotal, amountPaid: b.amountPaid, outletName: b.outlet.name })}
+                          >
+                            <Trash2 className="h-4 w-4 text-danger" />
+                          </Button>
+                        )}
                       </div>
                     </TD>
                   </TR>
@@ -162,6 +183,8 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
 
       <BillDetailDialog id={detailId} onClose={() => setDetailId(null)} />
       <PayDialog bill={payTarget} onClose={() => setPayTarget(null)} />
+      <ManualBillDialog open={manualOpen} onOpenChange={setManualOpen} />
+      <DeleteBillDialog target={deleteTarget} onClose={() => setDeleteTarget(null)} />
     </div>
   );
 }

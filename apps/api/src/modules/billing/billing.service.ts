@@ -1,16 +1,20 @@
-import { Prisma, BillStatus, UserRole } from '@prisma/client';
+import {
+  Prisma, BillStatus, FulfillmentSource, OutletOrderStatus, PaymentStatus,
+  StockMovementReason, UserRole,
+} from '@prisma/client';
 import { addDays } from 'date-fns';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
 import { nextDocNumber } from '../../shared/utils/docNumber';
+import { assertProductQuantities } from '../../shared/utils/quantity';
 import { buildPaginationMeta, toSkipTake } from '../../shared/utils/pagination';
 import { istRange } from '../../shared/utils/date';
 import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
 import { enqueue, JobName } from '../../jobs/queue';
 import type { AuthUser } from '../../shared/types/api';
-import type { ListBillsQuery } from './billing.schema';
+import type { CreateManualBillInput, ListBillsQuery } from './billing.schema';
 
 type OrderForBill = Prisma.OutletOrderGetPayload<{
   include: { items: { include: { product: true } }; outlet: true };
@@ -132,4 +136,218 @@ export async function regeneratePdf(user: AuthUser, id: string) {
   return { queued: true };
 }
 
-export const billingService = { createBillForOrderTx, afterBillGenerated, listBills, getBill, regeneratePdf };
+/**
+ * Record a sale that already happened but never got entered — a franchise forgot to
+ * raise it, or it was missed at the time.
+ *
+ * Deliberately built on the same OutletOrder + Bill pair every other sale produces,
+ * rather than a free-floating bill: that is what makes it "behave exactly like a
+ * normal sales bill". The order carries the stock movements, the bill carries the
+ * money, and every downstream view — sales lists, order summary, ledger, day book,
+ * P&L, analytics — picks it up without knowing it was back-entered. The goods
+ * physically moved before anyone typed this, so it is created already DELIVERED:
+ * stock leaves the godown and lands at the outlet in the same transaction.
+ *
+ * Nothing here touches POS, which is a separate walk-in counter flow.
+ */
+export async function createManualBill(user: AuthUser, input: CreateManualBillInput) {
+  const outlet = await prisma.outlet.findFirst({
+    where: { id: input.outletId, isDeleted: false },
+    select: { id: true, name: true, gstBilling: true, creditPeriodDays: true },
+  });
+  if (!outlet) throw AppError.notFound('Outlet not found');
+
+  const productIds = input.items.map((i) => i.productId);
+  const products = await prisma.product.findMany({
+    where: { id: { in: productIds }, isDeleted: false },
+    select: { id: true, name: true, taxPercent: true, trackInventory: true, unit: { select: { decimalPlaces: true } } },
+  });
+  if (products.length !== new Set(productIds).size) throw AppError.badRequest('One or more products are invalid');
+  const productById = new Map(products.map((p) => [p.id, p]));
+  await assertProductQuantities(input.items.map((i) => ({ productId: i.productId, quantity: i.quantity })));
+
+  const isGstBill = input.isGstBill ?? outlet.gstBilling;
+  const billedAt = input.billDate;
+
+  const { bill } = await prisma.$transaction(async (tx) => {
+    const orderNumber = await nextDocNumber(tx, 'ORDER');
+    const order = await tx.outletOrder.create({
+      data: {
+        orderNumber,
+        outletId: outlet.id,
+        status: OutletOrderStatus.DELIVERED,
+        isManualEntry: true,
+        // Every stamp sits on the date the sale actually happened, so the order and
+        // its bill land in the right period everywhere they're reported.
+        orderDate: billedAt,
+        confirmedAt: billedAt,
+        dispatchedAt: billedAt,
+        deliveredAt: billedAt,
+        stockDeductedAt: billedAt,
+        fulfillmentSource: FulfillmentSource.GODOWN,
+        isGstBill,
+        notes: input.notes ?? 'Manual sales bill (back-entry)',
+        createdById: user.id,
+        items: {
+          create: input.items.map((i) => ({
+            productId: i.productId,
+            requestedQuantity: i.quantity,
+            confirmedQuantity: i.quantity,
+            unitPriceSnapshot: i.unitPrice,
+          })),
+        },
+      },
+      include: { items: { include: { product: true } }, outlet: true },
+    });
+
+    for (const item of input.items) {
+      if (!productById.get(item.productId)?.trackInventory) continue;
+      const qty = new Prisma.Decimal(item.quantity);
+      const stock = await tx.godownStock.upsert({
+        where: { productId: item.productId },
+        create: { productId: item.productId, quantity: qty.negated() },
+        update: { quantity: { increment: qty.negated() } },
+        select: { quantity: true },
+      });
+      await tx.stockMovement.create({
+        data: {
+          productId: item.productId,
+          outletId: outlet.id,
+          orderId: order.id,
+          reason: StockMovementReason.ORDER_FULFILLED,
+          quantityDelta: qty.negated(),
+          balanceAfter: stock.quantity,
+          notes: `Manual sales bill ${orderNumber} (back-entry)`,
+          createdById: user.id,
+          createdAt: billedAt,
+        },
+      });
+      await tx.outletStock.upsert({
+        where: { outletId_productId: { outletId: outlet.id, productId: item.productId } },
+        create: { outletId: outlet.id, productId: item.productId, quantity: qty },
+        update: { quantity: { increment: qty } },
+      });
+    }
+
+    const raised = await createBillForOrderTx(tx, order, user.id);
+    // createBillForOrderTx stamps today; a back-entry has to carry its own date.
+    const dated = await tx.bill.update({
+      where: { id: raised.id },
+      data: { billDate: billedAt, dueDate: addDays(billedAt, outlet.creditPeriodDays) },
+      select: { id: true, billNumber: true, grandTotal: true },
+    });
+    return { bill: dated };
+  });
+
+  await afterBillGenerated({ ...bill, outletId: outlet.id });
+  cache.invalidateTags(
+    CacheTag.ORDERS, CacheTag.BILLS, CacheTag.INVENTORY, CacheTag.PAYMENTS,
+    CacheTag.ANALYTICS, CacheTag.DASHBOARD, CacheTag.outlet(outlet.id),
+  );
+  await enqueue(JobName.REFRESH_ANALYTICS, {});
+  return getBill(user, bill.id);
+}
+
+/**
+ * Delete a sales bill and unwind the sale behind it.
+ *
+ * Reverses in the opposite order to how the sale was made: the goods go back from
+ * the outlet to the godown, the bill and its lines leave the books (soft-deleted, so
+ * every list/report/analytics view drops them while the numbered document survives),
+ * and the order that produced it is marked cancelled so it can't be fulfilled or
+ * billed again. Money already banked is refused rather than silently discarded —
+ * that is a refund, which this flow deliberately doesn't do.
+ */
+export async function deleteBill(user: AuthUser, id: string) {
+  const bill = await prisma.bill.findFirst({
+    where: { id, isDeleted: false },
+    include: {
+      items: true,
+      order: { include: { items: true } },
+      payments: { where: { isDeleted: false, status: PaymentStatus.SUCCESS }, select: { id: true, amount: true } },
+    },
+  });
+  if (!bill) throw AppError.notFound('Bill not found');
+
+  const paid = bill.payments.reduce((s, p) => s.add(new Prisma.Decimal(p.amount)), new Prisma.Decimal(0));
+  if (paid.greaterThan(0)) {
+    throw AppError.invalidState(
+      `${bill.billNumber} has ₹${paid.toString()} already paid against it. Refund that payment before deleting the bill.`,
+    );
+  }
+
+  const trackable = await prisma.product.findMany({
+    where: { id: { in: (bill.order?.items ?? []).map((i) => i.productId) }, trackInventory: true },
+    select: { id: true },
+  });
+  const tracks = new Set(trackable.map((p) => p.id));
+
+  await prisma.$transaction(async (tx) => {
+    // Put the goods back. A delivered order moved them godown → outlet, so both legs
+    // reverse; one still awaiting fulfilment only ever left the godown.
+    for (const item of bill.order?.items ?? []) {
+      if (!tracks.has(item.productId)) continue;
+      const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
+      const stock = await tx.godownStock.upsert({
+        where: { productId: item.productId },
+        create: { productId: item.productId, quantity: qty },
+        update: { quantity: { increment: qty } },
+        select: { quantity: true },
+      });
+      await tx.stockMovement.create({
+        data: {
+          productId: item.productId,
+          outletId: bill.outletId,
+          orderId: bill.orderId,
+          reason: StockMovementReason.ORDER_CANCELLED,
+          quantityDelta: qty,
+          balanceAfter: stock.quantity,
+          notes: `Bill ${bill.billNumber} deleted — stock returned`,
+          createdById: user.id,
+        },
+      });
+      if (bill.order?.status === OutletOrderStatus.DELIVERED) {
+        await tx.outletStock.updateMany({
+          where: { outletId: bill.outletId, productId: item.productId },
+          data: { quantity: { decrement: qty } },
+        });
+      }
+    }
+
+    await tx.billItem.updateMany({ where: { billId: bill.id }, data: { isDeleted: true } });
+    await tx.bill.update({
+      where: { id: bill.id },
+      data: { status: BillStatus.CANCELLED, balanceDue: 0, isDeleted: true },
+    });
+    if (bill.orderId) {
+      await tx.outletOrder.update({
+        where: { id: bill.orderId },
+        data: {
+          status: OutletOrderStatus.CANCELLED,
+          cancelledAt: new Date(),
+          cancelledById: user.id,
+          cancellationReason: `Sales bill ${bill.billNumber} deleted`,
+        },
+      });
+    }
+  });
+
+  cache.invalidateTags(
+    CacheTag.BILLS, CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.PAYMENTS,
+    CacheTag.ANALYTICS, CacheTag.DASHBOARD, CacheTag.outlet(bill.outletId),
+  );
+  // P&L and outlet-sales come from materialized views — rebuild or the deleted sale
+  // lingers in analytics until the next scheduled refresh.
+  await enqueue(JobName.REFRESH_ANALYTICS, {});
+  await emitRealtime(
+    RealtimeEvent.BILL_GENERATED,
+    { billId: bill.id, billNumber: bill.billNumber, grandTotal: 0, deleted: true },
+    { global: true, outletId: bill.outletId },
+  );
+  return { deleted: true, billNumber: bill.billNumber };
+}
+
+export const billingService = {
+  createBillForOrderTx, afterBillGenerated, listBills, getBill, regeneratePdf,
+  createManualBill, deleteBill,
+};

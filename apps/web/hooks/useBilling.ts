@@ -80,3 +80,35 @@ export function usePrintBillPdf() {
     },
   });
 }
+
+export interface ManualBillInput {
+  outletId: string;
+  /** yyyy-MM-dd — may be in the past; that's the point of back-entry. */
+  billDate: string;
+  isGstBill?: boolean;
+  notes?: string;
+  items: Array<{ productId: string; quantity: number; unitPrice: number }>;
+}
+
+/** Everything a sale touches, so a manual entry or deletion refreshes it all. */
+function invalidateSalesViews(qc: ReturnType<typeof useQueryClient>) {
+  ['bills', 'orders', 'inventory', 'accounting', 'analytics', 'dashboard', 'payments'].forEach((key) =>
+    qc.invalidateQueries({ queryKey: [key] }),
+  );
+}
+
+export function useCreateManualBill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: ManualBillInput) => (await api.post('/billing/manual', input)).data,
+    onSuccess: () => invalidateSalesViews(qc),
+  });
+}
+
+export function useDeleteBill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete(`/billing/${id}`)).data,
+    onSuccess: () => invalidateSalesViews(qc),
+  });
+}

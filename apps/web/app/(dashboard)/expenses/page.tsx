@@ -19,7 +19,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { apiErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/store/auth.store';
-import { cn, formatINR, ist, todayIso } from '@/lib/utils';
+import { cn, formatINR, ist, istDateInput, todayIso } from '@/lib/utils';
 import {
   useExpenseCategories, useCreateExpenseCategory, useUpdateExpenseCategory,
   useExpenseSummary, useExpenses, useSaveExpense, useDeleteExpense,
@@ -418,7 +418,7 @@ function ExpenseFormDialog({ open, onOpenChange, expense, isBranch }: {
         ? {
             categoryId: expense.category.id,
             amount: Number(expense.amount),
-            expenseDate: expense.expenseDate.slice(0, 10),
+            expenseDate: istDateInput(expense.expenseDate),
             paymentMethod: expense.paymentMethod,
             location: expense.location,
             paidBy: expense.paidBy,

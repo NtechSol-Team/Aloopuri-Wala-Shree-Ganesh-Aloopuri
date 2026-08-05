@@ -4,9 +4,11 @@ import type { Request, Response } from 'express';
 import { asyncHandler } from '../../shared/utils/asyncHandler';
 import { validate } from '../../shared/middleware/validate';
 import { authGuard } from '../../shared/guards/authGuard';
-import { ok, paginated } from '../../shared/utils/apiResponse';
+import { requireSuperAdmin } from '../../shared/guards/roleGuard';
+import { writeRateLimiter } from '../../shared/middleware/rateLimit';
+import { created, ok, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
-import { listBillsQuerySchema, type ListBillsQuery } from './billing.schema';
+import { createManualBillSchema, listBillsQuerySchema, type CreateManualBillInput, type ListBillsQuery } from './billing.schema';
 import { billingService } from './billing.service';
 import { renderBillPdf } from './billing.pdf';
 
@@ -26,6 +28,27 @@ router.get(
     const { rows, meta } = await billingService.listBills(user(req), req.query as unknown as ListBillsQuery);
     return paginated(res, rows, meta);
   }),
+);
+
+// Back-entry of a missed sale, and deleting a sale outright — both rewrite the
+// books, so both are the main owner's alone.
+router.post(
+  '/manual',
+  requireSuperAdmin,
+  writeRateLimiter,
+  validate({ body: createManualBillSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    created(res, await billingService.createManualBill(user(req), req.body as CreateManualBillInput), 'Sales bill created'),
+  ),
+);
+
+router.delete(
+  '/:id',
+  requireSuperAdmin,
+  validate({ params: idParam }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await billingService.deleteBill(user(req), req.params.id), 'Bill deleted and sale reversed'),
+  ),
 );
 
 router.get(

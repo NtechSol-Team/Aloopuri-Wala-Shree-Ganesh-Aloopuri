@@ -17,7 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
-import { cn, formatINR, ist, todayIso } from '@/lib/utils';
+import { cn, formatINR, ist, istDateInput, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
 import { useEmployees, SALARY_TYPE_LABEL } from '@/hooks/useEmployees';
 import {
@@ -642,7 +642,7 @@ function AdvanceFormDialog({ open, onOpenChange, advance }: {
     if (!open) return;
     setForm(
       advance
-        ? { employeeId: advance.employeeId, amount: Number(advance.amount), givenDate: advance.givenDate.slice(0, 10), paymentMethod: advance.paymentMethod, notes: advance.notes ?? '' }
+        ? { employeeId: advance.employeeId, amount: Number(advance.amount), givenDate: istDateInput(advance.givenDate), paymentMethod: advance.paymentMethod, notes: advance.notes ?? '' }
         : { employeeId: employees?.[0]?.id ?? '', amount: 0, givenDate: today(), paymentMethod: 'CASH', notes: '' },
     );
     // employees only seeds the default for a brand-new advance.
@@ -774,7 +774,7 @@ function EmployeeMasterReport() {
       onExport={() => downloadCsv(
         'employee-master.csv',
         ['Employee ID', 'Code', 'Name', 'Mobile', 'Email', 'Department', 'Type', 'Status', 'Joined', 'Shift', 'Salary Type', 'Salary'],
-        rows.map((r) => [r.employeeNo, r.employeeCode, r.name, r.mobile, r.email, r.department, r.employmentType, r.status, r.joiningDate.slice(0, 10), r.shift?.name, r.salaryType, salaryOf(r)]),
+        rows.map((r) => [r.employeeNo, r.employeeCode, r.name, r.mobile, r.email, r.department, r.employmentType, r.status, istDateInput(r.joiningDate), r.shift?.name, r.salaryType, salaryOf(r)]),
       )}
     >
       <Table>
@@ -878,7 +878,7 @@ function RegisterReport({ period, detailed }: { period: Period; detailed: boolea
           r.payrollNo, r.employee.employeeNo, r.employee.name, r.employee.department, r.salaryType,
           Number(r.payableDays), Number(r.grossSalary), Number(r.allowances), Number(r.overtimeAmount),
           Number(r.bonus), Number(r.incentives), Number(r.deductions), Number(r.advanceRecovery),
-          Number(r.loanRecovery), Number(r.netSalary), r.status, r.paymentDate?.slice(0, 10),
+          Number(r.loanRecovery), Number(r.netSalary), r.status, istDateInput(r.paymentDate),
         ]),
       )}
     >
