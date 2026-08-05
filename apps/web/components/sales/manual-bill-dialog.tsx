@@ -34,6 +34,9 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
   const [outletId, setOutletId] = useState('');
   const [billDate, setBillDate] = useState(todayIso());
   const [notes, setNotes] = useState('');
+  // Defaults on, matching what a real sale does. Off bills the goods without
+  // touching inventory — for stock already accounted for some other way.
+  const [deductStock, setDeductStock] = useState(true);
   const [lines, setLines] = useState<Line[]>([]);
 
   const list = products?.rows ?? [];
@@ -44,6 +47,7 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
     setOutletId(activeOutlets[0]?.id ?? '');
     setBillDate(todayIso());
     setNotes('');
+    setDeductStock(true);
     setLines(list[0] ? [{ productId: list[0].id, quantity: 1, unitPrice: Number(list[0].mrp) }] : []);
     // Seeded once per open; re-running on every outlets/products tick would wipe edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -62,7 +66,7 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
     if (!lines.length) { toast.error('Add at least one product'); return; }
     if (lines.some((l) => l.quantity <= 0)) { toast.error('Quantities must be greater than 0'); return; }
     create.mutate(
-      { outletId, billDate, notes: notes.trim() || undefined, items: lines },
+      { outletId, billDate, deductStock, notes: notes.trim() || undefined, items: lines },
       {
         onSuccess: () => {
           toast.success('Sales bill created');
@@ -137,6 +141,23 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
           <Label>Note <span className="text-muted-foreground">(optional)</span></Label>
           <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. missed entry for 20 July" />
         </div>
+
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border p-3">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4"
+            checked={deductStock}
+            onChange={(e) => setDeductStock(e.target.checked)}
+          />
+          <span>
+            <span className="block text-body font-medium">Deduct Stock from Inventory</span>
+            <span className="block text-caption text-muted-foreground">
+              {deductStock
+                ? 'The billed quantities come out of godown stock and land at the franchise, as a real sale would.'
+                : 'The bill is raised on its own — inventory is left exactly as it is.'}
+            </span>
+          </span>
+        </label>
 
         <div className="flex items-center justify-between border-t border-border pt-3">
           <span className="flex items-center gap-1.5 text-caption text-muted-foreground">

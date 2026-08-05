@@ -21,6 +21,13 @@ export const createManualBillSchema = z.object({
   outletId: z.string().uuid(),
   billDate: istDate,
   isGstBill: z.boolean().optional(),
+  /**
+   * Whether this back-entry should move stock as well as raise the bill. Defaults
+   * true — matching what a real sale does, and what this endpoint did before the
+   * option existed. Turn it off to bill for goods whose stock was already accounted
+   * for some other way, so the bill lands without touching inventory.
+   */
+  deductStock: z.boolean().default(true),
   notes: z.string().max(500).optional(),
   items: z
     .array(

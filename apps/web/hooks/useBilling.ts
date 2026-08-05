@@ -86,6 +86,8 @@ export interface ManualBillInput {
   /** yyyy-MM-dd — may be in the past; that's the point of back-entry. */
   billDate: string;
   isGstBill?: boolean;
+  /** Off raises the bill without touching inventory. Defaults on, like a real sale. */
+  deductStock?: boolean;
   notes?: string;
   items: Array<{ productId: string; quantity: number; unitPrice: number }>;
 }

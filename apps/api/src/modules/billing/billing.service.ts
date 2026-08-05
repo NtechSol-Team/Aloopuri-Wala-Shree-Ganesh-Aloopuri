@@ -183,7 +183,9 @@ export async function createManualBill(user: AuthUser, input: CreateManualBillIn
         confirmedAt: billedAt,
         dispatchedAt: billedAt,
         deliveredAt: billedAt,
-        stockDeductedAt: billedAt,
+        // Left null when the owner opted out of moving stock, so the order tells the
+        // truth about whether anything actually left the godown.
+        stockDeductedAt: input.deductStock ? billedAt : null,
         fulfillmentSource: FulfillmentSource.GODOWN,
         isGstBill,
         notes: input.notes ?? 'Manual sales bill (back-entry)',
@@ -200,7 +202,11 @@ export async function createManualBill(user: AuthUser, input: CreateManualBillIn
       include: { items: { include: { product: true } }, outlet: true },
     });
 
-    for (const item of input.items) {
+    // Opting out bills the sale without touching inventory at all — no godown
+    // decrement, no outlet increment, no movement row. Writing no movements is also
+    // what keeps deleteBill honest later: it reverses what was recorded, so a bill
+    // raised this way returns nothing rather than inventing stock.
+    for (const item of input.deductStock ? input.items : []) {
       if (!productById.get(item.productId)?.trackInventory) continue;
       const qty = new Prisma.Decimal(item.quantity);
       const stock = await tx.godownStock.upsert({
@@ -276,27 +282,36 @@ export async function deleteBill(user: AuthUser, id: string) {
     );
   }
 
-  const trackable = await prisma.product.findMany({
-    where: { id: { in: (bill.order?.items ?? []).map((i) => i.productId) }, trackInventory: true },
-    select: { id: true },
-  });
-  const tracks = new Set(trackable.map((p) => p.id));
+  // Reverse what was actually recorded, not what the order lines imply. A manual
+  // bill raised with stock deduction turned off wrote no movements, and a product
+  // whose trackInventory was switched off never had any taken — re-deriving from the
+  // lines would hand back stock that never left in either case.
+  const taken = bill.orderId
+    ? await prisma.stockMovement.groupBy({
+        by: ['productId'],
+        where: {
+          orderId: bill.orderId,
+          reason: { in: [StockMovementReason.ORDER_PLACED, StockMovementReason.ORDER_FULFILLED] },
+        },
+        _sum: { quantityDelta: true },
+      })
+    : [];
 
   await prisma.$transaction(async (tx) => {
     // Put the goods back. A delivered order moved them godown → outlet, so both legs
     // reverse; one still awaiting fulfilment only ever left the godown.
-    for (const item of bill.order?.items ?? []) {
-      if (!tracks.has(item.productId)) continue;
-      const qty = new Prisma.Decimal(item.confirmedQuantity ?? item.requestedQuantity);
+    for (const row of taken) {
+      const qty = new Prisma.Decimal(row._sum.quantityDelta ?? 0).negated();
+      if (qty.lessThanOrEqualTo(0)) continue;
       const stock = await tx.godownStock.upsert({
-        where: { productId: item.productId },
-        create: { productId: item.productId, quantity: qty },
+        where: { productId: row.productId },
+        create: { productId: row.productId, quantity: qty },
         update: { quantity: { increment: qty } },
         select: { quantity: true },
       });
       await tx.stockMovement.create({
         data: {
-          productId: item.productId,
+          productId: row.productId,
           outletId: bill.outletId,
           orderId: bill.orderId,
           reason: StockMovementReason.ORDER_CANCELLED,
@@ -308,7 +323,7 @@ export async function deleteBill(user: AuthUser, id: string) {
       });
       if (bill.order?.status === OutletOrderStatus.DELIVERED) {
         await tx.outletStock.updateMany({
-          where: { outletId: bill.outletId, productId: item.productId },
+          where: { outletId: bill.outletId, productId: row.productId },
           data: { quantity: { decrement: qty } },
         });
       }
