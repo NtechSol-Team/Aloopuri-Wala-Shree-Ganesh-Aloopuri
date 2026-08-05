@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ExpenseLocation, PaymentMethod } from '@prisma/client';
+import { ExpenseLocation, PaidBy, PaymentMethod } from '@prisma/client';
 import { paginationQuerySchema } from '../../shared/utils/pagination';
 import { istDate } from '../../shared/utils/date';
 
@@ -9,6 +9,8 @@ export const createExpenseSchema = z.object({
   expenseDate: istDate.default(() => new Date()),
   paymentMethod: z.nativeEnum(PaymentMethod),
   paidTo: z.string().max(120).optional(),
+  // Required on new expenses; historical rows keep the COMPANY default.
+  paidBy: z.nativeEnum(PaidBy),
   location: z.nativeEnum(ExpenseLocation).default(ExpenseLocation.GENERAL),
   note: z.string().max(500).optional(),
   receiptPhotoUrl: z.string().max(300).optional(),
@@ -18,6 +20,7 @@ export const updateExpenseSchema = createExpenseSchema.partial();
 export const listExpensesQuerySchema = paginationQuerySchema.extend({
   categoryId: z.string().uuid().optional(),
   location: z.nativeEnum(ExpenseLocation).optional(),
+  paidBy: z.nativeEnum(PaidBy).optional(),
   from: istDate.optional(),
   to: istDate.optional(),
 });
@@ -26,6 +29,7 @@ export const expenseSummaryQuerySchema = z.object({
   from: istDate.optional(),
   to: istDate.optional(),
   location: z.nativeEnum(ExpenseLocation).optional(),
+  paidBy: z.nativeEnum(PaidBy).optional(),
   categoryId: z.string().uuid().optional(),
 });
 

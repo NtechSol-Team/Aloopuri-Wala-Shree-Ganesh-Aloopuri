@@ -13,6 +13,7 @@ import { emitRealtime } from '../../sockets/realtime';
 import { RealtimeEvent } from '../../sockets/events';
 import { razorpay, razorpayErrorMessage, verifyCheckoutSignature } from '../../config/razorpay';
 import { env } from '../../config/env';
+import { enqueue, JobName } from '../../jobs/queue';
 import { billingService } from '../billing/billing.service';
 import type { AuthUser } from '../../shared/types/api';
 import type {
@@ -802,13 +803,17 @@ export async function cancelOrder(user: AuthUser, id: string, input: RejectOrder
       });
     }
 
-    // Void the bill raised at placement. Kept as a CANCELLED row rather than deleted
-    // so the number stays accounted for and the history still reads honestly; nothing
-    // was paid against it (guarded above), so there is no balance to unwind.
+    // Take the bill out of the books entirely. Soft-deleted rather than row-deleted:
+    // isDeleted is what every sales list, the Day Book, the P&L and the analytics
+    // views already filter on, so this removes it from revenue, receivables and
+    // reporting exactly as a delete would, while keeping the numbered document and
+    // its line items intact for audit. Nothing was paid against it (guarded above),
+    // so there is no money to unwind.
     if (order.bill) {
+      await tx.billItem.updateMany({ where: { billId: order.bill.id }, data: { isDeleted: true } });
       await tx.bill.update({
         where: { id: order.bill.id },
-        data: { status: BillStatus.CANCELLED, balanceDue: 0 },
+        data: { status: BillStatus.CANCELLED, balanceDue: 0, isDeleted: true },
       });
     }
 
@@ -824,7 +829,14 @@ export async function cancelOrder(user: AuthUser, id: string, input: RejectOrder
     });
   });
 
-  cache.invalidateTags(CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.BILLS, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId));
+  cache.invalidateTags(
+    CacheTag.ORDERS, CacheTag.INVENTORY, CacheTag.BILLS, CacheTag.PAYMENTS,
+    CacheTag.ANALYTICS, CacheTag.DASHBOARD, CacheTag.outlet(order.outletId),
+  );
+  // The P&L and outlet-sales figures come from materialized views, which don't
+  // notice the voided bill until they're rebuilt — without this the cancelled
+  // sale keeps showing in analytics until the next scheduled refresh.
+  await enqueue(JobName.REFRESH_ANALYTICS, {});
   await emitRealtime(
     RealtimeEvent.ORDER_STATUS_CHANGED,
     { orderId: id, orderNumber: order.orderNumber, status: updated.status, outletName: order.outlet.name, reason: input.reason ?? null },

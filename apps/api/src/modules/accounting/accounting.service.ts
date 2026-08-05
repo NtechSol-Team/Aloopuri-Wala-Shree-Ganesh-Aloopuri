@@ -1,6 +1,7 @@
 import { startOfMonth } from 'date-fns';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
+import { AppError } from '../../shared/utils/AppError';
 
 const num = (rows: Array<{ v: number | null }>): number => Number(rows[0]?.v ?? 0);
 
@@ -129,6 +130,218 @@ export async function getDayBook(from: Date, to: Date) {
   };
 }
 
+// ─────────────────────────────── LEDGER ─────────────────────────────────────
+//
+// There is no journal table in this system — the Day Book, P&L and position are all
+// derived straight from the financial events (bills, payments, expenses, purchases).
+// The ledger follows the same principle: an account's entries are those same events
+// filtered to that party, with debit/credit assigned by what the event means for the
+// account, and a running balance accumulated in order.
+//
+// Sign convention, stated once because everything below depends on it:
+//   • OUTLET (a receivable) — a bill we raise is a DEBIT (they owe us more), the
+//     payment they make is a CREDIT. A positive balance is money owed TO us.
+//   • SUPPLIER (a payable) — their bill is a CREDIT (we owe more), our payment is a
+//     DEBIT. A positive balance is money we owe THEM.
+//   • PERSON (company / a partner) — an expense they paid out of pocket is a CREDIT
+//     (the business owes them that back). For COMPANY it is simply money the business
+//     itself spent, so its balance reads as total company-funded spend.
+
+export type LedgerAccountKind = 'PERSON' | 'OUTLET' | 'SUPPLIER';
+
+export interface LedgerAccount {
+  id: string;
+  name: string;
+  kind: LedgerAccountKind;
+  balance: number;
+}
+
+export interface LedgerEntry {
+  date: string;
+  type: string;
+  description: string;
+  reference: string | null;
+  debit: number;
+  credit: number;
+  /** Balance after this entry, opening balance included. */
+  balance: number;
+  sourceId: string | null;
+}
+
+const PERSON_ACCOUNTS = [
+  { id: 'COMPANY', name: 'Company' },
+  { id: 'KALPESHBHAI', name: 'Kalpeshbhai' },
+  { id: 'MAYURBHAI', name: 'Mayurbhai' },
+] as const;
+
+/** Every account that can be opened, with its balance to date. */
+export async function getLedgerAccounts() {
+  return cache.getOrSet('accounting:ledger:accounts', [CacheTag.PAYMENTS, CacheTag.BILLS, CacheTag.EXPENSES], async () => {
+    const [personSpend, outlets, suppliers] = await Promise.all([
+      prisma.expense.groupBy({
+        by: ['paidBy'],
+        _sum: { amount: true },
+        where: { isDeleted: false, outletId: null },
+      }),
+      prisma.$queryRaw<Array<{ id: string; name: string; balance: number }>>`
+        SELECT o.id, o.name,
+               COALESCE(SUM(b.grand_total),0)::float - COALESCE((
+                 SELECT SUM(p.amount) FROM payments p
+                 WHERE p.outlet_id = o.id AND p.is_deleted = false AND p.status = 'SUCCESS'
+               ),0)::float AS balance
+        FROM outlets o
+        LEFT JOIN bills b ON b.outlet_id = o.id AND b.is_deleted = false AND b.status <> 'CANCELLED'
+        WHERE o.is_deleted = false
+        GROUP BY o.id, o.name
+        ORDER BY o.name`,
+      prisma.$queryRaw<Array<{ name: string; balance: number }>>`
+        SELECT sb.supplier_name AS name,
+               (COALESCE(SUM(sb.total_amount),0) - COALESCE(SUM(sb.amount_paid),0))::float AS balance
+        FROM supplier_bills sb
+        WHERE sb.is_deleted = false AND sb.outlet_id IS NULL AND sb.supplier_name IS NOT NULL
+        GROUP BY sb.supplier_name
+        ORDER BY sb.supplier_name`,
+    ]);
+
+    const spendOf = new Map(personSpend.map((p) => [p.paidBy as string, Number(p._sum.amount ?? 0)]));
+    const accounts: LedgerAccount[] = [
+      ...PERSON_ACCOUNTS.map((p) => ({ id: `PERSON:${p.id}`, name: p.name, kind: 'PERSON' as const, balance: spendOf.get(p.id) ?? 0 })),
+      ...outlets.map((o) => ({ id: `OUTLET:${o.id}`, name: o.name, kind: 'OUTLET' as const, balance: Number(o.balance) })),
+      ...suppliers.map((s) => ({ id: `SUPPLIER:${s.name}`, name: s.name, kind: 'SUPPLIER' as const, balance: Number(s.balance) })),
+    ];
+    return { accounts };
+  });
+}
+
+type RawEntry = { date: Date; type: string; description: string; reference: string | null; debit: number; credit: number; sourceId: string | null };
+
+/** The raw movements for one account, unordered and without balances. */
+async function ledgerRowsFor(kind: LedgerAccountKind, key: string, upTo?: Date): Promise<RawEntry[]> {
+  const before = upTo ? { lt: upTo } : undefined;
+
+  if (kind === 'PERSON') {
+    const rows = await prisma.expense.findMany({
+      where: { isDeleted: false, outletId: null, paidBy: key as never, ...(before ? { expenseDate: before } : {}) },
+      select: { id: true, expenseDate: true, amount: true, paidTo: true, note: true, category: { select: { name: true } } },
+      orderBy: { expenseDate: 'asc' },
+    });
+    return rows.map((e) => ({
+      date: e.expenseDate,
+      type: 'EXPENSE',
+      description: [e.category.name, e.paidTo].filter(Boolean).join(' — ') || e.category.name,
+      reference: e.note,
+      debit: 0,
+      credit: Number(e.amount),
+      sourceId: e.id,
+    }));
+  }
+
+  if (kind === 'OUTLET') {
+    const [bills, payments] = await Promise.all([
+      prisma.bill.findMany({
+        where: { isDeleted: false, status: { not: 'CANCELLED' }, outletId: key, ...(before ? { billDate: before } : {}) },
+        select: { id: true, billNumber: true, billDate: true, grandTotal: true },
+      }),
+      prisma.payment.findMany({
+        where: { isDeleted: false, status: 'SUCCESS', outletId: key, ...(before ? { paymentDate: before } : {}) },
+        select: { id: true, paymentNumber: true, paymentDate: true, amount: true, method: true },
+      }),
+    ]);
+    return [
+      ...bills.map((b) => ({
+        date: b.billDate, type: 'SALE', description: `Sales bill ${b.billNumber}`,
+        reference: b.billNumber, debit: Number(b.grandTotal), credit: 0, sourceId: b.id,
+      })),
+      ...payments.map((p) => ({
+        date: p.paymentDate, type: 'RECEIPT', description: `Payment received (${p.method})`,
+        reference: p.paymentNumber, debit: 0, credit: Number(p.amount), sourceId: p.id,
+      })),
+    ];
+  }
+
+  // SUPPLIER — keyed by name, since suppliers aren't a first-class table on bills.
+  const [bills, payments] = await Promise.all([
+    prisma.supplierBill.findMany({
+      where: { isDeleted: false, outletId: null, supplierName: key, ...(before ? { billDate: before } : {}) },
+      select: { id: true, billNumber: true, billDate: true, totalAmount: true },
+    }),
+    prisma.supplierPayment.findMany({
+      where: { isDeleted: false, bill: { supplierName: key, isDeleted: false, outletId: null }, ...(before ? { paymentDate: before } : {}) },
+      select: { id: true, paymentNumber: true, paymentDate: true, amount: true, method: true },
+    }),
+  ]);
+  return [
+    ...bills.map((b) => ({
+      date: b.billDate, type: 'PURCHASE', description: `Purchase bill ${b.billNumber}`,
+      reference: b.billNumber, debit: 0, credit: Number(b.totalAmount), sourceId: b.id,
+    })),
+    ...payments.map((p) => ({
+      date: p.paymentDate, type: 'PAYMENT', description: `Paid to supplier (${p.method})`,
+      reference: p.paymentNumber, debit: Number(p.amount), credit: 0, sourceId: p.id,
+    })),
+  ];
+}
+
+/** Net effect of a set of rows on the balance, in that account's own direction. */
+function netOf(rows: RawEntry[], kind: LedgerAccountKind): number {
+  return rows.reduce((sum, r) => sum + (kind === 'OUTLET' ? r.debit - r.credit : r.credit - r.debit), 0);
+}
+
+/**
+ * One account's ledger: opening balance carried in from everything before `from`,
+ * then each transaction in date order with a running balance, then the closing.
+ */
+export async function getLedger(accountId: string, from?: Date, to?: Date, search?: string) {
+  const [kindRaw, ...rest] = accountId.split(':');
+  const kind = kindRaw as LedgerAccountKind;
+  const key = rest.join(':');
+  if (!['PERSON', 'OUTLET', 'SUPPLIER'].includes(kind) || !key) {
+    throw AppError.badRequest('Unknown ledger account');
+  }
+
+  const [priorRows, allRows] = await Promise.all([
+    from ? ledgerRowsFor(kind, key, from) : Promise.resolve([] as RawEntry[]),
+    ledgerRowsFor(kind, key),
+  ]);
+
+  const openingBalance = netOf(priorRows, kind);
+  const windowed = allRows
+    .filter((r) => (!from || r.date >= from) && (!to || r.date < to))
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  let running = openingBalance;
+  const entries: LedgerEntry[] = windowed.map((r) => {
+    running += kind === 'OUTLET' ? r.debit - r.credit : r.credit - r.debit;
+    return {
+      date: r.date.toISOString(),
+      type: r.type,
+      description: r.description,
+      reference: r.reference,
+      debit: r.debit,
+      credit: r.credit,
+      balance: running,
+      sourceId: r.sourceId,
+    };
+  });
+
+  // Search filters what's shown but never the balances — a running balance that
+  // skipped hidden rows would not reconcile against the closing figure.
+  const term = search?.trim().toLowerCase();
+  const visible = term
+    ? entries.filter((e) => `${e.description} ${e.reference ?? ''} ${e.type}`.toLowerCase().includes(term))
+    : entries;
+
+  return {
+    accountId,
+    kind,
+    openingBalance,
+    closingBalance: running,
+    totalDebit: entries.reduce((s, e) => s + e.debit, 0),
+    totalCredit: entries.reduce((s, e) => s + e.credit, 0),
+    entries: visible,
+  };
+}
+
 /** Per-product profitability (last 90 days): revenue ex-tax vs BOM material cost. */
 export async function getProductProfitability() {
   return prisma.$queryRawUnsafe<Array<{ name: string; qty: number; revenue: number; unit_cost: number; cogs: number; margin: number; margin_pct: number }>>(
@@ -162,4 +375,4 @@ export async function getProductProfitability() {
   );
 }
 
-export const accountingService = { getPosition, getDayBook, getProductProfitability };
+export const accountingService = { getPosition, getDayBook, getLedgerAccounts, getLedger, getProductProfitability };

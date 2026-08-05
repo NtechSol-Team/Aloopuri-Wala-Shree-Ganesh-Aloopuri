@@ -9,20 +9,22 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR, ist } from '@/lib/utils';
 import { usePosition, useDayBook, useProfitability, type ProductProfit } from '@/hooks/useAccounting';
+import { LedgerTab } from '@/components/accounting/ledger-tab';
 
-type Tab = 'position' | 'daybook' | 'profit';
+type Tab = 'position' | 'daybook' | 'ledger' | 'profit';
 
 export default function AccountingPage() {
   const [tab, setTab] = useState<Tab>('position');
   return (
     <div className="space-y-5">
-      <div className="flex gap-1 border-b border-border">
-        {([['position', 'Financial Position'], ['daybook', 'Day Book'], ['profit', 'Product Profitability']] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} className={cn('border-b-2 px-4 py-2 text-body font-medium transition-colors', tab === k ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{l}</button>
+      <div className="flex gap-1 overflow-x-auto border-b border-border scrollbar-thin print:hidden">
+        {([['position', 'Financial Position'], ['daybook', 'Day Book'], ['ledger', 'Ledger'], ['profit', 'Product Profitability']] as const).map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)} className={cn('shrink-0 border-b-2 px-4 py-2 text-body font-medium transition-colors', tab === k ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{l}</button>
         ))}
       </div>
       {tab === 'position' && <PositionTab />}
       {tab === 'daybook' && <DayBookTab />}
+      {tab === 'ledger' && <LedgerTab />}
       {tab === 'profit' && <ProfitTab />}
     </div>
   );

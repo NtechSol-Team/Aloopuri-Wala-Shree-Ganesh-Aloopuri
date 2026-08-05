@@ -6,6 +6,15 @@ import type { ApiSuccess } from '@/types/api';
 
 export type ExpenseLocation = 'GODOWN' | 'MAIN_BRANCH' | 'GENERAL';
 export type ExpensePaymentMethod = 'CASH' | 'CARD' | 'UPI' | 'NET_BANKING' | 'RAZORPAY' | 'BANK_TRANSFER';
+export type PaidBy = 'COMPANY' | 'KALPESHBHAI' | 'MAYURBHAI';
+
+/** Display labels for who fronted the money. */
+export const PAID_BY_LABEL: Record<PaidBy, string> = {
+  COMPANY: 'Company',
+  KALPESHBHAI: 'Kalpeshbhai',
+  MAYURBHAI: 'Mayurbhai',
+};
+export const PAID_BY_OPTIONS = Object.keys(PAID_BY_LABEL) as PaidBy[];
 
 export interface ExpenseCategory { id: string; name: string; isSystem: boolean }
 
@@ -15,6 +24,7 @@ export interface Expense {
   expenseDate: string;
   paymentMethod: ExpensePaymentMethod;
   paidTo: string | null;
+  paidBy: PaidBy;
   location: ExpenseLocation;
   note: string | null;
   category: { id: string; name: string };
@@ -25,12 +35,14 @@ export interface ExpenseSummary {
   count: number;
   byCategory: Array<{ categoryId: string; category: string; total: number }>;
   byLocation: Array<{ location: string; total: number }>;
+  byPaidBy: Array<{ paidBy: PaidBy; total: number }>;
   monthly: Array<{ month: string; total: number }>;
 }
 
 /** Everything the Expenses screen filters by, in one object. */
 export interface ExpenseFilters {
   location?: ExpenseLocation;
+  paidBy?: PaidBy;
   categoryId?: string;
   /** Inclusive ISO dates (yyyy-MM-dd). */
   from?: string;
@@ -83,7 +95,7 @@ export function useExpenseSummary(params: ExpenseFilters = {}, enabled = true) {
 export function useSaveExpense() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...input }: { id?: string; categoryId: string; amount: number; paymentMethod: string; location: string; paidTo?: string; note?: string; expenseDate?: string }) =>
+    mutationFn: async ({ id, ...input }: { id?: string; categoryId: string; amount: number; paymentMethod: string; location: string; paidBy: PaidBy; paidTo?: string; note?: string; expenseDate?: string }) =>
       id ? (await api.patch(`/expenses/${id}`, input)).data : (await api.post('/expenses', input)).data,
     onSuccess: () => {
       ['expenses', 'expense-summary', 'dashboard'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));

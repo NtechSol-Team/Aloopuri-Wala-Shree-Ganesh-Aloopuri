@@ -25,6 +25,27 @@ router.get(
   }),
 );
 
+router.get('/ledger/accounts', asyncHandler(async (_req: Request, res: Response) => ok(res, await accountingService.getLedgerAccounts())));
+
+router.get(
+  '/ledger',
+  validate({
+    query: z.object({
+      accountId: z.string().min(3),
+      from: istDate.optional(),
+      to: istDate.optional(),
+      search: z.string().max(120).optional(),
+    }),
+  }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { accountId: string; from?: Date; to?: Date; search?: string };
+    // `to` is an inclusive calendar day, so widen it to the start of the next day —
+    // the service filters with a half-open range.
+    const to = q.to ? new Date(q.to.getTime() + 24 * 60 * 60 * 1000) : undefined;
+    return ok(res, await accountingService.getLedger(q.accountId, q.from, to, q.search));
+  }),
+);
+
 router.get('/profitability', asyncHandler(async (_req: Request, res: Response) => ok(res, await accountingService.getProductProfitability())));
 
 export const accountingRouter = router;

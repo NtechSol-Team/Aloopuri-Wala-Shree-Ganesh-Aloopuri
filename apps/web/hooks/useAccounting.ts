@@ -33,3 +33,37 @@ export function useDayBook(params: { from?: string; to?: string } = {}) {
 export function useProfitability() {
   return useQuery({ queryKey: ['accounting', 'profitability'], queryFn: async () => (await api.get<ApiSuccess<ProductProfit[]>>('/accounting/profitability')).data.data });
 }
+
+export type LedgerAccountKind = 'PERSON' | 'OUTLET' | 'SUPPLIER';
+
+export interface LedgerAccount { id: string; name: string; kind: LedgerAccountKind; balance: number }
+
+export interface LedgerEntry {
+  date: string; type: string; description: string; reference: string | null;
+  debit: number; credit: number; balance: number; sourceId: string | null;
+}
+
+export interface Ledger {
+  accountId: string;
+  kind: LedgerAccountKind;
+  openingBalance: number;
+  closingBalance: number;
+  totalDebit: number;
+  totalCredit: number;
+  entries: LedgerEntry[];
+}
+
+export function useLedgerAccounts() {
+  return useQuery({
+    queryKey: ['accounting', 'ledger', 'accounts'],
+    queryFn: async () => (await api.get<ApiSuccess<{ accounts: LedgerAccount[] }>>('/accounting/ledger/accounts')).data.data.accounts,
+  });
+}
+
+export function useLedger(params: { accountId?: string; from?: string; to?: string; search?: string }) {
+  return useQuery({
+    queryKey: ['accounting', 'ledger', params],
+    enabled: !!params.accountId,
+    queryFn: async () => (await api.get<ApiSuccess<Ledger>>('/accounting/ledger', { params })).data.data,
+  });
+}

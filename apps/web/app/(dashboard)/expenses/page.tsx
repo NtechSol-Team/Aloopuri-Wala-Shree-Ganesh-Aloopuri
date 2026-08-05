@@ -23,7 +23,8 @@ import { cn, formatINR, ist, todayIso } from '@/lib/utils';
 import {
   useExpenseCategories, useCreateExpenseCategory, useUpdateExpenseCategory,
   useExpenseSummary, useExpenses, useSaveExpense, useDeleteExpense,
-  type ExpenseLocation, type Expense, type ExpenseFilters,
+  PAID_BY_LABEL, PAID_BY_OPTIONS,
+  type ExpenseLocation, type Expense, type ExpenseFilters, type PaidBy,
 } from '@/hooks/useExpenses';
 
 const LOCATIONS: ExpenseLocation[] = ['GODOWN', 'MAIN_BRANCH', 'GENERAL'];
@@ -331,7 +332,7 @@ export default function ExpensesPage() {
           <Table>
             <THead>
               <TR>
-                <TH className="w-32">Date</TH><TH>Category</TH><TH>Paid to</TH>
+                <TH className="w-32">Date</TH><TH>Category</TH><TH>Paid to</TH><TH>Paid by</TH>
                 {!isBranch && <TH>Location</TH>}<TH>Method</TH><TH className="text-right">Amount</TH><TH className="w-24" />
               </TR>
             </THead>
@@ -382,6 +383,7 @@ function ExpenseRow({ expense, isBranch, onEdit }: { expense: Expense; isBranch:
       <TD className="whitespace-nowrap">{format(ist(expense.expenseDate), 'dd MMM yyyy')}</TD>
       <TD className="font-medium">{expense.category.name}</TD>
       <TD className="text-muted-foreground">{expense.paidTo || '—'}</TD>
+      <TD><Badge variant={expense.paidBy === 'COMPANY' ? 'neutral' : 'info'}>{PAID_BY_LABEL[expense.paidBy]}</Badge></TD>
       {!isBranch && <TD><Badge variant="neutral">{LOCATION_LABEL[expense.location]}</Badge></TD>}
       <TD className="text-caption">{METHOD_LABEL[expense.paymentMethod] ?? expense.paymentMethod}</TD>
       <TD className="text-right font-semibold tabular-nums">{formatINR(expense.amount)}</TD>
@@ -398,7 +400,7 @@ function ExpenseRow({ expense, isBranch, onEdit }: { expense: Expense; isBranch:
 const emptyExpense = {
   categoryId: '', amount: 0, expenseDate: today(),
   paymentMethod: 'CASH' as string, location: 'GENERAL' as ExpenseLocation,
-  paidTo: '', note: '',
+  paidBy: 'COMPANY' as PaidBy, paidTo: '', note: '',
 };
 
 function ExpenseFormDialog({ open, onOpenChange, expense, isBranch }: {
@@ -419,6 +421,7 @@ function ExpenseFormDialog({ open, onOpenChange, expense, isBranch }: {
             expenseDate: expense.expenseDate.slice(0, 10),
             paymentMethod: expense.paymentMethod,
             location: expense.location,
+            paidBy: expense.paidBy,
             paidTo: expense.paidTo ?? '',
             note: expense.note ?? '',
           }
@@ -437,6 +440,7 @@ function ExpenseFormDialog({ open, onOpenChange, expense, isBranch }: {
         expenseDate: form.expenseDate,
         paymentMethod: form.paymentMethod,
         location: form.location,
+        paidBy: form.paidBy,
         paidTo: form.paidTo.trim() || undefined,
         note: form.note.trim() || undefined,
       },
@@ -480,6 +484,12 @@ function ExpenseFormDialog({ open, onOpenChange, expense, isBranch }: {
             <Label>Payment method</Label>
             <Select value={form.paymentMethod} onChange={(e) => set('paymentMethod', e.target.value)}>
               {METHODS.map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Paid by</Label>
+            <Select value={form.paidBy} onChange={(e) => set('paidBy', e.target.value as PaidBy)}>
+              {PAID_BY_OPTIONS.map((p) => <option key={p} value={p}>{PAID_BY_LABEL[p]}</option>)}
             </Select>
           </div>
           <div className="sm:col-span-2 space-y-1.5">

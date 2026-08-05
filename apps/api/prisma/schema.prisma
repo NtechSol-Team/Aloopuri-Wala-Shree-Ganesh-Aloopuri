@@ -138,6 +138,15 @@ enum ExpenseLocation {
   GENERAL
 }
 
+// Whose pocket the money actually came out of. COMPANY is the business itself; the
+// named partners cover costs personally and are reimbursed, so their spend has to be
+// separable in the ledger. Existing rows default to COMPANY, which is what they were.
+enum PaidBy {
+  COMPANY
+  KALPESHBHAI
+  MAYURBHAI
+}
+
 /// Where a fixed asset currently stands. Depreciation/disposal are deliberately not
 /// modelled yet — this is a register, not a depreciation schedule.
 enum AssetStatus {
@@ -1109,6 +1118,9 @@ model Expense {
   expenseDate     DateTime        @map("expense_date") @db.Timestamptz(6)
   paymentMethod   PaymentMethod   @map("payment_method")
   paidTo          String?         @map("paid_to")
+  // Who actually paid. Defaulted rather than nullable so every historical expense
+  // reads as the company's own, which is what they all were.
+  paidBy          PaidBy          @default(COMPANY) @map("paid_by")
   supplierName    String?         @map("supplier_name")
   invoiceNumber   String?         @map("invoice_number")
   location        ExpenseLocation @default(GENERAL)
@@ -1139,6 +1151,7 @@ model Expense {
   @@index([expenseDate])
   @@index([supplierBillId])
   @@index([outletId, expenseDate])
+  @@index([paidBy, expenseDate])
   @@map("expenses")
 }
 

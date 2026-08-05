@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { XCircle } from 'lucide-react';
+import { XCircle, AlertTriangle } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiErrorMessage } from '@/lib/api';
+import { formatINR } from '@/lib/utils';
 import { useCancelOrder, type Order } from '@/hooks/useOrders';
 
 /**
@@ -51,6 +52,19 @@ export function RejectOrderDialog({ order, onClose }: {
           </DialogDescription>
         </DialogHeader>
 
+        {/* Orders are billed at placement, so cancelling almost always unwinds a real
+            sales document — spell out exactly what gets undone before they commit. */}
+        {order.bill && (
+          <div className="flex gap-2.5 rounded-lg border border-warning/40 bg-warning/10 p-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <p className="text-caption leading-relaxed">
+              This order has an associated Sales Bill (<span className="font-semibold">{order.bill.billNumber}</span>,{' '}
+              {formatINR(order.bill.grandTotal)}). Cancelling this order will also delete the Sales Bill, restore the
+              inventory stock, and reverse all related accounting and analytics entries. Do you want to continue?
+            </p>
+          </div>
+        )}
+
         <div>
           <Label htmlFor="reason">Reason (shown to the outlet)</Label>
           <Input
@@ -65,7 +79,7 @@ export function RejectOrderDialog({ order, onClose }: {
         <DialogFooter>
           <Button variant="secondary" onClick={onClose}>Keep order</Button>
           <Button variant="danger" onClick={submit} loading={cancel.isPending}>
-            <XCircle className="h-4 w-4" /> Cancel Order
+            <XCircle className="h-4 w-4" /> {order.bill ? "Cancel order & delete bill" : "Cancel Order"}
           </Button>
         </DialogFooter>
       </DialogContent>

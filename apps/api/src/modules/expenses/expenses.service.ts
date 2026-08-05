@@ -48,6 +48,7 @@ export async function listExpenses(query: ListExpensesQuery, user: AuthUser) {
     ...booksScopeFor(user),
     ...(query.categoryId ? { categoryId: query.categoryId } : {}),
     ...(query.location ? { location: query.location } : {}),
+    ...(query.paidBy ? { paidBy: query.paidBy } : {}),
     ...dateWindow(query.from, query.to),
   };
   const { skip, take } = toSkipTake(query);
@@ -96,12 +97,15 @@ export async function getSummary(query: ExpenseSummaryQuery, user: AuthUser) {
     outletId,
     ...(query.location ? { location: query.location } : {}),
     ...(query.categoryId ? { categoryId: query.categoryId } : {}),
+    ...(query.paidBy ? { paidBy: query.paidBy } : {}),
     ...dateWindow(query.from, query.to),
   };
 
-  const [byCategoryRaw, byLocationRaw, totalAgg, countAgg] = await Promise.all([
+  const [byCategoryRaw, byLocationRaw, byPaidByRaw, totalAgg, countAgg] = await Promise.all([
     prisma.expense.groupBy({ by: ['categoryId'], _sum: { amount: true }, where }),
     prisma.expense.groupBy({ by: ['location'], _sum: { amount: true }, where }),
+    // Who fronted the money — drives the partner-reimbursement view in reports.
+    prisma.expense.groupBy({ by: ['paidBy'], _sum: { amount: true }, where }),
     prisma.expense.aggregate({ _sum: { amount: true }, where }),
     prisma.expense.count({ where }),
   ]);
@@ -136,6 +140,9 @@ export async function getSummary(query: ExpenseSummaryQuery, user: AuthUser) {
       .map((c) => ({ categoryId: c.categoryId, category: nameOf.get(c.categoryId) ?? 'Unknown', total: Number(c._sum.amount ?? 0) }))
       .sort((a, b) => b.total - a.total),
     byLocation: byLocationRaw.map((l) => ({ location: l.location, total: Number(l._sum.amount ?? 0) })),
+    byPaidBy: byPaidByRaw
+      .map((p) => ({ paidBy: p.paidBy, total: Number(p._sum.amount ?? 0) }))
+      .sort((a, b) => b.total - a.total),
     monthly,
   };
 }
