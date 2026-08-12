@@ -102,13 +102,7 @@ export function useOrders(params: OrderFilters = {}) {
   });
 }
 
-export interface OrderSummaryOutlet {
-  outletId: string;
-  outletName: string;
-  quantity: number;
-  orderCount: number;
-}
-
+/** One product's total for the day, across every franchise. */
 export interface OrderSummaryProduct {
   productId: string;
   productName: string;
@@ -117,14 +111,31 @@ export interface OrderSummaryProduct {
   decimalPlaces: number;
   quantity: number;
   orderCount: number;
-  /** Who wants it, biggest share first. */
-  outlets: OrderSummaryOutlet[];
+}
+
+/** What a single franchise asked for that day. */
+export interface OrderSummaryOutlet {
+  outletId: string;
+  outletName: string;
+  totalQuantity: number;
+  orderCount: number;
+  products: Array<{
+    productId: string;
+    productName: string;
+    sku: string;
+    unitName: string;
+    decimalPlaces: number;
+    quantity: number;
+  }>;
 }
 
 export interface OrderSummaryDay {
   day: string;
   totalQuantity: number;
+  /** What has to be made in total. */
   products: OrderSummaryProduct[];
+  /** Who it's for, biggest first. */
+  outlets: OrderSummaryOutlet[];
 }
 
 /** Product-wise ordered quantities per IST day — the packing view, not the money view. */

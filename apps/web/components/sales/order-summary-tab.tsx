@@ -1,8 +1,8 @@
 'use client';
 
-import { Fragment, useState } from 'react';
+import { useState } from 'react';
 import { format } from 'date-fns';
-import { ClipboardList, CornerDownRight, Package } from 'lucide-react';
+import { ClipboardList, Package, Store } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -101,26 +101,30 @@ export function OrderSummaryTab({ lockedOutletId }: { lockedOutletId?: string } 
         </Card>
       ) : (
         days.map((day) => (
-          <Card key={day.day} className="overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-4">
-              <h3 className="text-card-title font-semibold">{formatDayLabel(day.day)}</h3>
-              <span className="flex items-center gap-1.5 text-caption text-muted-foreground">
-                <Package className="h-3.5 w-3.5" />
-                {day.products.length} product{day.products.length === 1 ? '' : 's'}
-              </span>
-            </div>
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Product</TH><TH>SKU</TH>
-                  <TH className="text-right">Quantity Ordered</TH>
-                  <TH className="text-right">Orders</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {day.products.map((p) => (
-                  <Fragment key={p.productId}>
-                    <TR>
+          <div key={day.day} className="space-y-4">
+            <h3 className="text-card-title font-semibold">{formatDayLabel(day.day)}</h3>
+
+            {/* What has to be made — the totals, with nothing else competing for
+                attention. This is the number the godown packs against. */}
+            <Card className="overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-4">
+                <h4 className="font-semibold">Items Ordered</h4>
+                <span className="flex items-center gap-1.5 text-caption text-muted-foreground">
+                  <Package className="h-3.5 w-3.5" />
+                  {day.products.length} product{day.products.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Product</TH><TH>SKU</TH>
+                    <TH className="text-right">Quantity Ordered</TH>
+                    <TH className="text-right">Orders</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {day.products.map((p) => (
+                    <TR key={p.productId}>
                       <TD className="font-medium">{p.productName}</TD>
                       <TD className="text-muted-foreground">{p.sku}</TD>
                       <TD className="text-right font-semibold tabular-nums">
@@ -128,29 +132,49 @@ export function OrderSummaryTab({ lockedOutletId }: { lockedOutletId?: string } 
                       </TD>
                       <TD className="text-right tabular-nums text-muted-foreground">{p.orderCount}</TD>
                     </TR>
-                    {/* Who wants it. Pointless when the whole tab is already pinned to
-                        one outlet — every line would name that same outlet. */}
-                    {showOutletBreakdown && p.outlets.map((o) => (
-                      <TR key={`${p.productId}:${o.outletId}`} className="border-0 bg-surface/40">
-                        <TD className="py-1.5 pl-8 text-caption text-muted-foreground" colSpan={2}>
-                          <span className="inline-flex items-center gap-1.5">
-                            <CornerDownRight className="h-3 w-3 shrink-0" />
-                            {o.outletName}
-                          </span>
-                        </TD>
-                        <TD className="py-1.5 text-right text-caption tabular-nums text-muted-foreground">
-                          {formatQty(o.quantity, p.decimalPlaces)} {p.unitName}
-                        </TD>
-                        <TD className="py-1.5 text-right text-caption tabular-nums text-muted-foreground">
-                          {o.orderCount}
-                        </TD>
-                      </TR>
-                    ))}
-                  </Fragment>
-                ))}
-              </TBody>
-            </Table>
-          </Card>
+                  ))}
+                </TBody>
+              </Table>
+            </Card>
+
+            {/* Then who it's for — one block per franchise, which is what you read
+                from when splitting the packed stock up for delivery. Skipped when the
+                tab is already pinned to a single outlet, where it would just repeat
+                the table above under that outlet's name. */}
+            {showOutletBreakdown && day.outlets.length > 0 && (
+              <Card className="overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-4">
+                  <h4 className="font-semibold">Franchise-wise Orders</h4>
+                  <span className="flex items-center gap-1.5 text-caption text-muted-foreground">
+                    <Store className="h-3.5 w-3.5" />
+                    {day.outlets.length} franchise{day.outlets.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <div className="divide-y divide-border">
+                  {day.outlets.map((o) => (
+                    <div key={o.outletId} className="p-4">
+                      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                        <span className="font-medium">{o.outletName}</span>
+                        <span className="text-caption text-muted-foreground">
+                          {o.products.length} item{o.products.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        {o.products.map((p) => (
+                          <div key={p.productId} className="flex items-baseline justify-between gap-3 text-body">
+                            <span className="text-muted-foreground">{p.productName}</span>
+                            <span className="shrink-0 font-medium tabular-nums">
+                              {formatQty(p.quantity, p.decimalPlaces)} {p.unitName}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </div>
         ))
       )}
     </div>

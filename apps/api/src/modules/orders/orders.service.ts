@@ -340,31 +340,57 @@ export async function getOrderSummary(user: AuthUser, query: OrderSummaryQuery) 
       GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
       ORDER BY 1 DESC`;
 
-    type OutletLine = { outletId: string; outletName: string; quantity: number; orderCount: number };
     type ProductLine = {
       productId: string; productName: string; sku: string; unitName: string;
-      decimalPlaces: number; quantity: number; orderCount: number; outlets: OutletLine[];
+      decimalPlaces: number; quantity: number; orderCount: number;
+    };
+    type OutletProductLine = {
+      productId: string; productName: string; sku: string; unitName: string;
+      decimalPlaces: number; quantity: number;
+    };
+    type OutletLine = {
+      outletId: string; outletName: string; totalQuantity: number; orderCount: number;
+      products: OutletProductLine[];
     };
 
-    // Fold the flat rows into day → product → outlets, so the client renders each
-    // date's section without regrouping it again.
-    const byDay = new Map<string, { day: string; totalQuantity: number; products: Map<string, ProductLine> }>();
+    // Two views of the same rows, because they answer different questions: what has
+    // to be made in total, and what each franchise is waiting for. Both are folded
+    // here so the client renders them without regrouping.
+    const byDay = new Map<string, {
+      day: string; totalQuantity: number;
+      products: Map<string, ProductLine>;
+      outlets: Map<string, OutletLine & { orderIds: Set<string> }>;
+    }>();
+
     for (const row of rows) {
-      const day = byDay.get(row.day) ?? { day: row.day, totalQuantity: 0, products: new Map() };
+      const day = byDay.get(row.day) ?? { day: row.day, totalQuantity: 0, products: new Map(), outlets: new Map() };
+
       const product = day.products.get(row.productId) ?? {
         productId: row.productId, productName: row.productName, sku: row.sku,
         unitName: row.unitName, decimalPlaces: row.decimalPlaces,
-        quantity: 0, orderCount: 0, outlets: [],
+        quantity: 0, orderCount: 0,
       };
       product.quantity += row.quantity;
       // An order belongs to exactly one outlet, so per-outlet distinct counts never
       // overlap and summing them gives the product's true order count.
       product.orderCount += row.orderCount;
-      product.outlets.push({
-        outletId: row.outletId, outletName: row.outletName,
-        quantity: row.quantity, orderCount: row.orderCount,
-      });
       day.products.set(row.productId, product);
+
+      const outlet = day.outlets.get(row.outletId) ?? {
+        outletId: row.outletId, outletName: row.outletName,
+        totalQuantity: 0, orderCount: 0, products: [], orderIds: new Set<string>(),
+      };
+      outlet.totalQuantity += row.quantity;
+      // Per-product counts double-count an order that contains several products, so
+      // the outlet's own order count is taken as the max across its lines rather
+      // than the sum — one order with three products is still one order.
+      outlet.orderCount = Math.max(outlet.orderCount, row.orderCount);
+      outlet.products.push({
+        productId: row.productId, productName: row.productName, sku: row.sku,
+        unitName: row.unitName, decimalPlaces: row.decimalPlaces, quantity: row.quantity,
+      });
+      day.outlets.set(row.outletId, outlet);
+
       day.totalQuantity += row.quantity;
       byDay.set(row.day, day);
     }
@@ -372,9 +398,13 @@ export async function getOrderSummary(user: AuthUser, query: OrderSummaryQuery) 
     const days = [...byDay.values()].map((d) => ({
       day: d.day,
       totalQuantity: d.totalQuantity,
-      products: [...d.products.values()]
-        .map((p) => ({ ...p, outlets: p.outlets.sort((a, b) => b.quantity - a.quantity) }))
-        .sort((a, b) => b.quantity - a.quantity),
+      products: [...d.products.values()].sort((a, b) => b.quantity - a.quantity),
+      outlets: [...d.outlets.values()]
+        .map(({ orderIds: _orderIds, ...o }) => ({
+          ...o,
+          products: o.products.sort((a, b) => b.quantity - a.quantity),
+        }))
+        .sort((a, b) => b.totalQuantity - a.totalQuantity),
     }));
     return { days };
   });
