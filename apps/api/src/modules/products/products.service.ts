@@ -76,6 +76,10 @@ const productSelect = {
   isActive: true,
   isPosEnabled: true,
   trackInventory: true,
+  // Manual sort position. POS items use it for the tap-to-sell grid; franchise-
+  // orderable items (isPosEnabled=false) use it for the Order Stock list. The two
+  // sets are disjoint, so one column serves both without colliding.
+  displayOrder: true,
   avgCost: true,
   category: { select: { id: true, name: true, type: true } },
   unit: { select: { id: true, name: true, decimalPlaces: true } },

@@ -38,6 +38,8 @@ export interface Product {
   isActive: boolean;
   isPosEnabled: boolean;
   trackInventory: boolean;
+  /** Manual sort position; 0 means unplaced and falls to the end of the list. */
+  displayOrder: number;
   avgCost: string;
   category: { id: string; name: string; type: CategoryType };
   godownStock: { quantity: string } | null;

@@ -351,7 +351,18 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
     }
   }, [open, products]);
 
-  const list = products?.rows ?? [];
+  // The franchise's own ordering sequence, set by the main owner via displayOrder.
+  // Anything left unplaced (0) sorts to the end, alphabetically, so a newly added
+  // product still appears rather than silently vanishing from the list.
+  const list = useMemo(() => {
+    const rows = [...(products?.rows ?? [])];
+    rows.sort((a, b) => {
+      const ao = a.displayOrder || Number.MAX_SAFE_INTEGER;
+      const bo = b.displayOrder || Number.MAX_SAFE_INTEGER;
+      return ao !== bo ? ao - bo : a.name.localeCompare(b.name);
+    });
+    return rows;
+  }, [products]);
   const priceOf = (id: string) => Number(list.find((p) => p.id === id)?.mrp ?? 0);
   const total = rows.reduce((s, r) => s + priceOf(r.productId) * r.requestedQuantity, 0);
 
@@ -395,7 +406,9 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
               {rows.map((row, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <Select className="flex-1" value={row.productId} onChange={(e) => upd(i, { productId: e.target.value })}>
-                    {list.map((p) => <option key={p.id} value={p.id}>{p.name} — {formatINR(p.mrp)}/{p.unit.name}</option>)}
+                    {list.map((p, idx) => (
+                      <option key={p.id} value={p.id}>{idx + 1}. {p.name} — {formatINR(p.mrp)}/{p.unit.name}</option>
+                    ))}
                   </Select>
                   <Input
                     type="number"
