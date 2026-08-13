@@ -24,7 +24,7 @@ import { useOutlets } from '@/hooks/useOutlets';
 import { stepFor } from '@/hooks/useUnits';
 import { PERIODS, periodRange, type PeriodKey } from '@/lib/period';
 import {
-  useCreateOrder, useOrders, useFulfilOrder,
+  useCreateOrder, useOrders,
   ORDER_STATUS_BADGE, ORDER_STATUS_LABEL,
   amountDue, isPendingPayment, isCompleted, paymentInfoFor,
   type Order,
@@ -84,7 +84,6 @@ export function OrdersTab({ lockedOutletId }: { lockedOutletId?: string } = {}) 
   // already scoped server-side to their own outlet regardless of this value.
   const [outletId, setOutletId] = useState('');
   const { data: outlets } = useOutlets();
-  const fulfil = useFulfilOrder();
 
   const range = periodRange(period, custom);
   const effectiveOutletId = lockedOutletId ?? outletId;
@@ -118,12 +117,6 @@ export function OrdersTab({ lockedOutletId }: { lockedOutletId?: string } = {}) 
     );
     toast.success(`Reprinting ${o.orderNumber}`);
   };
-
-  const doFulfil = (o: Order) =>
-    fulfil.mutate(o.id, {
-      onSuccess: () => toast.success(`${o.orderNumber} fulfilled — delivered to ${o.outlet.name}`),
-      onError: (e) => toast.error(apiErrorMessage(e)),
-    });
 
   return (
     <div className="space-y-5">
@@ -271,9 +264,6 @@ export function OrdersTab({ lockedOutletId }: { lockedOutletId?: string } = {}) 
                             <>
                               <Button variant="ghost" size="icon" title="Reprint order slip" onClick={() => reprint(o)}>
                                 <Printer className="h-4 w-4" />
-                              </Button>
-                              <Button size="sm" loading={fulfil.isPending} onClick={() => doFulfil(o)}>
-                                <PackageCheck className="h-3.5 w-3.5" /> Fulfil
                               </Button>
                               <Button size="sm" variant="ghost" title="Cancel order" onClick={() => setKillFor(o)}>
                                 <X className="h-3.5 w-3.5 text-danger" />
