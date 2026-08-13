@@ -9,7 +9,31 @@ export type BillWithRelations = Prisma.BillGetPayload<{
   include: { items: true; outlet: true };
 }>;
 
-const LOGO_PATH = path.resolve(process.cwd(), 'assets/logo.png');
+/**
+ * Resolve a file under apps/api/assets. The API's working directory differs between
+ * dev (`npm run dev -w @scfc/api` → apps/api) and production (PM2 starts dist/server.js
+ * from the repo root), so a single cwd-relative path silently misses in one of them —
+ * which is why the letterhead logo never appeared on production invoices.
+ */
+function assetPath(relative: string): string | null {
+  const candidates = [
+    path.resolve(process.cwd(), 'assets', relative),
+    path.resolve(process.cwd(), 'apps/api/assets', relative),
+    path.resolve(__dirname, '../../../assets', relative),
+  ];
+  return candidates.find((c) => fs.existsSync(c)) ?? null;
+}
+
+const LOGO_PATH = assetPath('logo.png');
+
+// Product and outlet names are written in Gujarati, and the PDF standard fonts
+// (Helvetica et al.) are Latin-only — "ચટપટી (C.P.)" printed as "©ªŸªªŸ¬„0.P.)".
+// Noto Sans Gujarati covers Latin as well, so it is used for the whole document
+// rather than swapped in per string: one font means no field can be missed, and a
+// mixed name like "લિક્વિડ રસો (khaman rasho)" renders without changing typeface
+// mid-line. Falls back to Helvetica if the files are ever absent.
+const FONT_REGULAR = assetPath('fonts/NotoSansGujarati-Regular.ttf');
+const FONT_BOLD = assetPath('fonts/NotoSansGujarati-Bold.ttf');
 
 const COLOR = {
   brand: '#3730A3',
@@ -35,19 +59,21 @@ const INR = (v: Prisma.Decimal | number): string =>
 export function renderBillPdf(bill: BillWithRelations, dest: NodeJS.WritableStream): Promise<void> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const FONT = { regular: 'Helvetica', bold: 'Helvetica-Bold' };
+    if (FONT_REGULAR) { doc.registerFont('Body', FONT_REGULAR); FONT.regular = 'Body'; }
+    if (FONT_BOLD) { doc.registerFont('Body-Bold', FONT_BOLD); FONT.bold = 'Body-Bold'; }
+    doc.font(FONT.regular);
     doc.pipe(dest);
     dest.on('finish', () => resolve());
     dest.on('error', reject);
     doc.on('error', reject);
 
-    const hasLogo = fs.existsSync(LOGO_PATH);
-
     // ── Letterhead ──────────────────────────────────────────────────────────
     const headerTop = 50;
-    if (hasLogo) {
+    if (LOGO_PATH) {
       doc.image(LOGO_PATH, PAGE.left, headerTop, { width: 70 });
     }
-    const textX = hasLogo ? PAGE.left + 82 : PAGE.left;
+    const textX = LOGO_PATH ? PAGE.left + 82 : PAGE.left;
     doc.fontSize(18).fillColor(COLOR.text).text(env.COMPANY_NAME, textX, headerTop, { width: 260 });
     doc.fontSize(9).fillColor(COLOR.muted).text(env.COMPANY_TAGLINE, textX, doc.y + 1, { width: 260 });
     const addrLines = [env.COMPANY_ADDRESS, env.COMPANY_PHONE ? `Ph: ${env.COMPANY_PHONE}` : ''].filter(Boolean);
@@ -110,7 +136,7 @@ export function renderBillPdf(bill: BillWithRelations, dest: NodeJS.WritableStre
         y = 50;
       }
       if (rowIndex % 2 === 1) doc.rect(PAGE.left, y, PAGE.width, rowH).fill('#FAFAFA');
-      doc.fillColor(COLOR.text).font('Helvetica').fontSize(9.5);
+      doc.fillColor(COLOR.text).font(FONT.regular).fontSize(9.5);
       doc.text(item.productNameSnapshot, cols.item + 6, y + 6, { width: showTax ? 215 : 260 });
       doc.fillColor(COLOR.muted);
       doc.text(String(Number(item.quantity)), cols.qty, y + 6, { width: 45, align: 'right' });
@@ -136,9 +162,9 @@ export function renderBillPdf(bill: BillWithRelations, dest: NodeJS.WritableStre
     }
     doc.moveTo(labelX, y + 2).lineTo(PAGE.right, y + 2).strokeColor(COLOR.line).stroke();
     y += 8;
-    doc.fontSize(12.5).fillColor(COLOR.text).font('Helvetica-Bold');
+    doc.fontSize(12.5).fillColor(COLOR.text).font(FONT.bold);
     doc.text('Grand Total', labelX, y, { width: 100 }).text(INR(bill.grandTotal), valX, y, { width: valW, align: 'right' });
-    doc.font('Helvetica');
+    doc.font(FONT.regular);
     y += 22;
 
     const balance = Number(bill.balanceDue);
@@ -146,14 +172,14 @@ export function renderBillPdf(bill: BillWithRelations, dest: NodeJS.WritableStre
     doc.text('Paid', labelX, y, { width: 100 }).text(INR(bill.amountPaid), valX, y, { width: valW, align: 'right' });
     y += 15;
     if (balance > 0) {
-      doc.fillColor(COLOR.danger).font('Helvetica-Bold');
+      doc.fillColor(COLOR.danger).font(FONT.bold);
       doc.text('Balance Due', labelX, y, { width: 100 }).text(INR(bill.balanceDue), valX, y, { width: valW, align: 'right' });
-      doc.font('Helvetica');
+      doc.font(FONT.regular);
     } else {
-      doc.fillColor(COLOR.success).font('Helvetica-Bold');
+      doc.fillColor(COLOR.success).font(FONT.bold);
       doc.roundedRect(labelX, y - 2, 185, 18, 3).fillAndStroke(COLOR.brandLight, COLOR.brandLight);
       doc.fillColor(COLOR.success).text('PAID IN FULL', labelX, y + 2, { width: 185, align: 'center' });
-      doc.font('Helvetica');
+      doc.font(FONT.regular);
     }
 
     // ── Terms & Conditions ─────────────────────────────────────────────────
