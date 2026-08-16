@@ -49,13 +49,16 @@ export const updateProductSchema = createProductSchema.omit({ openingStock: true
   isActive: z.boolean().optional(),
   isPosEnabled: z.boolean().optional(),
   // A stock *movement*, not a field replacement: each save that carries a non-zero
-  // value adds that many units to Godown stock on top of whatever is already there.
+  // value moves Godown stock by that many units on top of whatever is already there.
+  // Signed — positive adds (a delivery, a correction upward), negative reduces
+  // (wastage, spoilage, a miscount). Deliberately NOT nonnegative like the other
+  // quantities here, which is what previously made stock a one-way street.
   // It never sets/overwrites the ledger, so it's safe to apply even if production,
   // a transfer or a sale changed the quantity after this dialog was opened. The web
   // form always resets it to 0 after a successful save, precisely so re-opening and
   // re-saving the same product (e.g. just to fix a typo in its name) can't silently
-  // add stock a second time.
-  addStock: decimalString.default(0),
+  // move stock a second time.
+  addStock: z.coerce.number().default(0),
 });
 
 export const listProductsQuerySchema = paginationQuerySchema.extend({

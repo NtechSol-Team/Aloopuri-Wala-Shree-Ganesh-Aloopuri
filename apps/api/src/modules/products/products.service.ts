@@ -177,6 +177,19 @@ export async function updateProduct(id: string, input: UpdateProductInput) {
   if (addStock) {
     const unit = await unitFor(input.unitId ?? existing.unitId);
     assertQuantityPrecision(addStock, unit, 'addStock');
+    // A reduction that would take the godown below zero is a typo, not an
+    // instruction — an order can drive stock negative because the goods really were
+    // promised out, but nobody deliberately writes off more than they hold.
+    if (addStock < 0) {
+      const held = Number(existing.godownStock?.quantity ?? 0);
+      if (held + addStock < 0) {
+        throw AppError.badRequest(
+          `Cannot reduce by ${Math.abs(addStock)} ${unit.name} — only ${held} ${unit.name} in the godown.`,
+          undefined,
+          'addStock',
+        );
+      }
+    }
   }
 
   const product = await prisma.$transaction(async (tx) => {
@@ -185,7 +198,7 @@ export async function updateProduct(id: string, input: UpdateProductInput) {
     // every other mutation in this API gives.
     if (addStock) {
       // upsert, not update — older products (or ones created via the POS-item flow)
-      // may never have had a GodownStock row, and Add Stock is exactly when one
+      // may never have had a GodownStock row, and adjusting stock is exactly when one
       // should be created rather than 404ing on a plain update.
       await tx.godownStock.upsert({
         where: { productId: id },

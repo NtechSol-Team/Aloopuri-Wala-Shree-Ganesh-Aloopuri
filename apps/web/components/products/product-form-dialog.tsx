@@ -25,7 +25,8 @@ const schema = z.object({
   taxPercent: z.coerce.number().min(0).max(100),
   reorderLevel: z.coerce.number().nonnegative(),
   openingStock: z.coerce.number().nonnegative(),
-  addStock: z.coerce.number().nonnegative(),
+  // Signed: positive adds stock, negative reduces it (wastage, spoilage, miscount).
+  addStock: z.coerce.number(),
   batchTrackingEnabled: z.boolean(),
   isPosEnabled: z.boolean(),
   trackInventory: z.boolean(),
@@ -52,6 +53,10 @@ export function ProductFormDialog({
 
   const unitList = units ?? [];
   const selectedUnitId = watch('unitId');
+  // Shown live under the field so the resulting stock is visible before saving —
+  // reducing stock is easy to get wrong by a decimal place.
+  const adjust = Number(watch('addStock')) || 0;
+  const held = Number(product?.godownStock?.quantity ?? 0);
   // Reorder level steps by the chosen unit's own precision (Item Master setting).
   const decimals = useMemo(
     () => unitList.find((u) => u.id === selectedUnitId)?.decimalPlaces ?? 2,
@@ -76,6 +81,10 @@ export function ProductFormDialog({
   }, [open, product, categories, reset]);
 
   const onSubmit = (values: FormValues) => {
+    if (product && held + Number(values.addStock || 0) < 0) {
+      toast.error(`Only ${formatQty(held, decimals)} ${product.unit.name} in the godown to reduce.`);
+      return;
+    }
     // openingStock is create-only, addStock is edit-only — each is hidden on the
     // other mode and the server would ignore it anyway, but there's no reason to
     // send a value the user never saw or acted on.
@@ -142,9 +151,20 @@ export function ProductFormDialog({
             )}
             {product && (
               <Field
-                label="Add Stock"
-                error={errors.addStock?.message}
-                hint={`Current Godown stock: ${formatQty(product.godownStock?.quantity ?? 0, decimals)} ${product.unit.name}. Adds on top — leave at 0 to make no change.`}
+                label="Adjust Stock"
+                // Catch an over-reduction here rather than letting the server reject
+                // it — the result is already on screen, so say so before they save.
+                error={
+                  errors.addStock?.message ??
+                  (held + adjust < 0
+                    ? `Only ${formatQty(held, decimals)} ${product.unit.name} in the godown to reduce.`
+                    : undefined)
+                }
+                hint={
+                  adjust === 0
+                    ? `In the Godown: ${formatQty(held, decimals)} ${product.unit.name}. Enter a positive number to add, a negative one to reduce.`
+                    : `${formatQty(held, decimals)} → ${formatQty(held + adjust, decimals)} ${product.unit.name} (${adjust > 0 ? 'adding' : 'reducing by'} ${formatQty(Math.abs(adjust), decimals)})`
+                }
               >
                 <Input type="number" step={stepFor(decimals)} {...register('addStock')} />
               </Field>

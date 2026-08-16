@@ -119,6 +119,11 @@ export function RawMaterialFormDialog({
             <div className="space-y-1.5">
               <Label>Current Stock</Label>
               <Input type="number" step={stepFor(decimals)} {...register('currentStock')} />
+              {/* Unlike a product's signed adjustment, this field is the stock level
+                  itself — typing a lower number is how you write material off. */}
+              <p className="text-caption text-muted-foreground">
+                {material ? 'Sets the stock level. Type a lower number to reduce it.' : 'Opening stock for this material.'}
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label>Reorder Level</Label>
