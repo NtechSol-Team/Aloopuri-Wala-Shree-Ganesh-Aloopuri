@@ -6,6 +6,15 @@ import { istDate } from '../../shared/utils/date';
 export const createOrderSchema = z.object({
   outletId: z.string().uuid().optional(), // only honoured for super admin
   notes: z.string().max(500).optional(),
+  // Which IST calendar day this order counts against. Defaults to today when
+  // omitted, so existing callers (the mobile app, any stale client) keep working
+  // unchanged. Capped at today server-side — see the refine below — the franchise
+  // owner can back-date an order they forgot to place, but can't pre-place
+  // tomorrow's, which would jump the fulfilment queue and land in a day nothing
+  // has been reported for yet.
+  orderDate: istDate
+    .default(() => new Date())
+    .refine((d) => d.getTime() <= Date.now(), { message: 'Order date cannot be in the future' }),
   items: z
     .array(
       z.object({

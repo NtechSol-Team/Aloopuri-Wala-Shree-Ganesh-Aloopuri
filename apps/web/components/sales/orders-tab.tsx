@@ -329,6 +329,11 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
   const { data: products } = useProducts({ isPosEnabled: false });
   const create = useCreateOrder();
   const [rows, setRows] = useState<CartRow[]>([]);
+  // Which day this order counts against — defaults to today, but a franchise owner
+  // catching up on a forgotten order can wind it back. Capped at today (see the
+  // `max` below and the server-side refine) so it can't jump the queue by pre-placing
+  // tomorrow's order before today has even been reported.
+  const [orderDate, setOrderDate] = useState(todayIso());
   // Set the instant the order lands, so the dialog swaps to the success tick instead
   // of jumping straight to "how will you pay" — a beat of "yes, that went through"
   // before the next decision, the way a UPI app confirms a payment before moving on.
@@ -337,6 +342,7 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
   useEffect(() => {
     if (open) {
       setRows(products?.rows[0] ? [{ productId: products.rows[0].id, requestedQuantity: 5 }] : []);
+      setOrderDate(todayIso());
       setPlacedOrder(null);
     }
   }, [open, products]);
@@ -362,7 +368,7 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
 
   const submit = () => {
     if (!rows.length || rows.some((r) => r.requestedQuantity <= 0)) { toast.error('Add valid items'); return; }
-    create.mutate({ items: rows }, {
+    create.mutate({ items: rows, orderDate }, {
       onSuccess: (order) => setPlacedOrder(order),
       onError: (e) => toast.error(apiErrorMessage(e)),
     });
@@ -393,6 +399,19 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
           <>
             <DialogHeader><DialogTitle>Order Stock</DialogTitle></DialogHeader>
             <div className="space-y-2">
+              <div className="space-y-1.5">
+                <Label>Order date</Label>
+                <Input
+                  type="date"
+                  className="w-40"
+                  value={orderDate}
+                  max={todayIso()}
+                  onChange={(e) => setOrderDate(e.target.value)}
+                />
+                {orderDate !== todayIso() && (
+                  <p className="text-caption text-muted-foreground">Back-dating this order — it&apos;ll count against {orderDate}, not today.</p>
+                )}
+              </div>
               {rows.map((row, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <Select className="flex-1" value={row.productId} onChange={(e) => upd(i, { productId: e.target.value })}>

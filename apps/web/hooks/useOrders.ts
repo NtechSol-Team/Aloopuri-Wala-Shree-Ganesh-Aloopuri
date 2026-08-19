@@ -163,7 +163,7 @@ function useOrderMutation<TVars, TData>(fn: (vars: TVars) => Promise<TData>) {
 }
 
 export function useCreateOrder() {
-  return useOrderMutation(async (input: { items: Array<{ productId: string; requestedQuantity: number }>; notes?: string }) =>
+  return useOrderMutation(async (input: { items: Array<{ productId: string; requestedQuantity: number }>; notes?: string; orderDate?: string }) =>
     (await api.post<ApiSuccess<Order>>('/orders', input)).data.data,
   );
 }

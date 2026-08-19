@@ -85,6 +85,9 @@ async function moveGodownStockTx(
     outletId: string;
     userId: string | null;
     notes?: string;
+    // Back-dated orders need their audit trail dated to match, not to the moment
+    // someone got around to typing it in. Omitted callers keep the DB default (now).
+    createdAt?: Date;
   },
 ) {
   const stock = await tx.godownStock.upsert({
@@ -103,6 +106,7 @@ async function moveGodownStockTx(
       balanceAfter: stock.quantity,
       notes: input.notes,
       createdById: input.userId,
+      ...(input.createdAt ? { createdAt: input.createdAt } : {}),
     },
   });
 }
@@ -178,17 +182,24 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
     : [];
   const specialOf = new Map(specials.map((s) => [s.productId, s.price]));
 
+  // The order's own date — today unless the franchise owner back-dated it. Every
+  // timestamp below uses this rather than "now", so a Monday order entered on
+  // Tuesday still reports, numbers and reconciles as Monday's, the same way a
+  // back-dated manual bill does.
+  const placedAt = input.orderDate;
+
   const created = await prisma.$transaction(async (tx) => {
-    const orderNumber = await nextDocNumber(tx, 'ORDER');
+    const orderNumber = await nextDocNumber(tx, 'ORDER', placedAt);
     const placed = await tx.outletOrder.create({
       data: {
         orderNumber,
         outletId,
         status: OutletOrderStatus.CONFIRMED,
-        confirmedAt: new Date(),
+        orderDate: placedAt,
+        confirmedAt: placedAt,
         // Stock leaves the godown as part of this same transaction, so the order
         // is born already marked as deducted — Fulfil must not take it a second time.
-        stockDeductedAt: new Date(),
+        stockDeductedAt: placedAt,
         isGstBill: outlet.gstBilling,
         notes: input.notes,
         createdById: user.id,
@@ -218,6 +229,7 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
         outletId,
         userId: user.id,
         notes: `Order ${orderNumber} placed`,
+        createdAt: placedAt,
       });
     }
 
@@ -227,7 +239,7 @@ export async function createOrder(user: AuthUser, input: CreateOrderInput) {
       where: { id: placed.id },
       include: { items: { include: { product: true } }, outlet: true },
     });
-    const bill = await billingService.createBillForOrderTx(tx, forBill, user.id);
+    const bill = await billingService.createBillForOrderTx(tx, forBill, user.id, placedAt);
     return { placed, bill };
   });
 
