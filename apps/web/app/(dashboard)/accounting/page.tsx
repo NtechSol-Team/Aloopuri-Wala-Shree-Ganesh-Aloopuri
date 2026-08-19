@@ -2,12 +2,17 @@
 
 import { useState } from 'react';
 import { format } from 'date-fns';
-import { ArrowDownRight, ArrowUpRight, Wallet, TrendingUp, Boxes, ReceiptText, ShoppingCart } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, Wallet, TrendingUp, Boxes, ReceiptText, ShoppingCart, Download, Printer } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { cn, formatINR, ist } from '@/lib/utils';
+import { cn, formatINR, ist, todayIso } from '@/lib/utils';
+import { PERIODS, periodRange, type PeriodKey } from '@/lib/period';
 import { usePosition, useDayBook, useProfitability, type ProductProfit } from '@/hooks/useAccounting';
 import { LedgerTab } from '@/components/accounting/ledger-tab';
 
@@ -108,17 +113,83 @@ const TYPE_META: Record<string, { label: string; icon: typeof Wallet; variant: '
   PURCHASE: { label: 'Purchase', icon: ShoppingCart, variant: 'danger' },
 };
 
+/** Escapes a CSV cell — quotes doubled, whole field quoted when it contains a delimiter. */
+function csvCell(v: string | number): string {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 function DayBookTab() {
-  const { data, isLoading } = useDayBook();
+  // No range picked yet defaults to the last 30 days, same as before this had a
+  // picker at all — see accounting.routes.ts's /daybook handler.
+  const [period, setPeriod] = useState<PeriodKey>('all');
+  const [custom, setCustom] = useState({ from: todayIso(), to: todayIso() });
+  const range = periodRange(period, custom);
+  const { data, isLoading } = useDayBook(range);
+
+  const exportCsv = () => {
+    if (!data) return;
+    const rows: string[] = [
+      ['Day Book', range.from ? `${range.from} to ${range.to}` : 'Last 30 days'].map(csvCell).join(','),
+      ['Date', 'Type', 'Party', 'Reference', 'Method', 'In', 'Out'].join(','),
+      ...data.entries.map((e) =>
+        [format(ist(e.date), 'dd-MM-yyyy'), TYPE_META[e.type].label, e.party ?? '', e.reference ?? '', e.method?.replace('_', ' ') ?? '', e.inflow || '', e.outflow || '']
+          .map(csvCell).join(','),
+      ),
+      ['Totals', '', '', '', '', data.totalIn, data.totalOut].map(csvCell).join(','),
+      ['Net', '', '', '', '', '', data.net].map(csvCell).join(','),
+    ];
+    // BOM so Excel opens UTF-8 correctly instead of mojibake.
+    const blob = new Blob(['﻿' + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `day-book-${range.from ?? 'last-30-days'}${range.to && range.to !== range.from ? `_to_${range.to}` : ''}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  };
+
   return (
     <div className="space-y-4">
+      <Card className="flex flex-wrap items-end gap-3 p-3 print:hidden">
+        <div className="space-y-1.5">
+          <Label>Period</Label>
+          <Select className="w-40" value={period} onChange={(e) => setPeriod(e.target.value as PeriodKey)}>
+            {PERIODS.map(([key, label]) => <option key={key} value={key}>{key === 'all' ? 'Last 30 Days' : label}</option>)}
+          </Select>
+        </div>
+        {period === 'custom' && (
+          <>
+            <div className="space-y-1.5">
+              <Label>From</Label>
+              <Input type="date" value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>To</Label>
+              <Input type="date" value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
+            </div>
+          </>
+        )}
+        <div className="ml-auto flex gap-2">
+          {/* "Save as PDF" lives in the browser's own print dialog — no server-side
+              PDF report exists for this yet, and the print stylesheet already hides
+              this filter bar via print:hidden, so what prints is just the book. */}
+          <Button variant="secondary" size="sm" onClick={() => window.print()}><Printer className="h-4 w-4" /> Print / PDF</Button>
+          <Button variant="secondary" size="sm" onClick={exportCsv} disabled={!data?.entries.length}><Download className="h-4 w-4" /> Export</Button>
+        </div>
+      </Card>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <MiniStat label="Total In" value={formatINR(data?.totalIn ?? 0, { decimals: false })} accent="success" loading={isLoading} />
         <MiniStat label="Total Out" value={formatINR(data?.totalOut ?? 0, { decimals: false })} accent="danger" loading={isLoading} />
         <MiniStat label="Net" value={formatINR(data?.net ?? 0, { decimals: false })} accent={(data?.net ?? 0) >= 0 ? 'success' : 'danger'} loading={isLoading} />
       </div>
       <Card className="overflow-hidden">
-        <CardHeader><CardTitle>Day Book — last 30 days</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle>
+            Day Book — {range.from ? `${format(ist(range.from), 'dd MMM yyyy')} to ${format(ist(range.to!), 'dd MMM yyyy')}` : 'last 30 days'}
+          </CardTitle>
+        </CardHeader>
         {isLoading ? (
           <div className="space-y-2 p-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
         ) : !data?.entries.length ? (
