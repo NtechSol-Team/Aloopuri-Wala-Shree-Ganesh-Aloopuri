@@ -25,8 +25,10 @@ export interface BillListItem {
 export interface BillDetail extends Omit<BillListItem, 'outlet'> {
   subTotal: string;
   taxTotal: string;
+  otherChargesTotal: string;
   outlet: { id: string; name: string; address: string | null; phone: string | null };
   items: Array<{ id: string; productNameSnapshot: string; quantity: string; rate: string; taxPercent: string; taxAmount: string; lineTotal: string }>;
+  charges: Array<{ id: string; label: string; amount: string }>;
   payments: Array<{ id: string; paymentNumber: string; amount: string; method: string; paymentDate: string }>;
 }
 
@@ -90,6 +92,8 @@ export interface ManualBillInput {
   deductStock?: boolean;
   notes?: string;
   items: Array<{ productId: string; quantity: number; unitPrice: number }>;
+  /** Packing, transport and the like — added straight to the grand total, untaxed. */
+  charges?: Array<{ label: string; amount: number }>;
 }
 
 /** Everything a sale touches, so a manual entry or deletion refreshes it all. */

@@ -16,6 +16,7 @@ import { stepFor } from '@/hooks/useUnits';
 import { useCreateManualBill } from '@/hooks/useBilling';
 
 interface Line { productId: string; quantity: number; unitPrice: number }
+interface Charge { label: string; amount: number }
 
 /**
  * Back-entry of a sale that happened but never got recorded — a franchise forgot to
@@ -38,6 +39,9 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
   // touching inventory — for stock already accounted for some other way.
   const [deductStock, setDeductStock] = useState(true);
   const [lines, setLines] = useState<Line[]>([]);
+  // Packing, transport and the like — dispatch costs on top of the goods themselves,
+  // added straight to the grand total (not taxed) and itemised on the printed bill.
+  const [charges, setCharges] = useState<Charge[]>([]);
 
   const list = products?.rows ?? [];
   const activeOutlets = (outlets ?? []).filter((o) => o.isActive);
@@ -49,6 +53,7 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
     setNotes('');
     setDeductStock(true);
     setLines(list[0] ? [{ productId: list[0].id, quantity: 1, unitPrice: Number(list[0].mrp) }] : []);
+    setCharges([]);
     // Seeded once per open; re-running on every outlets/products tick would wipe edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -56,17 +61,26 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
   const priceOf = (id: string) => Number(list.find((p) => p.id === id)?.mrp ?? 0);
   const unitOf = (id: string) => list.find((p) => p.id === id)?.unit;
   const total = lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+  const chargesTotal = charges.reduce((s, c) => s + c.amount, 0);
 
   const add = () => list[0] && setLines((r) => [...r, { productId: list[0].id, quantity: 1, unitPrice: Number(list[0].mrp) }]);
   const update = (i: number, patch: Partial<Line>) => setLines((r) => r.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   const remove = (i: number) => setLines((r) => r.filter((_, idx) => idx !== i));
 
+  const addCharge = () => setCharges((r) => [...r, { label: '', amount: 0 }]);
+  const updateCharge = (i: number, patch: Partial<Charge>) => setCharges((r) => r.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
+  const removeCharge = (i: number) => setCharges((r) => r.filter((_, idx) => idx !== i));
+
   const submit = () => {
     if (!outletId) { toast.error('Pick a franchise'); return; }
     if (!lines.length) { toast.error('Add at least one product'); return; }
     if (lines.some((l) => l.quantity <= 0)) { toast.error('Quantities must be greater than 0'); return; }
+    if (charges.some((c) => !c.label.trim() || c.amount <= 0)) { toast.error('Every charge needs a label and an amount greater than 0'); return; }
     create.mutate(
-      { outletId, billDate, deductStock, notes: notes.trim() || undefined, items: lines },
+      {
+        outletId, billDate, deductStock, notes: notes.trim() || undefined, items: lines,
+        charges: charges.length ? charges.map((c) => ({ label: c.label.trim(), amount: c.amount })) : undefined,
+      },
       {
         onSuccess: () => {
           toast.success('Sales bill created');
@@ -137,6 +151,30 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
           <Button variant="secondary" size="sm" onClick={add}><Plus className="h-4 w-4" /> Add item</Button>
         </div>
 
+        <div className="space-y-2">
+          <Label>Additional Charges <span className="text-muted-foreground">(packing, transport, etc. — optional)</span></Label>
+          {charges.map((charge, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <Input
+                className="min-w-[10rem] flex-1"
+                placeholder="e.g. Packing"
+                value={charge.label}
+                onChange={(e) => updateCharge(i, { label: e.target.value })}
+              />
+              <Input
+                type="number"
+                className="w-28"
+                step="0.01"
+                placeholder="Amount"
+                value={charge.amount || ''}
+                onChange={(e) => updateCharge(i, { amount: Number(e.target.value) })}
+              />
+              <Button variant="ghost" size="icon" onClick={() => removeCharge(i)}><Trash2 className="h-4 w-4 text-danger" /></Button>
+            </div>
+          ))}
+          <Button variant="secondary" size="sm" onClick={addCharge}><Plus className="h-4 w-4" /> Add charge</Button>
+        </div>
+
         <div className="space-y-1.5">
           <Label>Note <span className="text-muted-foreground">(optional)</span></Label>
           <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. missed entry for 20 July" />
@@ -161,9 +199,13 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
 
         <div className="flex items-center justify-between border-t border-border pt-3">
           <span className="flex items-center gap-1.5 text-caption text-muted-foreground">
-            <Info className="h-3.5 w-3.5" /> GST follows the franchise&apos;s billing setting.
+            <Info className="h-3.5 w-3.5" /> GST follows the franchise&apos;s billing setting. Charges are not taxed.
           </span>
-          <span className="text-label font-semibold">Total (before GST) {formatINR(total)}</span>
+          <span className="text-right">
+            <span className="block text-caption text-muted-foreground">Items (before GST) {formatINR(total)}</span>
+            {chargesTotal > 0 && <span className="block text-caption text-muted-foreground">Charges {formatINR(chargesTotal)}</span>}
+            <span className="block text-label font-semibold">≈ {formatINR(total + chargesTotal)} + GST</span>
+          </span>
         </div>
 
         <DialogFooter>

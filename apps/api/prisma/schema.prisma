@@ -952,6 +952,11 @@ model Bill {
   dueDate     DateTime   @map("due_date") @db.Timestamptz(6)
   subTotal    Decimal    @map("sub_total") @db.Decimal(12, 2)
   taxTotal    Decimal    @map("tax_total") @db.Decimal(12, 2)
+  // Packing, transport and similar dispatch costs the main owner adds on top of the
+  // goods — kept out of subTotal/taxTotal so per-item GST math is untouched, but
+  // folded into grandTotal so the outlet's balance actually reflects them. Zero for
+  // every bill that doesn't carry any (i.e. every bill before this feature existed).
+  otherChargesTotal Decimal @default(0) @map("other_charges_total") @db.Decimal(12, 2)
   grandTotal  Decimal    @map("grand_total") @db.Decimal(12, 2)
   amountPaid  Decimal    @default(0) @map("amount_paid") @db.Decimal(12, 2)
   balanceDue  Decimal    @map("balance_due") @db.Decimal(12, 2)
@@ -968,6 +973,7 @@ model Bill {
   outlet   Outlet       @relation(fields: [outletId], references: [id])
   order    OutletOrder? @relation(fields: [orderId], references: [id])
   items    BillItem[]
+  charges  BillCharge[]
   payments Payment[]
 
   @@index([outletId, status])
@@ -997,6 +1003,22 @@ model BillItem {
   @@index([billId])
   @@index([productId])
   @@map("bill_items")
+}
+
+// One-off costs the main owner adds when raising a bill — packing, transport,
+// loading and the like. Free-text label rather than a fixed enum: what a dispatch
+// actually costs for varies by shipment, and there's no closed list worth maintaining.
+model BillCharge {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  billId    String   @map("bill_id") @db.Uuid
+  label     String
+  amount    Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@index([billId])
+  @@map("bill_charges")
 }
 
 model BillAudit {

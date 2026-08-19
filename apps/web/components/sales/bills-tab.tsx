@@ -242,6 +242,9 @@ function BillDetailDialog({ id, onClose }: { id: string | null; onClose: () => v
             <div className="ml-auto w-56 space-y-1 text-body">
               <Row label="Sub-total" value={formatINR(bill.subTotal)} />
               <Row label="Tax" value={formatINR(bill.taxTotal)} />
+              {bill.charges.map((c) => (
+                <Row key={c.id} label={c.label} value={formatINR(c.amount)} className="text-muted-foreground" />
+              ))}
               <Row label="Grand Total" value={formatINR(bill.grandTotal)} bold />
               <Row label="Paid" value={formatINR(bill.amountPaid)} className="text-success" />
               <Row label="Balance Due" value={formatINR(bill.balanceDue)} className="text-danger" bold />

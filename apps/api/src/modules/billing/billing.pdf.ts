@@ -6,7 +6,7 @@ import { env } from '../../config/env';
 import { istDayString } from '../../shared/utils/date';
 
 export type BillWithRelations = Prisma.BillGetPayload<{
-  include: { items: true; outlet: true };
+  include: { items: true; charges: true; outlet: true };
 }>;
 
 /**
@@ -158,6 +158,12 @@ export function renderBillPdf(bill: BillWithRelations, dest: NodeJS.WritableStre
     y += 15;
     if (showTax) {
       doc.text('GST', labelX, y, { width: 100 }).text(INR(bill.taxTotal), valX, y, { width: valW, align: 'right' });
+      y += 15;
+    }
+    // Packing/transport/etc, itemised by label — added by the main owner when the
+    // bill was raised. Not taxed, so these sit outside the GST line above.
+    for (const charge of bill.charges) {
+      doc.text(charge.label, labelX, y, { width: 100 }).text(INR(charge.amount), valX, y, { width: valW, align: 'right' });
       y += 15;
     }
     doc.moveTo(labelX, y + 2).lineTo(PAGE.right, y + 2).strokeColor(COLOR.line).stroke();

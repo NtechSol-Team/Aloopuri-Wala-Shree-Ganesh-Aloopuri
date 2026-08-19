@@ -18,7 +18,7 @@ export async function generateBillPdfHandler(jobs: Job<GenerateBillPdfPayload>[]
     const { billId } = job.data;
     const bill = await prisma.bill.findUnique({
       where: { id: billId },
-      include: { items: true, outlet: true },
+      include: { items: true, charges: true, outlet: true },
     });
     if (!bill) {
       logger.warn({ billId }, 'generateBillPdf: bill not found');

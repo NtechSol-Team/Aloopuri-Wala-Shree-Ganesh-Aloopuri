@@ -25,7 +25,13 @@ type OrderForBill = Prisma.OutletOrderGetPayload<{
  * Create a bill from a (confirmed) outlet order, inside an existing transaction.
  * Server computes all money — never trusts client amounts. Line items are locked.
  */
-export async function createBillForOrderTx(tx: Prisma.TransactionClient, order: OrderForBill, userId: string, billedAt?: Date) {
+export async function createBillForOrderTx(
+  tx: Prisma.TransactionClient,
+  order: OrderForBill,
+  userId: string,
+  billedAt?: Date,
+  charges?: Array<{ label: string; amount: number }>,
+) {
   // Number from the date the bill carries: a back-entered December sale belongs to
   // December's book, not to whichever year it happened to be typed in.
   const now = billedAt ?? new Date();
@@ -52,7 +58,8 @@ export async function createBillForOrderTx(tx: Prisma.TransactionClient, order: 
 
   const subTotal = items.reduce((s, i) => s.add(i.rate.mul(i.quantity)), new Prisma.Decimal(0));
   const taxTotal = items.reduce((s, i) => s.add(i.taxAmount), new Prisma.Decimal(0));
-  const grandTotal = subTotal.add(taxTotal);
+  const otherChargesTotal = (charges ?? []).reduce((s, c) => s.add(new Prisma.Decimal(c.amount)), new Prisma.Decimal(0));
+  const grandTotal = subTotal.add(taxTotal).add(otherChargesTotal);
 
   return tx.bill.create({
     data: {
@@ -63,6 +70,7 @@ export async function createBillForOrderTx(tx: Prisma.TransactionClient, order: 
       dueDate: addDays(now, order.outlet.creditPeriodDays),
       subTotal,
       taxTotal,
+      otherChargesTotal,
       grandTotal,
       amountPaid: 0,
       balanceDue: grandTotal,
@@ -71,8 +79,9 @@ export async function createBillForOrderTx(tx: Prisma.TransactionClient, order: 
       lockedAt: now,
       createdById: userId,
       items: { create: items },
+      charges: charges?.length ? { create: charges.map((c) => ({ label: c.label, amount: c.amount })) } : undefined,
     },
-    include: { items: true, outlet: { select: { name: true } } },
+    include: { items: true, charges: true, outlet: { select: { name: true } } },
   });
 }
 
@@ -145,7 +154,12 @@ export async function listBills(user: AuthUser, query: ListBillsQuery) {
 export async function getBill(user: AuthUser, id: string) {
   const bill = await prisma.bill.findFirst({
     where: { id, isDeleted: false, ...scopeFilter(user) },
-    include: { items: true, outlet: true, payments: { where: { isDeleted: false }, orderBy: { paymentDate: 'desc' } } },
+    include: {
+      items: true,
+      charges: { orderBy: { createdAt: 'asc' } },
+      outlet: true,
+      payments: { where: { isDeleted: false }, orderBy: { paymentDate: 'desc' } },
+    },
   });
   if (!bill) throw AppError.notFound('Bill not found');
   return bill;
@@ -256,7 +270,7 @@ export async function createManualBill(user: AuthUser, input: CreateManualBillIn
       });
     }
 
-    const raised = await createBillForOrderTx(tx, order, user.id, billedAt);
+    const raised = await createBillForOrderTx(tx, order, user.id, billedAt, input.charges);
     return { bill: { id: raised.id, billNumber: raised.billNumber, grandTotal: raised.grandTotal } };
   });
 
