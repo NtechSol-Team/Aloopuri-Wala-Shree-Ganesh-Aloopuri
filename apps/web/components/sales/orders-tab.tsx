@@ -384,7 +384,11 @@ function OrderStockDialog({ open, onOpenChange, onPlaced }: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      {/* Radix auto-focuses the first focusable field on open, which is the date
+          input below — and focusing a native date input pops its picker straight
+          open on a touch device, before the owner asked for it. Nothing needs
+          focus the instant this dialog appears, so skip the default entirely. */}
+      <DialogContent className="max-w-2xl" onOpenAutoFocus={(e) => e.preventDefault()}>
         {placedOrder ? (
           <>
             <DialogHeader><DialogTitle>Order Stock</DialogTitle></DialogHeader>
