@@ -8,7 +8,10 @@ import { requireSuperAdmin } from '../../shared/guards/roleGuard';
 import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { created, ok, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
-import { createManualBillSchema, listBillsQuerySchema, type CreateManualBillInput, type ListBillsQuery } from './billing.schema';
+import {
+  createManualBillSchema, listBillsQuerySchema, updateBillChargesSchema,
+  type CreateManualBillInput, type ListBillsQuery, type UpdateBillChargesInput,
+} from './billing.schema';
 import { billingService } from './billing.service';
 import { renderBillPdf } from './billing.pdf';
 
@@ -48,6 +51,19 @@ router.delete(
   validate({ params: idParam }),
   asyncHandler(async (req: Request, res: Response) =>
     ok(res, await billingService.deleteBill(user(req), req.params.id), 'Bill deleted and sale reversed'),
+  ),
+);
+
+// Set/replace packing-transport-etc charges on any bill, however it was raised —
+// the main owner's only chance to add them to a bill auto-raised from a
+// franchise's own order, which has no creation-time step of its own.
+router.patch(
+  '/:id/charges',
+  requireSuperAdmin,
+  writeRateLimiter,
+  validate({ params: idParam, body: updateBillChargesSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await billingService.updateBillCharges(user(req), req.params.id, (req.body as UpdateBillChargesInput).charges), 'Charges updated'),
   ),
 );
 

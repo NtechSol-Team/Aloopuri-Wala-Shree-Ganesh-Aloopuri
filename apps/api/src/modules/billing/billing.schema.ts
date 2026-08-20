@@ -12,6 +12,18 @@ export const listBillsQuerySchema = paginationQuerySchema.extend({
   sort: z.enum(['billDate', 'dueDate', 'amount']).default('billDate'),
 });
 
+// Packing, transport, loading — dispatch costs on top of the goods themselves.
+// Not taxed and not part of subTotal; summed straight into grandTotal.
+const billChargeSchema = z.object({
+  label: z.string().trim().min(1, 'Charge needs a label').max(60),
+  amount: z.coerce.number().positive('Charge amount must be greater than 0'),
+});
+
+/** Replaces the full charge list on an existing bill — see billing.service.ts. */
+export const updateBillChargesSchema = z.object({
+  charges: z.array(billChargeSchema).max(10),
+});
+
 /**
  * Back-entry of a sale that happened but never got recorded. The date is free —
  * that's the point of the feature — and each line carries its own price so the
@@ -42,18 +54,9 @@ export const createManualBillSchema = z.object({
       }),
     )
     .min(1, 'Add at least one product'),
-  // Packing, transport, loading — dispatch costs on top of the goods themselves.
-  // Not taxed and not part of subTotal; summed straight into grandTotal.
-  charges: z
-    .array(
-      z.object({
-        label: z.string().trim().min(1, 'Charge needs a label').max(60),
-        amount: z.coerce.number().positive('Charge amount must be greater than 0'),
-      }),
-    )
-    .max(10)
-    .optional(),
+  charges: z.array(billChargeSchema).max(10).optional(),
 });
 
 export type ListBillsQuery = z.infer<typeof listBillsQuerySchema>;
 export type CreateManualBillInput = z.infer<typeof createManualBillSchema>;
+export type UpdateBillChargesInput = z.infer<typeof updateBillChargesSchema>;

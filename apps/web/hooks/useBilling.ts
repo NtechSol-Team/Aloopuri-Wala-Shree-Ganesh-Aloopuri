@@ -118,3 +118,18 @@ export function useDeleteBill() {
     onSuccess: () => invalidateSalesViews(qc),
   });
 }
+
+/**
+ * Sets the full charge list on a bill, however it was raised — including ones
+ * auto-created from a franchise's own order, which has no creation-time step of
+ * its own for the main owner to attach a charge to. Replaces, not merges: the
+ * caller sends the whole edited list back.
+ */
+export function useUpdateBillCharges() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, charges }: { id: string; charges: Array<{ label: string; amount: number }> }) =>
+      (await api.patch(`/billing/${id}/charges`, { charges })).data,
+    onSuccess: () => invalidateSalesViews(qc),
+  });
+}

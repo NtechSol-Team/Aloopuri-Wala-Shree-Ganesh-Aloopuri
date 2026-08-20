@@ -172,6 +172,64 @@ export async function regeneratePdf(user: AuthUser, id: string) {
 }
 
 /**
+ * Add/replace the packing-transport-etc charges on a bill after the fact.
+ *
+ * Bills raised from a franchise's own order (createOrder) are generated the
+ * instant they place it — there's no main-owner step in that flow to attach a
+ * charge at creation time the way there is on a Manual Sales Bill. This is that
+ * missing step: the main owner opens any bill, however it was raised, and sets
+ * its charges. The full charge list is replaced each call (not merged), which
+ * keeps the client's "edit these rows and save" UI honest — no server-side
+ * merge logic to fight with a form that's just showing what's already there.
+ */
+export async function updateBillCharges(user: AuthUser, id: string, charges: Array<{ label: string; amount: number }>) {
+  const bill = await prisma.bill.findFirst({
+    where: { id, isDeleted: false },
+    select: { id: true, billNumber: true, outletId: true, subTotal: true, taxTotal: true, amountPaid: true },
+  });
+  if (!bill) throw AppError.notFound('Bill not found');
+
+  const otherChargesTotal = charges.reduce((s, c) => s.add(new Prisma.Decimal(c.amount)), new Prisma.Decimal(0));
+  const grandTotal = new Prisma.Decimal(bill.subTotal).add(bill.taxTotal).add(otherChargesTotal);
+  const amountPaid = new Prisma.Decimal(bill.amountPaid);
+  const balanceDue = grandTotal.sub(amountPaid);
+
+  // Lowering charges below what's already been paid would make the bill "owe"
+  // a negative amount — that's a refund, which (same as deleteBill) this flow
+  // deliberately doesn't do.
+  if (balanceDue.lessThan(0)) {
+    throw AppError.invalidState(
+      `${bill.billNumber} already has ₹${amountPaid.toString()} paid against it — these charges would bring the bill below that. Adjust the payment first.`,
+    );
+  }
+  const status = balanceDue.lessThanOrEqualTo(0)
+    ? BillStatus.PAID
+    : amountPaid.greaterThan(0)
+      ? BillStatus.PARTIALLY_PAID
+      : BillStatus.UNPAID;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.billCharge.deleteMany({ where: { billId: id } });
+    await tx.bill.update({
+      where: { id },
+      data: {
+        otherChargesTotal,
+        grandTotal,
+        balanceDue,
+        status,
+        charges: charges.length ? { create: charges.map((c) => ({ label: c.label, amount: c.amount })) } : undefined,
+      },
+    });
+  });
+
+  cache.invalidateTags(CacheTag.BILLS, CacheTag.outlet(bill.outletId));
+  // The PDF was already generated (or is queued) with the old charges — re-render
+  // so the printed/downloaded invoice matches what's now on screen.
+  await enqueue(JobName.GENERATE_BILL_PDF, { billId: id });
+  return getBill(user, id);
+}
+
+/**
  * Record a sale that already happened but never got entered — a franchise forgot to
  * raise it, or it was missed at the time.
  *
@@ -395,5 +453,5 @@ export async function deleteBill(user: AuthUser, id: string) {
 
 export const billingService = {
   createBillForOrderTx, afterBillGenerated, listBills, getBill, regeneratePdf,
-  createManualBill, deleteBill,
+  createManualBill, deleteBill, updateBillCharges,
 };
