@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
 
@@ -32,6 +32,36 @@ export function useDayBook(params: { from?: string; to?: string } = {}) {
 }
 export function useProfitability() {
   return useQuery({ queryKey: ['accounting', 'profitability'], queryFn: async () => (await api.get<ApiSuccess<ProductProfit[]>>('/accounting/profitability')).data.data });
+}
+
+export type CashBookEntryType = 'RECEIPT' | 'POS_SALE' | 'EXPENSE' | 'SUPPLIER_PAYMENT' | 'ADJUSTMENT';
+export interface CashBookEntry {
+  type: CashBookEntryType; date: string; description: string; reference: string | null;
+  in: number; out: number; balance: number; sourceId: string | null;
+}
+export interface CashBook { openingBalance: number; closingBalance: number; totalIn: number; totalOut: number; entries: CashBookEntry[] }
+
+export function useCashBook(params: { from?: string; to?: string } = {}) {
+  return useQuery({ queryKey: ['accounting', 'cashbook', params], queryFn: async () => (await api.get<ApiSuccess<CashBook>>('/accounting/cashbook', { params })).data.data });
+}
+
+/** Opening balance when the Cash Book starts being used, or a later correction
+ *  after a physical count — same endpoint either way, see accounting.service.ts. */
+export function useAddCashAdjustment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { amount: number; adjustmentDate: string; reason: string }) =>
+      (await api.post('/accounting/cashbook/adjustments', input)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['accounting', 'cashbook'] }),
+  });
+}
+
+export function useDeleteCashAdjustment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete(`/accounting/cashbook/adjustments/${id}`)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['accounting', 'cashbook'] }),
+  });
 }
 
 export type LedgerAccountKind = 'PERSON' | 'OUTLET' | 'SUPPLIER';

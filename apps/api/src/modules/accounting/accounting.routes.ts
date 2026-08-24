@@ -7,11 +7,17 @@ import { validate } from '../../shared/middleware/validate';
 import { authGuard } from '../../shared/guards/authGuard';
 import { requireSuperAdmin } from '../../shared/guards/roleGuard';
 import { ok } from '../../shared/utils/apiResponse';
+import { AppError } from '../../shared/utils/AppError';
 import { accountingService } from './accounting.service';
 import { istDate } from '../../shared/utils/date';
 
 const router = Router();
 router.use(authGuard, requireSuperAdmin); // the owner's finance hub
+
+const user = (req: Request) => {
+  if (!req.user) throw AppError.unauthorized();
+  return req.user;
+};
 
 router.get('/position', asyncHandler(async (_req: Request, res: Response) => ok(res, await accountingService.getPosition())));
 
@@ -23,6 +29,40 @@ router.get(
     const from = (req.query.from as unknown as Date) ?? subDays(to, 30);
     return ok(res, await accountingService.getDayBook(from, to));
   }),
+);
+
+router.get(
+  '/cashbook',
+  validate({ query: z.object({ from: istDate.optional(), to: istDate.optional() }) }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { from?: Date; to?: Date };
+    const to = q.to ? new Date(q.to.getTime() + 24 * 60 * 60 * 1000) : undefined;
+    const resolvedTo = to ?? new Date();
+    const from = q.from ?? subDays(resolvedTo, 30);
+    return ok(res, await accountingService.getCashBook(from, resolvedTo));
+  }),
+);
+
+const cashAdjustmentSchema = z.object({
+  amount: z.coerce.number().refine((v) => v !== 0, 'Amount cannot be zero'),
+  adjustmentDate: istDate.refine((d) => d.getTime() <= Date.now(), { message: 'Adjustment date cannot be in the future' }),
+  reason: z.string().trim().min(1, 'Reason is required').max(200),
+});
+
+router.post(
+  '/cashbook/adjustments',
+  validate({ body: cashAdjustmentSchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await accountingService.addCashAdjustment(user(req), req.body), 'Adjustment recorded'),
+  ),
+);
+
+router.delete(
+  '/cashbook/adjustments/:id',
+  validate({ params: z.object({ id: z.string().uuid() }) }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await accountingService.deleteCashAdjustment(req.params.id), 'Adjustment removed'),
+  ),
 );
 
 router.get('/ledger/accounts', asyncHandler(async (_req: Request, res: Response) => ok(res, await accountingService.getLedgerAccounts())));

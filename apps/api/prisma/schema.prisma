@@ -1021,6 +1021,26 @@ model BillCharge {
   @@map("bill_charges")
 }
 
+// A manual correction to cash-in-hand — the opening balance when the Cash Book
+// starts being used, or a later correction after a physical count found a
+// shortage/surplus that no recorded receipt/expense/payment explains. Positive
+// adds cash, negative removes it. Deliberately not tied to any other record —
+// unlike everything else the Cash Book pulls together, an adjustment IS the
+// primary record of itself.
+model CashAdjustment {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  amount         Decimal  @db.Decimal(12, 2)
+  adjustmentDate DateTime @map("adjustment_date") @db.Timestamptz(6)
+  reason         String
+  isDeleted      Boolean  @default(false) @map("is_deleted")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById    String?  @map("created_by") @db.Uuid
+
+  @@index([adjustmentDate])
+  @@map("cash_adjustments")
+}
+
 model BillAudit {
   id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   billId      String      @map("bill_id") @db.Uuid

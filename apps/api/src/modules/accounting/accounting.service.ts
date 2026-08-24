@@ -1,7 +1,9 @@
 import { startOfMonth } from 'date-fns';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
+import type { AuthUser } from '../../shared/types/api';
 
 const num = (rows: Array<{ v: number | null }>): number => Number(rows[0]?.v ?? 0);
 
@@ -128,6 +130,147 @@ export async function getDayBook(from: Date, to: Date) {
     totalOut,
     net: totalIn - totalOut,
   };
+}
+
+// ─────────────────────────────── CASH BOOK ───────────────────────────────────
+//
+// Physical cash-in-hand only — the subset of the Day Book that actually moved as
+// cash rather than UPI/card/bank, plus manual adjustments (opening balance, a
+// correction after a physical count). Built the same way the Ledger is: a
+// per-source query of raw movements, a running balance carried from an opening
+// figure computed from everything before the window.
+//
+// Unlike the Day Book's PURCHASE row (which counts the whole purchase value the
+// moment goods arrive, credit or not), cash actually paid to a supplier is read
+// from SupplierPayment — a bill bought on credit doesn't touch the cash box until
+// it's actually paid. Likewise an expense only counts here when the company paid
+// it (paidBy: COMPANY) — one a partner covered out of pocket is a debt to them,
+// not company cash leaving hand; see the sign-convention note above the Ledger.
+
+export type CashBookEntryType = 'RECEIPT' | 'POS_SALE' | 'EXPENSE' | 'SUPPLIER_PAYMENT' | 'ADJUSTMENT';
+
+export interface CashBookEntry {
+  type: CashBookEntryType;
+  date: string;
+  description: string;
+  reference: string | null;
+  in: number;
+  out: number;
+  /** Running balance after this entry, opening balance included. */
+  balance: number;
+  sourceId: string | null;
+}
+
+type CashRow = { date: Date; type: CashBookEntryType; description: string; reference: string | null; in: number; out: number; sourceId: string | null };
+
+/** The raw cash movements across every source, unordered and without balances. */
+async function cashRowsFor(before?: Date): Promise<CashRow[]> {
+  const b = before ? { lt: before } : undefined;
+
+  const [payments, posDays, expenses, supplierPayments, adjustments] = await Promise.all([
+    prisma.payment.findMany({
+      where: { isDeleted: false, status: 'SUCCESS', method: 'CASH', ...(b ? { paymentDate: b } : {}) },
+      select: { id: true, paymentNumber: true, paymentDate: true, amount: true, outlet: { select: { name: true } } },
+    }),
+    // Rolled up one row per day, like the Day Book's POS row — a single counter
+    // can ring up hundreds of walk-in bills a day. cash_amount (not grand_total)
+    // is what's actually correct for a split-tender sale, where only part of the
+    // bill was cash.
+    prisma.$queryRaw<Array<{ day: Date; total: number; cnt: number }>>(
+      Prisma.sql`
+        SELECT date_trunc('day', sold_at) AS day, SUM(cash_amount)::float AS total, count(*)::int AS cnt
+        FROM pos_transactions
+        WHERE status='COMPLETED' AND is_deleted=false AND outlet_id IS NULL AND cash_amount > 0
+        ${before ? Prisma.sql`AND sold_at < ${before}` : Prisma.empty}
+        GROUP BY date_trunc('day', sold_at)
+      `,
+    ),
+    prisma.expense.findMany({
+      where: { isDeleted: false, outletId: null, paymentMethod: 'CASH', paidBy: 'COMPANY', ...(b ? { expenseDate: b } : {}) },
+      select: { id: true, amount: true, expenseDate: true, paidTo: true, category: { select: { name: true } } },
+    }),
+    prisma.supplierPayment.findMany({
+      where: { isDeleted: false, method: 'CASH', bill: { isDeleted: false, outletId: null }, ...(b ? { paymentDate: b } : {}) },
+      select: { id: true, paymentNumber: true, paymentDate: true, amount: true, bill: { select: { supplierName: true, billNumber: true } } },
+    }),
+    prisma.cashAdjustment.findMany({
+      where: { isDeleted: false, ...(b ? { adjustmentDate: b } : {}) },
+      select: { id: true, amount: true, adjustmentDate: true, reason: true },
+    }),
+  ]);
+
+  return [
+    ...payments.map((p) => ({
+      date: p.paymentDate, type: 'RECEIPT' as const, description: p.outlet.name, reference: p.paymentNumber,
+      in: Number(p.amount), out: 0, sourceId: p.id,
+    })),
+    ...posDays.map((r) => ({
+      date: r.day, type: 'POS_SALE' as const, description: 'POS / Walk-in',
+      reference: `${r.cnt} bill${r.cnt === 1 ? '' : 's'}`, in: Number(r.total), out: 0, sourceId: null,
+    })),
+    ...expenses.map((e) => ({
+      date: e.expenseDate, type: 'EXPENSE' as const, description: e.paidTo || e.category.name,
+      reference: e.category.name, in: 0, out: Number(e.amount), sourceId: e.id,
+    })),
+    ...supplierPayments.map((p) => ({
+      date: p.paymentDate, type: 'SUPPLIER_PAYMENT' as const, description: p.bill.supplierName ?? 'Supplier',
+      reference: p.bill.billNumber, in: 0, out: Number(p.amount), sourceId: p.id,
+    })),
+    ...adjustments.map((a) => {
+      const amt = Number(a.amount);
+      return {
+        date: a.adjustmentDate, type: 'ADJUSTMENT' as const, description: a.reason, reference: null,
+        in: amt > 0 ? amt : 0, out: amt < 0 ? -amt : 0, sourceId: a.id,
+      };
+    }),
+  ];
+}
+
+/**
+ * Cash-in-hand: opening balance carried in from everything before `from`, then
+ * each cash movement in date order with a running balance, then the closing —
+ * the figure that should match an actual physical count.
+ */
+export async function getCashBook(from?: Date, to?: Date) {
+  const [priorRows, allRows] = await Promise.all([
+    from ? cashRowsFor(from) : Promise.resolve([] as CashRow[]),
+    cashRowsFor(),
+  ]);
+
+  const openingBalance = priorRows.reduce((s, r) => s + r.in - r.out, 0);
+  const windowed = allRows
+    .filter((r) => (!from || r.date >= from) && (!to || r.date < to))
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  let running = openingBalance;
+  const entries: CashBookEntry[] = windowed.map((r) => {
+    running += r.in - r.out;
+    return {
+      type: r.type, date: r.date.toISOString(), description: r.description, reference: r.reference,
+      in: r.in, out: r.out, balance: running, sourceId: r.sourceId,
+    };
+  });
+
+  return {
+    openingBalance,
+    closingBalance: running,
+    totalIn: entries.reduce((s, e) => s + e.in, 0),
+    totalOut: entries.reduce((s, e) => s + e.out, 0),
+    entries,
+  };
+}
+
+export async function addCashAdjustment(user: AuthUser, input: { amount: number; adjustmentDate: Date; reason: string }) {
+  return prisma.cashAdjustment.create({
+    data: { amount: input.amount, adjustmentDate: input.adjustmentDate, reason: input.reason, createdById: user.id },
+  });
+}
+
+export async function deleteCashAdjustment(id: string) {
+  const row = await prisma.cashAdjustment.findFirst({ where: { id, isDeleted: false } });
+  if (!row) throw AppError.notFound('Adjustment not found');
+  await prisma.cashAdjustment.update({ where: { id }, data: { isDeleted: true } });
+  return { deleted: true };
 }
 
 // ─────────────────────────────── LEDGER ─────────────────────────────────────
@@ -375,4 +518,7 @@ export async function getProductProfitability() {
   );
 }
 
-export const accountingService = { getPosition, getDayBook, getLedgerAccounts, getLedger, getProductProfitability };
+export const accountingService = {
+  getPosition, getDayBook, getCashBook, addCashAdjustment, deleteCashAdjustment,
+  getLedgerAccounts, getLedger, getProductProfitability,
+};
