@@ -111,9 +111,20 @@ export async function login(
   return { ...tokens, user: toPublicUser(user) };
 }
 
+// How long a just-rotated-away refresh token is still honoured. The same login
+// shared across two browser tabs (same localStorage) races on rotation: whichever
+// tab refreshes first moves the session onto a new token, and the other tab's
+// still-in-memory copy is now "old" — its own refresh, due within the 15-minute
+// access-token life, would otherwise read as reuse and kill the session outright.
+// A real thief replaying a stolen token still gets caught the moment this window
+// closes; it isn't a standing exemption, just enough slack for a near-simultaneous
+// second tab to land moments after the first.
+const REFRESH_GRACE_MS = 30_000;
+
 /**
  * Rotate tokens. Detects refresh-token reuse: if the presented token's hash
- * doesn't match the stored one, the session is revoked (possible theft).
+ * doesn't match the stored one (and isn't the just-superseded one, within its
+ * grace window), the session is revoked (possible theft).
  */
 export async function refresh(refreshToken: string): Promise<AuthTokens> {
   const payload = verifyRefreshToken(refreshToken);
@@ -126,8 +137,16 @@ export async function refresh(refreshToken: string): Promise<AuthTokens> {
   if (session.expiresAt < new Date()) throw AppError.unauthorized('Session has expired');
 
   const presentedHash = hashToken(refreshToken);
-  if (presentedHash !== session.refreshTokenHash) {
-    // Reuse of an old/rotated token → revoke the whole session.
+  const isCurrent = presentedHash === session.refreshTokenHash;
+  const isRecentlySuperseded =
+    !isCurrent &&
+    presentedHash === session.previousRefreshTokenHash &&
+    !!session.previousHashExpiresAt &&
+    session.previousHashExpiresAt > new Date();
+
+  if (!isCurrent && !isRecentlySuperseded) {
+    // Reuse of a token that's neither current nor within its grace window →
+    // revoke the whole session.
     await prisma.userSession.update({
       where: { id: session.id },
       data: { revokedAt: new Date() },
@@ -146,7 +165,16 @@ export async function refresh(refreshToken: string): Promise<AuthTokens> {
   });
   await prisma.userSession.update({
     where: { id: session.id },
-    data: { refreshTokenHash: hashToken(tokens.refreshToken), lastActiveAt: new Date() },
+    data: {
+      refreshTokenHash: hashToken(tokens.refreshToken),
+      // Only the current token becomes the new "previous" on a normal rotation.
+      // A grace-window hit rotates again but deliberately does NOT extend the
+      // window from the token just presented — otherwise a stolen token could be
+      // kept alive indefinitely by replaying it inside every prior window.
+      previousRefreshTokenHash: isCurrent ? session.refreshTokenHash : session.previousRefreshTokenHash,
+      previousHashExpiresAt: isCurrent ? new Date(Date.now() + REFRESH_GRACE_MS) : session.previousHashExpiresAt,
+      lastActiveAt: new Date(),
+    },
   });
 
   return tokens;

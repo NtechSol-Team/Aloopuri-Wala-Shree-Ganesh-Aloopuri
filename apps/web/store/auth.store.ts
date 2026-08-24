@@ -38,3 +38,17 @@ export const useAuthStore = create<AuthState>()(
 export const authSnapshot = {
   get: () => useAuthStore.getState(),
 };
+
+// Keep every same-origin tab's in-memory tokens in sync with whichever tab last
+// wrote to localStorage. Without this, a tab left open in the background never
+// learns that another tab already rotated the (shared, single) refresh token —
+// so when it wakes up and its own access token has expired, it presents a token
+// the server rotated away from many cycles ago, which reads as reuse and revokes
+// the whole session, logging out every tab. Syncing here means a tab is never
+// more than one rotation behind, which is what the server's short grace window
+// (see auth.service.ts) is sized to tolerate, rather than minutes of drift.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'scfc-auth') useAuthStore.persist.rehydrate();
+  });
+}
