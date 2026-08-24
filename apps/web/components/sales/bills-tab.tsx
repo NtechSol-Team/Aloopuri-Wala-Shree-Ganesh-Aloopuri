@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
-import { Download, Printer, Eye, ReceiptText, IndianRupee, Plus, Trash2, Pencil } from 'lucide-react';
+import { Download, Printer, Eye, ReceiptText, IndianRupee, Plus, Trash2, Pencil, Phone } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { cn, formatINR, ist, todayIso } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
 import { useBills, useBill, useOpenBillPdf, usePrintBillPdf, useUpdateBillCharges, type BillStatus } from '@/hooks/useBilling';
+import { useCallNumber } from '@/hooks/useSettings';
 import { useOutlets } from '@/hooks/useOutlets';
 import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
 import { ManualBillDialog } from '@/components/sales/manual-bill-dialog';
@@ -193,10 +194,14 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
 }
 
 function BillDetailDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
-  const isAdmin = useAuthStore((s) => s.user?.role) === 'SUPER_ADMIN';
+  const role = useAuthStore((s) => s.user?.role);
+  const isAdmin = role === 'SUPER_ADMIN';
   const { data: bill, isLoading } = useBill(id);
   const printPdf = usePrintBillPdf();
   const updateCharges = useUpdateBillCharges();
+  // Only meaningful for a franchise owner — the main owner calling themselves
+  // makes no sense — and only once the main owner has actually set a number.
+  const { data: callSetting } = useCallNumber();
 
   // Packing/transport/etc — editable by the main owner on any bill, including one
   // auto-raised from a franchise's own order, which has no creation-time step of
@@ -242,9 +247,18 @@ function BillDetailDialog({ id, onClose }: { id: string | null; onClose: () => v
               {bill && !bill.isGstBill && <Badge variant="neutral">No GST</Badge>}
             </DialogTitle>
             {bill && (
-              <Button variant="secondary" size="sm" loading={printPdf.isPending} onClick={() => id && printPdf.mutate(id, { onError: (e) => toast.error(apiErrorMessage(e)) })}>
-                <Printer className="h-3.5 w-3.5" /> Print
-              </Button>
+              <div className="flex items-center gap-2">
+                {role === 'FRANCHISE_OWNER' && callSetting?.phone && (
+                  <Button variant="secondary" size="sm" asChild>
+                    <a href={`tel:${callSetting.phone.replace(/[^\d+]/g, '')}`}>
+                      <Phone className="h-3.5 w-3.5" /> Call
+                    </a>
+                  </Button>
+                )}
+                <Button variant="secondary" size="sm" loading={printPdf.isPending} onClick={() => id && printPdf.mutate(id, { onError: (e) => toast.error(apiErrorMessage(e)) })}>
+                  <Printer className="h-3.5 w-3.5" /> Print
+                </Button>
+              </div>
             )}
           </div>
         </DialogHeader>

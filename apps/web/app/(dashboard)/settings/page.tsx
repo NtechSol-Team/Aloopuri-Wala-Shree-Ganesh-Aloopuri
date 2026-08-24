@@ -1,17 +1,21 @@
 'use client';
 
-import { useState } from 'react';
-import { Store, Pencil, FileText, ShieldCheck, AlertTriangle, Lock, UtensilsCrossed } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import toast from 'react-hot-toast';
+import { Store, Pencil, FileText, ShieldCheck, AlertTriangle, Lock, UtensilsCrossed, Phone } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import { apiErrorMessage } from '@/lib/api';
 import { useAuthStore } from '@/store/auth.store';
 import { useOutlets, useAssignMenu, type Outlet } from '@/hooks/useOutlets';
 import { useMenus } from '@/hooks/useMenus';
+import { useCallNumber, useUpdateCallNumber } from '@/hooks/useSettings';
 import { OutletDetailsDialog } from '@/components/settings/outlet-details-dialog';
 import { OutletDocumentsDialog } from '@/components/settings/outlet-documents-dialog';
 import { MenuManagement } from '@/components/menus/menu-management';
@@ -47,6 +51,8 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-5">
+      <CallNumberCard />
+
       {/* Tabs */}
       <div className="flex gap-1 border-b border-border">
         {([['outlets', 'Outlet Settings', Store], ['menus', 'Menu Management', UtensilsCrossed]] as const).map(([key, label, Icon]) => (
@@ -147,6 +153,55 @@ export default function SettingsPage() {
       <OutletDetailsDialog outlet={editing} onClose={() => setEditing(null)} />
       <OutletDocumentsDialog outlet={docsFor} onClose={() => setDocsFor(null)} />
     </div>
+  );
+}
+
+/**
+ * The number a franchise owner's Call button dials, from their side of the app
+ * (Sales → Sale → an invoice's Call button, next to Print). One global number,
+ * not per-outlet — whoever the main owner wants that button reaching.
+ */
+function CallNumberCard() {
+  const { data, isLoading } = useCallNumber();
+  const update = useUpdateCallNumber();
+  const [phone, setPhone] = useState('');
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (!isLoading) setPhone(data?.phone ?? '');
+  }, [isLoading, data?.phone]);
+
+  const save = () => {
+    update.mutate(phone, {
+      onSuccess: () => { toast.success(phone.trim() ? 'Contact number saved' : 'Contact number cleared'); setEditing(false); },
+      onError: (e) => toast.error(apiErrorMessage(e)),
+    });
+  };
+
+  return (
+    <Card className="flex flex-wrap items-center gap-3 p-4">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        <Phone className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-body font-medium">Franchise Call Number</p>
+        <p className="text-caption text-muted-foreground">Dialled when a franchise owner taps Call on a bill. Leave blank to hide that button.</p>
+      </div>
+      {isLoading ? (
+        <Skeleton className="h-9 w-48" />
+      ) : editing ? (
+        <div className="flex items-center gap-2">
+          <Input className="w-48" value={phone} placeholder="e.g. +91 98765 43210" onChange={(e) => setPhone(e.target.value)} />
+          <Button size="sm" loading={update.isPending} onClick={save}>Save</Button>
+          <Button size="sm" variant="secondary" onClick={() => { setPhone(data?.phone ?? ''); setEditing(false); }}>Cancel</Button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <span className={cn('text-body', !data?.phone && 'text-muted-foreground italic')}>{data?.phone || 'Not set'}</span>
+          <Button size="sm" variant="secondary" onClick={() => setEditing(true)}><Pencil className="h-3.5 w-3.5" /> Edit</Button>
+        </div>
+      )}
+    </Card>
   );
 }
 

@@ -20,6 +20,7 @@ import { contactsRouter } from '../modules/contacts/contacts.routes';
 import { assetsRouter } from '../modules/assets/assets.routes';
 import { employeesRouter, shiftsRouter } from '../modules/employees/employees.routes';
 import { payrollRouter } from '../modules/payroll/payroll.routes';
+import { settingsRouter } from '../modules/settings/settings.routes';
 import { developerPaymentsRouter } from '../modules/developer-payments/developer-payments.routes';
 import { developerPresenceRouter } from '../modules/developer-presence/developer-presence.routes';
 import { developerMetricsRouter } from '../modules/developer-metrics/developer-metrics.routes';
@@ -58,6 +59,7 @@ export function buildApiRouter(): Router {
   router.use('/employees', employeesRouter);
   router.use('/shifts', shiftsRouter);
   router.use('/payroll', payrollRouter);
+  router.use('/settings', settingsRouter);
   router.use('/developer-payments', developerPaymentsRouter);
   router.use('/developer-presence', developerPresenceRouter);
   router.use('/developer-metrics', developerMetricsRouter);
