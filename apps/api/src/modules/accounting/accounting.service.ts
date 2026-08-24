@@ -18,7 +18,7 @@ export async function getPosition() {
 
     const [
       cashIn, digitalIn, posCash, posDigital, posSalesMonth, billingMonth,
-      expensesMonth, purchasesMonth, receivables, rawStock, fgValue, cogsMonth, payables,
+      expensesMonth, paidExpensesMonth, purchasesMonth, receivables, rawStock, fgValue, cogsMonth, payables,
     ] = await Promise.all([
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM payments WHERE is_deleted=false AND channel='CASH' AND payment_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM payments WHERE is_deleted=false AND channel='DIGITAL' AND payment_date >= ${monthStart}`,
@@ -26,7 +26,12 @@ export async function getPosition() {
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(card_amount+upi_amount),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(grand_total),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(grand_total),0)::float v FROM bills WHERE is_deleted=false AND status<>'CANCELLED' AND bill_date >= ${monthStart}`,
+      // Accrual total — every expense incurred this month, paid or not. Feeds P&L:
+      // an owed-but-unpaid expense is still a real cost against this month's profit.
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM expenses WHERE is_deleted=false AND outlet_id IS NULL AND expense_date >= ${monthStart}`,
+      // Cash-basis total — excludes NOT_PAID. Feeds Money Out / Net Cash Flow below,
+      // which must reflect what actually left the business, not what's merely owed.
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM expenses WHERE is_deleted=false AND outlet_id IS NULL AND payment_method<>'NOT_PAID' AND expense_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(total_cost),0)::float v FROM raw_material_intake WHERE is_deleted=false AND intake_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(balance_due),0)::float v FROM bills WHERE is_deleted=false AND status IN ('UNPAID','PARTIALLY_PAID')`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(current_stock*cost_per_unit),0)::float v FROM raw_materials WHERE is_deleted=false`,
@@ -43,7 +48,7 @@ export async function getPosition() {
     const moneyInCash = num(cashIn) + num(posCash);
     const moneyInDigital = num(digitalIn) + num(posDigital);
     const moneyIn = moneyInCash + moneyInDigital;
-    const moneyOut = num(expensesMonth) + num(purchasesMonth);
+    const moneyOut = num(paidExpensesMonth) + num(purchasesMonth);
     const revenueMonth = num(posSalesMonth) + num(billingMonth);
     const grossProfit = revenueMonth - num(cogsMonth);
     const netProfit = grossProfit - num(expensesMonth);
@@ -59,6 +64,10 @@ export async function getPosition() {
       posSalesMonth: num(posSalesMonth),
       billingMonth: num(billingMonth),
       expensesMonth: num(expensesMonth),
+      // What Money Out's own "Expenses" breakdown should show — kept separate from
+      // expensesMonth (the P&L figure) so the two numbers on screen add up to what
+      // they're each labelled as, instead of quietly disagreeing over unpaid ones.
+      paidExpensesMonth: num(paidExpensesMonth),
       purchasesMonth: num(purchasesMonth),
       cogsMonth: num(cogsMonth),
       grossProfit,

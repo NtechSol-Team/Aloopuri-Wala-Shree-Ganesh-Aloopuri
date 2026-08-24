@@ -8,7 +8,11 @@ export interface FinancialPosition {
   moneyIn: number; moneyInCash: number; moneyInDigital: number;
   moneyOut: number; netCashFlow: number;
   revenueMonth: number; posSalesMonth: number; billingMonth: number;
-  expensesMonth: number; purchasesMonth: number; cogsMonth: number;
+  /** Accrual total — every expense incurred this month, paid or not. For P&L. */
+  expensesMonth: number;
+  /** Cash-basis total — excludes Not Paid expenses. What Money Out's breakdown shows. */
+  paidExpensesMonth: number;
+  purchasesMonth: number; cogsMonth: number;
   grossProfit: number; netProfit: number;
   receivables: number; payables: number; rawStockValue: number; finishedGoodsValue: number; stockValue: number;
 }

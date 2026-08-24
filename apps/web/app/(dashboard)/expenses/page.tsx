@@ -31,10 +31,10 @@ const LOCATIONS: ExpenseLocation[] = ['GODOWN', 'MAIN_BRANCH', 'GENERAL'];
 const LOCATION_LABEL: Record<ExpenseLocation, string> = {
   GODOWN: 'Godown', MAIN_BRANCH: 'Main Branch', GENERAL: 'General',
 };
-const METHODS = ['CASH', 'UPI', 'BANK_TRANSFER', 'CARD', 'NET_BANKING'] as const;
+const METHODS = ['CASH', 'UPI', 'BANK_TRANSFER', 'CARD', 'NET_BANKING', 'NOT_PAID'] as const;
 const METHOD_LABEL: Record<string, string> = {
   CASH: 'Cash', UPI: 'UPI', BANK_TRANSFER: 'Bank Transfer', CARD: 'Card',
-  NET_BANKING: 'Net Banking', RAZORPAY: 'Razorpay',
+  NET_BANKING: 'Net Banking', RAZORPAY: 'Razorpay', NOT_PAID: 'Not Paid',
 };
 
 // Local calendar date, not toISOString() — in IST the latter shifts back 5h30m, so a
@@ -385,7 +385,13 @@ function ExpenseRow({ expense, isBranch, onEdit }: { expense: Expense; isBranch:
       <TD className="text-muted-foreground">{expense.paidTo || '—'}</TD>
       <TD><Badge variant={expense.paidBy === 'COMPANY' ? 'neutral' : 'info'}>{PAID_BY_LABEL[expense.paidBy]}</Badge></TD>
       {!isBranch && <TD><Badge variant="neutral">{LOCATION_LABEL[expense.location]}</Badge></TD>}
-      <TD className="text-caption">{METHOD_LABEL[expense.paymentMethod] ?? expense.paymentMethod}</TD>
+      <TD>
+        {expense.paymentMethod === 'NOT_PAID' ? (
+          <Badge variant="danger">Not Paid</Badge>
+        ) : (
+          <span className="text-caption">{METHOD_LABEL[expense.paymentMethod] ?? expense.paymentMethod}</span>
+        )}
+      </TD>
       <TD className="text-right font-semibold tabular-nums">{formatINR(expense.amount)}</TD>
       <TD>
         <div className="flex justify-end gap-1">

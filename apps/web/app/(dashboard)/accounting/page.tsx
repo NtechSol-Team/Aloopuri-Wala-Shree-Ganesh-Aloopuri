@@ -61,7 +61,7 @@ function PositionTab() {
       {/* Cash flow */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Money In (month)" value={formatINR(p.moneyIn, { decimals: false })} icon={ArrowUpRight} accent="success" sub={`Cash ${formatINR(p.moneyInCash, { decimals: false })} · Digital ${formatINR(p.moneyInDigital, { decimals: false })}`} />
-        <Stat label="Money Out (month)" value={formatINR(p.moneyOut, { decimals: false })} icon={ArrowDownRight} accent="danger" sub={`Expenses ${formatINR(p.expensesMonth, { decimals: false })} · Purchases ${formatINR(p.purchasesMonth, { decimals: false })}`} />
+        <Stat label="Money Out (month)" value={formatINR(p.moneyOut, { decimals: false })} icon={ArrowDownRight} accent="danger" sub={`Expenses ${formatINR(p.paidExpensesMonth, { decimals: false })} · Purchases ${formatINR(p.purchasesMonth, { decimals: false })}`} />
         <Stat label="Net Cash Flow" value={formatINR(p.netCashFlow, { decimals: false })} icon={Wallet} accent={p.netCashFlow >= 0 ? 'success' : 'danger'} />
         <Stat label="Receivables (AR)" value={formatINR(p.receivables, { decimals: false })} icon={ReceiptText} accent="warning" sub="owed by outlets" />
       </div>

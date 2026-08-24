@@ -112,6 +112,10 @@ enum PaymentMethod {
   NET_BANKING
   RAZORPAY
   BANK_TRANSFER
+  // Expense-only: the amount is owed but hasn't actually been paid by any
+  // method yet. Editing a not-paid expense to a real method is how it gets
+  // marked paid — there's no separate status field to keep in sync.
+  NOT_PAID
 }
 
 enum PaymentStatus {
@@ -266,10 +270,31 @@ model User {
   @@map("users")
 }
 
+// Small global key/value settings the main owner edits from Settings — currently
+// just the contact number a franchise owner's Call button dials. Deliberately
+// generic (not its own single-purpose table) so the next single-value setting
+// doesn't need its own migration.
+model AppSetting {
+  key         String   @id
+  value       String
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedById String?  @map("updated_by") @db.Uuid
+
+  @@map("app_settings")
+}
+
 model UserSession {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId           String    @map("user_id") @db.Uuid
   refreshTokenHash String    @map("refresh_token_hash")
+  // The hash rotation just replaced, kept valid for a short grace window. Same
+  // account open in two tabs shares one localStorage session: whichever tab
+  // refreshes first rotates the token, and the other tab's still-in-memory copy
+  // becomes "old" the instant that happens — without a grace window, its very
+  // next refresh (due within the 15-minute access-token life) reads as token
+  // reuse and revokes the session, logging out both tabs. See auth.service.ts.
+  previousRefreshTokenHash String?   @map("previous_refresh_token_hash")
+  previousHashExpiresAt    DateTime? @map("previous_hash_expires_at") @db.Timestamptz(6)
   deviceName       String?   @map("device_name")
   ipAddress        String?   @map("ip_address")
   userAgent        String?   @map("user_agent")

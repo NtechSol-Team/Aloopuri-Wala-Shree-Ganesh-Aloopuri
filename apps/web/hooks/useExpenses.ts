@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import type { ApiSuccess } from '@/types/api';
 
 export type ExpenseLocation = 'GODOWN' | 'MAIN_BRANCH' | 'GENERAL';
-export type ExpensePaymentMethod = 'CASH' | 'CARD' | 'UPI' | 'NET_BANKING' | 'RAZORPAY' | 'BANK_TRANSFER';
+export type ExpensePaymentMethod = 'CASH' | 'CARD' | 'UPI' | 'NET_BANKING' | 'RAZORPAY' | 'BANK_TRANSFER' | 'NOT_PAID';
 export type PaidBy = 'COMPANY' | 'KALPESHBHAI' | 'MAYURBHAI';
 
 /** Display labels for who fronted the money. */
