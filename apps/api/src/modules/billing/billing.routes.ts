@@ -4,13 +4,13 @@ import type { Request, Response } from 'express';
 import { asyncHandler } from '../../shared/utils/asyncHandler';
 import { validate } from '../../shared/middleware/validate';
 import { authGuard } from '../../shared/guards/authGuard';
-import { requireSuperAdmin } from '../../shared/guards/roleGuard';
+import { requireSuperAdmin, requireGodownAccess } from '../../shared/guards/roleGuard';
 import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { created, ok, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import {
-  createManualBillSchema, listBillsQuerySchema, updateBillChargesSchema,
-  type CreateManualBillInput, type ListBillsQuery, type UpdateBillChargesInput,
+  createManualBillSchema, listBillsQuerySchema, updateBillChargesSchema, itemSalesReportQuerySchema,
+  type CreateManualBillInput, type ListBillsQuery, type UpdateBillChargesInput, type ItemSalesReportQuery,
 } from './billing.schema';
 import { billingService } from './billing.service';
 import { renderBillPdf } from './billing.pdf';
@@ -65,6 +65,19 @@ router.patch(
   asyncHandler(async (req: Request, res: Response) =>
     ok(res, await billingService.updateBillCharges(user(req), req.params.id, (req.body as UpdateBillChargesInput).charges), 'Charges updated'),
   ),
+);
+
+// One product, one period, outlet-wise — who's buying it and for how much. The
+// main owner's/godown's report, not a franchise owner's: they don't need to see
+// what other outlets bought.
+router.get(
+  '/reports/item-sales',
+  requireGodownAccess,
+  validate({ query: itemSalesReportQuerySchema }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as ItemSalesReportQuery;
+    return ok(res, await billingService.getItemSalesReport(q.productId, q.from, q.to));
+  }),
 );
 
 router.get(

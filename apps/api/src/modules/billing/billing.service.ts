@@ -172,6 +172,64 @@ export async function regeneratePdf(user: AuthUser, id: string) {
 }
 
 /**
+ * One product, one period: which outlets bought it and how much — quantity in the
+ * product's own unit, revenue per outlet, and of that revenue how much is actually
+ * collected vs still pending. Reads BillItem directly rather than the order it
+ * came from, so a Manual Sales Bill counts exactly the same as one raised from a
+ * real order; both are real sales of the item.
+ *
+ * Payments are recorded against a whole bill, not itemised per line — a bill can
+ * carry several products, and a partial payment doesn't say which of them it
+ * covers. So each item's collected/pending share is the bill's own paid/due split
+ * applied pro-rata to that item's line total: a bill 60% paid credits every item
+ * on it at 60% collected. That's the only allocation that's actually derivable
+ * from what's recorded, and it's exact when a bill has just the one item (the
+ * common case for a franchise's order).
+ */
+export async function getItemSalesReport(productId: string, from?: Date, to?: Date) {
+  const product = await prisma.product.findFirst({
+    where: { id: productId, isDeleted: false },
+    select: { id: true, name: true, sku: true, unit: { select: { name: true, decimalPlaces: true } } },
+  });
+  if (!product) throw AppError.notFound('Product not found');
+
+  const range = istRange(from, to);
+  const rows = await prisma.$queryRaw<Array<{ outlet_id: string; outlet_name: string; qty: number; revenue: number; collected: number | null; pending: number | null }>>`
+    SELECT b.outlet_id AS outlet_id, o.name AS outlet_name,
+           SUM(bi.quantity)::float AS qty,
+           SUM(bi.line_total)::float AS revenue,
+           SUM(bi.line_total * b.amount_paid / NULLIF(b.grand_total, 0))::float AS collected,
+           SUM(bi.line_total * b.balance_due / NULLIF(b.grand_total, 0))::float AS pending
+    FROM bill_items bi
+    JOIN bills b ON b.id = bi.bill_id
+    JOIN outlets o ON o.id = b.outlet_id
+    WHERE bi.is_deleted = false AND b.is_deleted = false AND b.status <> 'CANCELLED'
+      AND bi.product_id = ${productId}::uuid
+      ${range?.gte ? Prisma.sql`AND b.bill_date >= ${range.gte}` : Prisma.empty}
+      ${range?.lt ? Prisma.sql`AND b.bill_date < ${range.lt}` : Prisma.empty}
+    GROUP BY b.outlet_id, o.name
+    ORDER BY revenue DESC
+  `;
+
+  const outlets = rows.map((r) => ({
+    outletId: r.outlet_id,
+    outletName: r.outlet_name,
+    qty: Number(r.qty),
+    revenue: Number(r.revenue),
+    collected: Number(r.collected ?? 0),
+    pending: Number(r.pending ?? 0),
+  }));
+  return {
+    product: { id: product.id, name: product.name, sku: product.sku, unitName: product.unit.name, decimalPlaces: product.unit.decimalPlaces },
+    totalQty: outlets.reduce((s, o) => s + o.qty, 0),
+    totalRevenue: outlets.reduce((s, o) => s + o.revenue, 0),
+    totalCollected: outlets.reduce((s, o) => s + o.collected, 0),
+    totalPending: outlets.reduce((s, o) => s + o.pending, 0),
+    outlets,
+  };
+}
+
+/**
  * Add/replace the packing-transport-etc charges on a bill after the fact.
  *
  * Bills raised from a franchise's own order (createOrder) are generated the
@@ -453,5 +511,5 @@ export async function deleteBill(user: AuthUser, id: string) {
 
 export const billingService = {
   createBillForOrderTx, afterBillGenerated, listBills, getBill, regeneratePdf,
-  createManualBill, deleteBill, updateBillCharges,
+  createManualBill, deleteBill, updateBillCharges, getItemSalesReport,
 };

@@ -57,6 +57,13 @@ export const createManualBillSchema = z.object({
   charges: z.array(billChargeSchema).max(10).optional(),
 });
 
+export const itemSalesReportQuerySchema = z.object({
+  productId: z.string().uuid(),
+  from: istDate.optional(),
+  to: istDate.optional(),
+});
+
 export type ListBillsQuery = z.infer<typeof listBillsQuerySchema>;
 export type CreateManualBillInput = z.infer<typeof createManualBillSchema>;
 export type UpdateBillChargesInput = z.infer<typeof updateBillChargesSchema>;
+export type ItemSalesReportQuery = z.infer<typeof itemSalesReportQuerySchema>;

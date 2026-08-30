@@ -119,6 +119,24 @@ export function useDeleteBill() {
   });
 }
 
+export interface ItemSalesReport {
+  product: { id: string; name: string; sku: string; unitName: string; decimalPlaces: number };
+  totalQty: number;
+  totalRevenue: number;
+  totalCollected: number;
+  totalPending: number;
+  outlets: Array<{ outletId: string; outletName: string; qty: number; revenue: number; collected: number; pending: number }>;
+}
+
+/** One product, one period, outlet-wise — who bought it and for how much. */
+export function useItemSalesReport(params: { productId?: string; from?: string; to?: string }) {
+  return useQuery({
+    queryKey: ['bills', 'item-sales-report', params],
+    enabled: !!params.productId,
+    queryFn: async () => (await api.get<ApiSuccess<ItemSalesReport>>('/billing/reports/item-sales', { params })).data.data,
+  });
+}
+
 /**
  * Sets the full charge list on a bill, however it was raised — including ones
  * auto-created from a franchise's own order, which has no creation-time step of
