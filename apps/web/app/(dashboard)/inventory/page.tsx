@@ -32,7 +32,7 @@ export default function InventoryPage() {
           Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28" />)
         ) : (
           <>
-            <KpiCard label="Godown Units" value={String(summary.godownUnits)} icon={Warehouse} accent="primary" />
+            <KpiCard label="Warehouse Units" value={String(summary.godownUnits)} icon={Warehouse} accent="primary" />
             <KpiCard label="Outlet Units" value={String(summary.outletUnits)} icon={Boxes} accent="primary" />
             <KpiCard label="Low Stock Alerts" value={String(summary.lowStockCount)} icon={AlertTriangle} accent="danger" />
           </>
@@ -40,7 +40,7 @@ export default function InventoryPage() {
       </div>
 
       <div className="flex gap-1 overflow-x-auto border-b border-border scrollbar-thin">
-        {([['godown', 'Godown'], ['outlets', 'Outlets'], ['movements', 'Stock Movement']] as const).map(([key, label]) => (
+        {([['godown', 'Warehouse'], ['outlets', 'Outlets'], ['movements', 'Stock Movement']] as const).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} className={cn('shrink-0 border-b-2 px-4 py-2 text-body font-medium transition-colors', tab === key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{label}</button>
         ))}
       </div>

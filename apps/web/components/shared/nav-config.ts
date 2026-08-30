@@ -57,7 +57,7 @@ export function navForRole(role: UserRole): NavItem[] {
 
 export const ROLE_LABEL: Record<UserRole, string> = {
   SUPER_ADMIN: 'Owner',
-  GODOWN_MANAGER: 'Godown Manager',
+  GODOWN_MANAGER: 'Warehouse Manager',
   FRANCHISE_OWNER: 'Franchise Owner',
   CASHIER: 'Cashier',
 };

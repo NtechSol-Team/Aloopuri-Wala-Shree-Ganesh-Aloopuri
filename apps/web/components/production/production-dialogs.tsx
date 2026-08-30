@@ -123,7 +123,7 @@ export function LogBatchDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>Log Production Batch</DialogTitle>
-          <DialogDescription>Ingredients (raw materials + product components) auto-deduct from the godown. Add overheads to get the true per-unit cost.</DialogDescription>
+          <DialogDescription>Ingredients (raw materials + product components) auto-deduct from the warehouse. Add overheads to get the true per-unit cost.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

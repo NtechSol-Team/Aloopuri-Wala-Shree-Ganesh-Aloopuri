@@ -82,7 +82,7 @@ export function ProductFormDialog({
 
   const onSubmit = (values: FormValues) => {
     if (product && held + Number(values.addStock || 0) < 0) {
-      toast.error(`Only ${formatQty(held, decimals)} ${product.unit.name} in the godown to reduce.`);
+      toast.error(`Only ${formatQty(held, decimals)} ${product.unit.name} in the warehouse to reduce.`);
       return;
     }
     // openingStock is create-only, addStock is edit-only — each is hidden on the
@@ -144,7 +144,7 @@ export function ProductFormDialog({
               <Field
                 label="Opening Stock"
                 error={errors.openingStock?.message}
-                hint="Added to Godown stock on creation. Manage stock afterwards from Inventory."
+                hint="Added to Warehouse stock on creation. Manage stock afterwards from Inventory."
               >
                 <Input type="number" step={stepFor(decimals)} {...register('openingStock')} />
               </Field>
@@ -157,12 +157,12 @@ export function ProductFormDialog({
                 error={
                   errors.addStock?.message ??
                   (held + adjust < 0
-                    ? `Only ${formatQty(held, decimals)} ${product.unit.name} in the godown to reduce.`
+                    ? `Only ${formatQty(held, decimals)} ${product.unit.name} in the warehouse to reduce.`
                     : undefined)
                 }
                 hint={
                   adjust === 0
-                    ? `In the Godown: ${formatQty(held, decimals)} ${product.unit.name}. Enter a positive number to add, a negative one to reduce.`
+                    ? `In the Warehouse: ${formatQty(held, decimals)} ${product.unit.name}. Enter a positive number to add, a negative one to reduce.`
                     : `${formatQty(held, decimals)} → ${formatQty(held + adjust, decimals)} ${product.unit.name} (${adjust > 0 ? 'adding' : 'reducing by'} ${formatQty(Math.abs(adjust), decimals)})`
                 }
               >

@@ -339,7 +339,7 @@ export function pickListBytes(
   e.align('left').divider();
   e.leftRight('Order', order.orderNumber);
   e.leftRight('Outlet', order.outletName);
-  if (order.fulfillmentSource) e.leftRight('Fulfil from', order.fulfillmentSource === 'GODOWN' ? 'Godown' : 'Main Branch');
+  if (order.fulfillmentSource) e.leftRight('Fulfil from', order.fulfillmentSource === 'GODOWN' ? 'Warehouse' : 'Main Branch');
   e.leftRight(order.fulfillmentSource ? 'Confirmed' : 'Received', format(ist(order.orderDate), 'dd MMM yyyy, hh:mm a'));
   e.leftRight('Bill type', order.isGstBill ? 'With GST' : 'No GST');
   e.divider();

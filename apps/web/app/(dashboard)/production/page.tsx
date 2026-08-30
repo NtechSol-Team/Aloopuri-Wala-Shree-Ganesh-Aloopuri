@@ -73,7 +73,7 @@ function MaterialsTab() {
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-body text-muted-foreground">Material master & current godown stock.</p>
+        <p className="text-body text-muted-foreground">Material master & current warehouse stock.</p>
         <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> Add Raw Material</Button>
       </div>
       {isLoading ? (
@@ -191,11 +191,11 @@ function BatchPrintButton({ batchId }: { batchId: string }) {
 function FinishedTab() {
   const { data, isLoading } = useGodownStock();
   if (isLoading) return <Card className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</Card>;
-  if (!data?.length) return <Empty icon={Warehouse} text="No finished goods at the godown yet." card />;
+  if (!data?.length) return <Empty icon={Warehouse} text="No finished goods at the warehouse yet." card />;
   return (
     <Card className="overflow-hidden">
       <Table>
-        <THead><TR><TH>Product</TH><TH>SKU</TH><TH className="text-right">Godown Qty</TH><TH className="text-right">Reorder</TH><TH>Status</TH></TR></THead>
+        <THead><TR><TH>Product</TH><TH>SKU</TH><TH className="text-right">Warehouse Qty</TH><TH className="text-right">Reorder</TH><TH>Status</TH></TR></THead>
         <TBody>
           {data.map((s) => {
             const low = Number(s.quantity) < Number(s.product.reorderLevel);

@@ -14,7 +14,7 @@ import type { UserRole } from '@/types/api';
 
 const ROLES: Array<{ value: UserRole; label: string }> = [
   { value: 'SUPER_ADMIN', label: 'Super Admin' },
-  { value: 'GODOWN_MANAGER', label: 'Godown Manager' },
+  { value: 'GODOWN_MANAGER', label: 'Warehouse Manager' },
   { value: 'FRANCHISE_OWNER', label: 'Franchise Owner' },
   { value: 'CASHIER', label: 'Cashier' },
 ];

@@ -58,7 +58,7 @@ export function DeleteBillDialog({ target, onClose }: { target: DeleteTarget | n
           <div className="flex gap-2.5 rounded-lg border border-warning/40 bg-warning/10 p-3">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <p className="text-caption leading-relaxed">
-              Deleting this bill will remove it from sales records, return the stock to the godown, cancel the
+              Deleting this bill will remove it from sales records, return the stock to the warehouse, cancel the
               order behind it, and reverse the related accounting and analytics entries. This can&apos;t be undone.
             </p>
           </div>

@@ -358,7 +358,7 @@ export function printOrderPickList(
   <div class="meta">
     <div class="row"><span>Order</span><span>${esc(order.orderNumber)}</span></div>
     <div class="row"><span>Outlet</span><span>${esc(order.outletName)}</span></div>
-    ${order.fulfillmentSource ? `<div class="row"><span>Fulfil from</span><span>${order.fulfillmentSource === 'GODOWN' ? 'Godown' : 'Main Branch'}</span></div>` : ''}
+    ${order.fulfillmentSource ? `<div class="row"><span>Fulfil from</span><span>${order.fulfillmentSource === 'GODOWN' ? 'Warehouse' : 'Main Branch'}</span></div>` : ''}
     <div class="row"><span>${dateLabel}</span><span>${dateValue}</span></div>
     <div class="row"><span>Bill type</span><span>${order.isGstBill ? 'With GST' : 'No GST'}</span></div>
   </div>

@@ -191,7 +191,7 @@ export function ManualBillDialog({ open, onOpenChange }: { open: boolean; onOpen
             <span className="block text-body font-medium">Deduct Stock from Inventory</span>
             <span className="block text-caption text-muted-foreground">
               {deductStock
-                ? 'The billed quantities come out of godown stock and land at the franchise, as a real sale would.'
+                ? 'The billed quantities come out of warehouse stock and land at the franchise, as a real sale would.'
                 : 'The bill is raised on its own — inventory is left exactly as it is.'}
             </span>
           </span>

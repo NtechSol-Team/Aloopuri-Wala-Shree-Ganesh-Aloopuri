@@ -29,7 +29,7 @@ import {
 
 const LOCATIONS: ExpenseLocation[] = ['GODOWN', 'MAIN_BRANCH', 'GENERAL'];
 const LOCATION_LABEL: Record<ExpenseLocation, string> = {
-  GODOWN: 'Godown', MAIN_BRANCH: 'Main Branch', GENERAL: 'General',
+  GODOWN: 'Warehouse', MAIN_BRANCH: 'Main Branch', GENERAL: 'General',
 };
 const METHODS = ['CASH', 'UPI', 'BANK_TRANSFER', 'CARD', 'NET_BANKING', 'NOT_PAID'] as const;
 const METHOD_LABEL: Record<string, string> = {

@@ -14,7 +14,7 @@ export const ASSET_STATUS_LABEL: Record<AssetStatus, string> = {
 };
 
 export const ASSET_LOCATION_LABEL: Record<AssetLocation, string> = {
-  GODOWN: 'Godown',
+  GODOWN: 'Warehouse',
   MAIN_BRANCH: 'Main Branch',
   GENERAL: 'General',
 };

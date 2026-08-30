@@ -18,7 +18,7 @@ import { useUsers, useDeactivateUser, useResetPassword, type ManagedUser } from 
 import { UserFormDialog } from '@/components/users/user-form-dialog';
 import type { UserRole } from '@/types/api';
 
-const ROLE_LABEL: Record<UserRole, string> = { SUPER_ADMIN: 'Super Admin', GODOWN_MANAGER: 'Godown Manager', FRANCHISE_OWNER: 'Franchise Owner', CASHIER: 'Cashier' };
+const ROLE_LABEL: Record<UserRole, string> = { SUPER_ADMIN: 'Super Admin', GODOWN_MANAGER: 'Warehouse Manager', FRANCHISE_OWNER: 'Franchise Owner', CASHIER: 'Cashier' };
 const roleBadge = (r: UserRole) => (r === 'SUPER_ADMIN' ? 'info' : r === 'GODOWN_MANAGER' ? 'warning' : 'neutral');
 
 export default function UsersPage() {
