@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Print Agent Settings</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px; background: #f7f7fb; color: #1a1a2e;
+    font: 13px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  .sub { color: #6b6b80; margin: 0 0 18px; }
+  section {
+    background: #fff; border: 1px solid #e3e3ee; border-radius: 8px;
+    padding: 14px 16px; margin-bottom: 14px;
+  }
+  section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #6b6b80; margin: 0 0 10px; }
+  label { display: block; font-size: 12px; font-weight: 600; margin: 10px 0 4px; }
+  label:first-of-type { margin-top: 0; }
+  input, select {
+    width: 100%; padding: 7px 9px; border: 1px solid #d6d6e4; border-radius: 6px;
+    font-size: 13px; background: #fff; color: #1a1a2e;
+  }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  button {
+    padding: 7px 14px; border-radius: 6px; border: 1px solid #d6d6e4;
+    background: #fff; cursor: pointer; font-size: 13px; font-weight: 600;
+  }
+  button.primary { background: #3730a1; border-color: #3730a1; color: #fff; }
+  button.primary:hover { background: #2d2685; }
+  button:disabled { opacity: .5; cursor: default; }
+  .actions { margin-top: 12px; display: flex; gap: 8px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #c9c9d8; }
+  .dot.connected { background: #16a34a; }
+  .dot.connecting { background: #d97706; }
+  .dot.disconnected, .dot.auth-expired { background: #dc2626; }
+  .msg { font-size: 12px; margin-top: 8px; min-height: 16px; }
+  .msg.error { color: #dc2626; }
+  .msg.ok { color: #16a34a; }
+  .hint { color: #8b8b9e; font-size: 11px; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <h1>Surat Food Chain — Print Agent</h1>
+  <p class="sub">Runs in the system tray. Configure the server and printer here, then close this window — the agent keeps listening in the background.</p>
+
+  <section>
+    <h2>Connection</h2>
+    <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">Checking…</span></div>
+
+    <label for="serverUrl">Server URL</label>
+    <input id="serverUrl" placeholder="https://api.shreeganeshaloopuri.avoilprime.com" />
+    <p class="hint">The API origin — same one the web dashboard talks to.</p>
+
+    <label for="identifier">Login (Super Admin or Warehouse Manager)</label>
+    <input id="identifier" placeholder="email or user code" />
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="•••••••••" />
+    <p class="hint">Signed in once — the agent stays signed in on its own after that. Only these two roles receive order print events.</p>
+
+    <div class="actions">
+      <button id="saveConnection" class="primary">Save & Connect</button>
+      <button id="signOut">Sign out</button>
+    </div>
+    <div id="connMsg" class="msg"></div>
+  </section>
+
+  <section>
+    <h2>Printer</h2>
+    <label for="printerInterface">Connection type</label>
+    <select id="printerInterface">
+      <option value="system">USB / Bluetooth (Windows printer)</option>
+      <option value="network">LAN (network address)</option>
+    </select>
+
+    <div id="systemPrinterField">
+      <label for="printerName">Printer</label>
+      <div class="row">
+        <select id="printerName"></select>
+        <button id="refreshPrinters">Refresh</button>
+      </div>
+    </div>
+
+    <div id="networkPrinterField" style="display:none">
+      <label for="printerNetworkAddress">Address</label>
+      <input id="printerNetworkAddress" placeholder="192.168.1.50:9100" />
+    </div>
+
+    <label for="paperWidth">Paper width</label>
+    <select id="paperWidth">
+      <option value="32">58mm (32 columns)</option>
+      <option value="48">80mm (48 columns)</option>
+    </select>
+
+    <div class="actions">
+      <button id="savePrinter" class="primary">Save Printer</button>
+      <button id="testPrint">Test Print</button>
+    </div>
+    <div id="printerMsg" class="msg"></div>
+  </section>
+
+  <script src="settings.js"></script>
+</body>
+</html>

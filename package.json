@@ -2,9 +2,10 @@
   "name": "surat-food-chain",
   "version": "0.1.0",
   "private": true,
-  "description": "Surat Food Chain Management System — production, inventory, transfers, franchise ordering, billing, payments, expenses, POS and analytics.",
+  "description": "Surat Food Chain Management System \u2014 production, inventory, transfers, franchise ordering, billing, payments, expenses, POS and analytics.",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "!apps/print-agent-windows"
   ],
   "engines": {
     "node": ">=20.0.0",
@@ -22,9 +23,11 @@
     "prisma:migrate": "npm run prisma:migrate --workspace @scfc/api",
     "db:seed": "npm run db:seed --workspace @scfc/api",
     "dev": "npm run db:up && concurrently -n api,web -c blue,magenta \"npm run api:dev\" \"npm run web:dev\"",
-    "bootstrap": "npm install && npm run db:up && npm run prisma:migrate && npm run db:seed"
+    "bootstrap": "npm install && npm run db:up && npm run prisma:migrate && npm run db:seed",
+    "postinstall": "patch-package"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^9.1.0",
+    "patch-package": "^8.0.1"
   }
 }

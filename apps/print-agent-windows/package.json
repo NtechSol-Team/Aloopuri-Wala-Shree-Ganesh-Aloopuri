@@ -1,0 +1,61 @@
+{
+  "name": "scfc-print-agent",
+  "productName": "Surat Food Chain Print Agent",
+  "version": "1.0.0",
+  "description": "Local Windows print agent for Surat Food Chain — listens for order events over Socket.IO and prints ESC/POS receipts on a configured USB, LAN, or Bluetooth thermal printer, from the system tray.",
+  "private": true,
+  "main": "src/main.js",
+  "author": "Surat Food Chain",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis",
+    "dist:dir": "electron-builder --win nsis --dir"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0",
+    "node-thermal-printer": "^4.4.4",
+    "socket.io-client": "^4.8.1",
+    "axios": "^1.7.9",
+    "auto-launch": "^5.0.6"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.suratfoodchain.printagent",
+    "productName": "Surat Food Chain Print Agent",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "extraResources": [
+      { "from": "resources", "to": "." }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "artifactName": "${productName}-Setup-${version}.exe"
+    }
+  }
+}

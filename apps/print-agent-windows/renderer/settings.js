@@ -1,0 +1,126 @@
+'use strict';
+
+const $ = (id) => document.getElementById(id);
+
+function setMsg(el, text, kind) {
+  el.textContent = text;
+  el.className = 'msg' + (kind ? ` ${kind}` : '');
+}
+
+function setStatus(status) {
+  const dot = $('statusDot');
+  const text = $('statusText');
+  dot.className = `dot ${status}`;
+  const labels = {
+    connected: 'Connected',
+    connecting: 'Connecting…',
+    disconnected: 'Disconnected',
+    'auth-expired': 'Sign-in expired — please sign in again',
+  };
+  text.textContent = labels[status] || status;
+}
+
+async function loadPrinters(selected) {
+  const select = $('printerName');
+  select.innerHTML = '';
+  const printers = await window.printAgent.listPrinters();
+  if (!printers.length) {
+    const opt = document.createElement('option');
+    opt.textContent = 'No printers found';
+    opt.value = '';
+    select.appendChild(opt);
+    return;
+  }
+  for (const p of printers) {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.isDefault ? `${p.name} (default)` : p.name;
+    if (p.name === selected) opt.selected = true;
+    select.appendChild(opt);
+  }
+}
+
+function togglePrinterFields(iface) {
+  $('systemPrinterField').style.display = iface === 'network' ? 'none' : '';
+  $('networkPrinterField').style.display = iface === 'network' ? '' : 'none';
+}
+
+async function init() {
+  const cfg = await window.printAgent.getConfig();
+  $('serverUrl').value = cfg.serverUrl || '';
+  $('identifier').value = cfg.userIdentifier || '';
+  $('printerInterface').value = cfg.printerInterface || 'system';
+  $('printerNetworkAddress').value = cfg.printerNetworkAddress || '';
+  $('paperWidth').value = String(cfg.paperWidth || 48);
+  togglePrinterFields(cfg.printerInterface);
+  await loadPrinters(cfg.printerName);
+
+  const status = await window.printAgent.getStatus();
+  setStatus(status);
+  window.printAgent.onStatusChanged(setStatus);
+
+  $('printerInterface').addEventListener('change', (e) => togglePrinterFields(e.target.value));
+  $('refreshPrinters').addEventListener('click', () => loadPrinters($('printerName').value));
+
+  $('saveConnection').addEventListener('click', async () => {
+    const btn = $('saveConnection');
+    const msg = $('connMsg');
+    const serverUrl = $('serverUrl').value.trim();
+    const identifier = $('identifier').value.trim();
+    const password = $('password').value;
+    if (!serverUrl) return setMsg(msg, 'Enter the server URL.', 'error');
+    btn.disabled = true;
+    setMsg(msg, 'Connecting…');
+    try {
+      await window.printAgent.saveServerUrl(serverUrl);
+      if (identifier && password) {
+        await window.printAgent.login(identifier, password);
+        $('password').value = '';
+      }
+      setMsg(msg, 'Saved.', 'ok');
+    } catch (err) {
+      setMsg(msg, err?.message || String(err), 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $('signOut').addEventListener('click', async () => {
+    await window.printAgent.logout();
+    $('identifier').value = '';
+    $('password').value = '';
+    setMsg($('connMsg'), 'Signed out.', 'ok');
+  });
+
+  $('savePrinter').addEventListener('click', async () => {
+    const msg = $('printerMsg');
+    try {
+      await window.printAgent.savePrinter({
+        printerInterface: $('printerInterface').value,
+        printerName: $('printerName').value,
+        printerNetworkAddress: $('printerNetworkAddress').value.trim(),
+        paperWidth: Number($('paperWidth').value),
+      });
+      setMsg(msg, 'Saved.', 'ok');
+    } catch (err) {
+      setMsg(msg, err?.message || String(err), 'error');
+    }
+  });
+
+  $('testPrint').addEventListener('click', async () => {
+    const btn = $('testPrint');
+    const msg = $('printerMsg');
+    btn.disabled = true;
+    setMsg(msg, 'Printing…');
+    try {
+      await window.printAgent.testPrint();
+      setMsg(msg, 'Test slip sent.', 'ok');
+    } catch (err) {
+      setMsg(msg, err?.message || String(err), 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+init();

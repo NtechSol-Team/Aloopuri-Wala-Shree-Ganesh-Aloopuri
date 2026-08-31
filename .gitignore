@@ -18,6 +18,11 @@ build/
 out/
 *.tsbuildinfo
 
+# electron-builder's convention is a source "build/" dir for installer icons —
+# not a build *output* dir like the "build/" pattern above assumes elsewhere.
+!apps/print-agent-windows/build/
+!apps/print-agent-windows/build/**
+
 # Prisma
 apps/api/prisma/*.db
 
