@@ -122,6 +122,13 @@ function wireIpc() {
 
   ipcMain.handle('printer:test', () => runTestPrint());
 
+  ipcMain.handle('bluetooth:open-pairing', () => printerManager.openBluetoothPairingSettings());
+  ipcMain.handle('bluetooth:detect', () => printerManager.detectBluetoothCandidates());
+  ipcMain.handle('bluetooth:install', async (_e, { portName, printerName }) => {
+    await printerManager.installBluetoothPrinter(portName, printerName);
+    tray.rebuild(trayHandlers); // the new printer should now show up in Select Printer
+  });
+
   ipcMain.handle('status:get', () => socketClient.status);
 }
 

@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld('printAgent', {
   listPrinters: () => ipcRenderer.invoke('printer:list'),
   savePrinter: (settings) => ipcRenderer.invoke('printer:save', settings),
   testPrint: () => ipcRenderer.invoke('printer:test'),
+  openBluetoothPairing: () => ipcRenderer.invoke('bluetooth:open-pairing'),
+  detectBluetoothPrinters: () => ipcRenderer.invoke('bluetooth:detect'),
+  installBluetoothPrinter: (portName, printerName) => ipcRenderer.invoke('bluetooth:install', { portName, printerName }),
   getStatus: () => ipcRenderer.invoke('status:get'),
   onStatusChanged: (cb) => {
     const handler = (_event, status) => cb(status);

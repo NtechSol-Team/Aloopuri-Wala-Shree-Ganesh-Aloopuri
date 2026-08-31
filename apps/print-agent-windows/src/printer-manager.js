@@ -21,15 +21,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { app } = require('electron');
+const { app, shell } = require('electron');
 const { execFile } = require('node:child_process');
 const { ThermalPrinter, PrinterTypes } = require('node-thermal-printer');
 const configStore = require('./config-store');
 
-function rawPrintScriptPath() {
+function resourcePath(name) {
   return app.isPackaged
-    ? path.join(process.resourcesPath, 'RawPrint.ps1')
-    : path.join(__dirname, '..', 'resources', 'RawPrint.ps1');
+    ? path.join(process.resourcesPath, name)
+    : path.join(__dirname, '..', 'resources', name);
 }
 
 function runPowerShell(args, { timeout = 15000 } = {}) {
@@ -128,7 +128,7 @@ async function sendToWindowsQueue(buffer, printerName) {
   const tempFile = path.join(os.tmpdir(), `scfc-print-${crypto.randomUUID()}.bin`);
   fs.writeFileSync(tempFile, buffer);
   try {
-    await runPowerShell(['-File', rawPrintScriptPath(), '-PrinterName', printerName, '-FilePath', tempFile]);
+    await runPowerShell(['-File', resourcePath('RawPrint.ps1'), '-PrinterName', printerName, '-FilePath', tempFile]);
   } finally {
     fs.unlink(tempFile, () => {});
   }
@@ -161,4 +161,42 @@ function sendOverNetwork(buffer, address) {
   });
 }
 
-module.exports = { listPrinters, buildEscPosBuffer, sendToConfiguredPrinter };
+// --- Bluetooth ---------------------------------------------------------
+// Pairing a *new* Bluetooth device is a Windows security boundary: it always
+// needs a human to confirm it, in Windows' own UI, no matter what app is
+// asking. What this agent CAN do is remove the confusing step that comes
+// after pairing -- a paired Bluetooth thermal printer shows up as a COM port
+// (Bluetooth's Serial Port Profile), not as a printer, until something binds
+// that port to the Generic/Text Only driver. See BluetoothPrinter.ps1.
+
+/** Opens Windows' own Bluetooth pairing screen -- the one step no app can do for you. */
+function openBluetoothPairingSettings() {
+  return shell.openExternal('ms-settings:bluetooth');
+}
+
+/** Paired Bluetooth serial ports that aren't already set up as a Windows printer. */
+async function detectBluetoothCandidates() {
+  if (process.platform !== 'win32') return [];
+  try {
+    const stdout = await runPowerShell(['-File', resourcePath('BluetoothPrinter.ps1'), '-Action', 'Detect']);
+    const parsed = JSON.parse(stdout || '[]');
+    const list = Array.isArray(parsed) ? parsed : parsed && Object.keys(parsed).length ? [parsed] : [];
+    return list.map((p) => ({ port: p.Port, name: p.Name }));
+  } catch (err) {
+    console.error('[printer] failed to detect Bluetooth candidates', err.message);
+    return [];
+  }
+}
+
+/** Binds a paired Bluetooth COM port to a new generic/raw printer. Triggers a UAC prompt. */
+async function installBluetoothPrinter(portName, printerName) {
+  if (process.platform !== 'win32') throw new Error('Installing a Bluetooth printer only works on Windows.');
+  if (!portName || !printerName) throw new Error('Pick a detected port and give the printer a name.');
+  // Long timeout -- this waits on the UAC prompt the user has to click through.
+  await runPowerShell(['-File', resourcePath('BluetoothPrinter.ps1'), '-Action', 'Install', '-PortName', portName, '-PrinterName', printerName], { timeout: 120000 });
+}
+
+module.exports = {
+  listPrinters, buildEscPosBuffer, sendToConfiguredPrinter,
+  openBluetoothPairingSettings, detectBluetoothCandidates, installBluetoothPrinter,
+};

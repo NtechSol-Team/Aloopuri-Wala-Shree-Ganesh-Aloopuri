@@ -103,6 +103,38 @@
     <div id="printerMsg" class="msg"></div>
   </section>
 
+  <section>
+    <h2>Bluetooth Printer Setup</h2>
+    <p class="hint" style="margin-top:0">
+      Two steps, because Windows itself splits them: pairing needs your OK
+      (no app can click through that for you), but the step after — turning
+      a paired device into something this agent can print to — can be done
+      here.
+    </p>
+
+    <label>1. Pair the printer</label>
+    <div class="actions" style="margin-top:0">
+      <button id="openBtSettings">Open Bluetooth Settings…</button>
+    </div>
+    <p class="hint">Pair it there first (it'll ask for a PIN, usually 0000 or 1234 for thermal printers). Come back here once it shows as paired.</p>
+
+    <label style="margin-top:16px">2. Add it as a printer</label>
+    <div class="actions" style="margin-top:0">
+      <button id="detectBt">Detect Paired Printer</button>
+    </div>
+    <div id="btCandidates" style="display:none; margin-top:10px">
+      <label for="btPort">Detected device</label>
+      <select id="btPort"></select>
+      <label for="btPrinterName">Name it</label>
+      <input id="btPrinterName" placeholder="e.g. Counter Printer" />
+      <div class="actions">
+        <button id="installBt" class="primary">Install as Printer</button>
+      </div>
+      <p class="hint">Windows will ask for admin permission for this one step — that's normal, it's the same for any printer install.</p>
+    </div>
+    <div id="btMsg" class="msg"></div>
+  </section>
+
   <script src="settings.js"></script>
 </body>
 </html>

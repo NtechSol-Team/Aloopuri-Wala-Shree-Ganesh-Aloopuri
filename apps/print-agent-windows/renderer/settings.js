@@ -121,6 +121,60 @@ async function init() {
       btn.disabled = false;
     }
   });
+
+  $('openBtSettings').addEventListener('click', () => window.printAgent.openBluetoothPairing());
+
+  $('detectBt').addEventListener('click', async () => {
+    const btn = $('detectBt');
+    const msg = $('btMsg');
+    btn.disabled = true;
+    setMsg(msg, 'Looking for paired printers not set up yet…');
+    try {
+      const candidates = await window.printAgent.detectBluetoothPrinters();
+      const select = $('btPort');
+      select.innerHTML = '';
+      if (!candidates.length) {
+        $('btCandidates').style.display = 'none';
+        setMsg(msg, 'Nothing new found. Pair it in Bluetooth Settings first, or it may already be installed — check Printer above.', 'error');
+        return;
+      }
+      for (const c of candidates) {
+        const opt = document.createElement('option');
+        opt.value = c.port;
+        opt.textContent = `${c.name} (${c.port})`;
+        select.appendChild(opt);
+      }
+      $('btCandidates').style.display = '';
+      setMsg(msg, `Found ${candidates.length}. Name it and install below.`, 'ok');
+    } catch (err) {
+      setMsg(msg, err?.message || String(err), 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $('installBt').addEventListener('click', async () => {
+    const btn = $('installBt');
+    const msg = $('btMsg');
+    const portName = $('btPort').value;
+    const printerName = $('btPrinterName').value.trim();
+    if (!portName) return setMsg(msg, 'Detect a paired printer first.', 'error');
+    if (!printerName) return setMsg(msg, 'Give the printer a name.', 'error');
+    btn.disabled = true;
+    setMsg(msg, 'Installing… Windows may ask for admin permission now.');
+    try {
+      await window.printAgent.installBluetoothPrinter(portName, printerName);
+      setMsg(msg, `Installed as "${printerName}". Select it under Printer above.`, 'ok');
+      $('btCandidates').style.display = 'none';
+      await loadPrinters(printerName);
+      $('printerInterface').value = 'system';
+      togglePrinterFields('system');
+    } catch (err) {
+      setMsg(msg, err?.message || String(err), 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 init();
