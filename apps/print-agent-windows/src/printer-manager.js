@@ -50,13 +50,10 @@ function runPowerShell(args, { timeout = 15000 } = {}) {
 async function listPrinters() {
   if (process.platform !== 'win32') return [];
   try {
-    const stdout = await runPowerShell([
-      '-Command',
-      'Get-Printer | Select-Object Name,PrinterStatus,@{n="isDefault";e={(Get-CimInstance Win32_Printer -Filter "Name=\'$($_.Name -replace \'\\\\\',\'\\\\\\\\\')\'" ).Default}} | ConvertTo-Json -Compress',
-    ]);
+    const stdout = await runPowerShell(['-File', resourcePath('ListPrinters.ps1')]);
     const parsed = JSON.parse(stdout || '[]');
     const list = Array.isArray(parsed) ? parsed : [parsed];
-    return list.filter(Boolean).map((p) => ({ name: p.Name, status: String(p.PrinterStatus ?? ''), isDefault: !!p.isDefault }));
+    return list.filter(Boolean).map((p) => ({ name: p.Name, status: String(p.PrinterStatus ?? ''), isDefault: !!p.IsDefault }));
   } catch (err) {
     console.error('[printer] failed to enumerate printers', err.message);
     return [];
