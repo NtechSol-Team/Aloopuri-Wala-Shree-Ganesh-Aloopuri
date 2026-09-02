@@ -29,7 +29,10 @@ export interface BillDetail extends Omit<BillListItem, 'outlet'> {
   outlet: { id: string; name: string; address: string | null; phone: string | null };
   items: Array<{ id: string; productNameSnapshot: string; quantity: string; rate: string; taxPercent: string; taxAmount: string; lineTotal: string }>;
   charges: Array<{ id: string; label: string; amount: string }>;
-  payments: Array<{ id: string; paymentNumber: string; amount: string; method: string; paymentDate: string }>;
+  payments: Array<{
+    id: string; paymentNumber: string; amount: string; channel: string; method: string; paymentDate: string;
+    referenceNumber: string | null; notes: string | null;
+  }>;
 }
 
 export function useBills(params: { status?: BillStatus; overdueOnly?: boolean; sort?: string; outletId?: string; from?: string; to?: string } = {}) {

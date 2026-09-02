@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
-import { Download, Printer, Eye, ReceiptText, IndianRupee, Plus, Trash2, Pencil, Phone } from 'lucide-react';
+import { Download, Printer, Eye, ReceiptText, IndianRupee, Plus, Trash2, Pencil, Phone, Undo2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,8 @@ import { cn, formatINR, ist, todayIso } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
 import { useBills, useBill, useOpenBillPdf, usePrintBillPdf, useUpdateBillCharges, type BillStatus } from '@/hooks/useBilling';
 import { useCallNumber } from '@/hooks/useSettings';
+import type { PaymentRow } from '@/hooks/usePayments';
+import { ReversePaymentDialog } from '@/components/payments/reverse-payment-dialog';
 import { useOutlets } from '@/hooks/useOutlets';
 import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
 import { ManualBillDialog } from '@/components/sales/manual-bill-dialog';
@@ -202,6 +204,9 @@ function BillDetailDialog({ id, onClose }: { id: string | null; onClose: () => v
   // Only meaningful for a franchise owner — the main owner calling themselves
   // makes no sense — and only once the main owner has actually set a number.
   const { data: callSetting } = useCallNumber();
+  // A payment entered against the wrong bill or the wrong amount — undo it from
+  // right here, where the owner is already looking at the bill it's wrong on.
+  const [reverseTarget, setReverseTarget] = useState<PaymentRow | null>(null);
 
   // Packing/transport/etc — editable by the main owner on any bill, including one
   // auto-raised from a franchise's own order, which has no creation-time step of
@@ -342,9 +347,33 @@ function BillDetailDialog({ id, onClose }: { id: string | null; onClose: () => v
                 <Row label="Balance Due" value={formatINR(bill.balanceDue)} className="text-danger" bold />
               </div>
             )}
+
+            {isAdmin && bill.payments.length > 0 && (
+              <div className="space-y-1.5 border-t border-border pt-3">
+                <p className="text-caption font-medium uppercase tracking-wide text-muted-foreground">Payments</p>
+                {bill.payments.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between gap-2 text-body">
+                    <span className="min-w-0">
+                      <span className="block font-medium">{p.paymentNumber}</span>
+                      <span className="block text-caption text-muted-foreground">{p.method} · {format(ist(p.paymentDate), 'dd MMM yyyy')}</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span className="font-medium text-success">{formatINR(p.amount)}</span>
+                      <Button
+                        variant="ghost" size="icon" title="Reverse — entered by mistake"
+                        onClick={() => setReverseTarget({ ...p, bill: { billNumber: bill.billNumber }, outlet: { name: bill.outlet.name } })}
+                      >
+                        <Undo2 className="h-4 w-4 text-danger" />
+                      </Button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </DialogContent>
+      <ReversePaymentDialog target={reverseTarget} onClose={() => setReverseTarget(null)} />
     </Dialog>
   );
 }
