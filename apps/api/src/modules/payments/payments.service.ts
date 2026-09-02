@@ -149,6 +149,61 @@ export async function verifyRazorpayPayment(input: VerifyRazorpayInput, user: Au
   });
 }
 
+/**
+ * Reverse a payment recorded by mistake — wrong bill, wrong amount, double
+ * entry, whatever. Soft-deletes the payment and re-derives the bill's
+ * amountPaid/balanceDue/status from what's actually left (every remaining
+ * SUCCESS payment on it), rather than just subtracting this one figure —
+ * that stays correct even if amounts were ever hand-corrected or two
+ * reversals land close together. Every other view (Cash Book, Day Book,
+ * Financial Position, the Ledger, the Item Sales Report) reads live off
+ * Payment.isDeleted and Bill.amountPaid/balanceDue, so nothing else needs
+ * touching for the reversal to show up everywhere it should.
+ */
+export async function deletePayment(id: string) {
+  const result = await prisma.$transaction(async (tx) => {
+    const payment = await tx.payment.findFirst({ where: { id, isDeleted: false } });
+    if (!payment) throw AppError.notFound('Payment not found');
+    if (!payment.billId) {
+      // Only possible on a payment from before bills were raised instantly at
+      // order placement — held against the order itself, never against a bill.
+      throw AppError.invalidState('This payment was never tied to a bill, so there is nothing to reverse it against.');
+    }
+
+    const bill = await tx.bill.findFirst({ where: { id: payment.billId, isDeleted: false } });
+    if (!bill) throw AppError.notFound('The bill this payment was recorded against no longer exists');
+
+    await tx.payment.update({ where: { id: payment.id }, data: { isDeleted: true } });
+
+    const remaining = await tx.payment.aggregate({
+      _sum: { amount: true },
+      where: { billId: bill.id, isDeleted: false, status: PaymentStatus.SUCCESS },
+    });
+    const amountPaid = new Prisma.Decimal(remaining._sum.amount ?? 0);
+    const balanceDue = new Prisma.Decimal(bill.grandTotal).sub(amountPaid);
+    const status = balanceDue.lessThanOrEqualTo(0)
+      ? BillStatus.PAID
+      : amountPaid.greaterThan(0)
+        ? BillStatus.PARTIALLY_PAID
+        : BillStatus.UNPAID;
+
+    const updatedBill = await tx.bill.update({
+      where: { id: bill.id },
+      data: { amountPaid, balanceDue, status },
+      select: { id: true, billNumber: true, status: true, amountPaid: true, balanceDue: true, outletId: true },
+    });
+
+    return { payment, bill: updatedBill };
+  });
+
+  cache.invalidateTags(CacheTag.PAYMENTS, CacheTag.BILLS, CacheTag.ORDERS, CacheTag.DASHBOARD, CacheTag.outlet(result.bill.outletId));
+  return {
+    deleted: true,
+    paymentNumber: result.payment.paymentNumber,
+    bill: { billNumber: result.bill.billNumber, status: result.bill.status, amountPaid: result.bill.amountPaid, balanceDue: result.bill.balanceDue },
+  };
+}
+
 export async function listPayments(user: AuthUser, query: ListPaymentsQuery) {
   const scoped = user.role === UserRole.FRANCHISE_OWNER || user.role === UserRole.CASHIER;
   const where: Prisma.PaymentWhereInput = {
@@ -292,4 +347,5 @@ export const paymentsService = {
   listPayments,
   getPaymentSummary,
   handleWebhook,
+  deletePayment,
 };

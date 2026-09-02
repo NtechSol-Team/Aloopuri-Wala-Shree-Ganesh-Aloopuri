@@ -74,3 +74,14 @@ export function useVerifyRazorpay() {
     onSuccess: () => invalidateAll(qc),
   });
 }
+
+/** Reverses a payment entered by mistake. The bill's paid/due/status re-derive
+ *  from what's actually left, so this correctly "un-pays" it either partway or
+ *  all the way back to Unpaid, matching however much was wrongly recorded. */
+export function useDeletePayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete(`/payments/${id}`)).data,
+    onSuccess: () => invalidateAll(qc),
+  });
+}

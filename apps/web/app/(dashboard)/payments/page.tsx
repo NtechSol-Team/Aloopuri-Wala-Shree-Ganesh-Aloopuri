@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { format, differenceInCalendarDays } from 'date-fns';
-import { Wallet, TrendingUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, IndianRupee } from 'lucide-react';
+import { Wallet, TrendingUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, IndianRupee, Undo2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge, statusBadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,9 +11,10 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { cn, formatINR, ist } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
-import { usePaymentSummary, usePayments } from '@/hooks/usePayments';
+import { usePaymentSummary, usePayments, type PaymentRow } from '@/hooks/usePayments';
 import { usePayables, usePayablesSummary, type PayableBill } from '@/hooks/usePayables';
 import { PaySupplierDialog } from '@/components/payables/pay-supplier-dialog';
+import { ReversePaymentDialog } from '@/components/payments/reverse-payment-dialog';
 
 const AGING_COLOR: Record<string, string> = { current: 'bg-success', '0-7': 'bg-success', '1-7': 'bg-warning', '8-15': 'bg-warning', '16-30': 'bg-danger', '30+': 'bg-danger' };
 const AGING_LABEL: Record<string, string> = { current: 'Not due', '0-7': '0–7 days', '1-7': '1–7 days', '8-15': '8–15 days', '16-30': '16–30 days', '30+': '30+ days' };
@@ -54,8 +55,11 @@ export default function PaymentsPage() {
 
 // ─────────────────────────── Receivables (money in) ─────────────────────────
 function ReceivablesView() {
+  const role = useAuthStore((s) => s.user?.role);
+  const isAdmin = role === 'SUPER_ADMIN';
   const { data: summary, isLoading } = usePaymentSummary();
   const { data: payments } = usePayments();
+  const [reverseTarget, setReverseTarget] = useState<PaymentRow | null>(null);
   const maxAging = Math.max(1, ...(summary?.aging.map((a) => a.amount) ?? [1]));
 
   return (
@@ -97,7 +101,12 @@ function ReceivablesView() {
         <CardContent className="p-0">
           {!payments?.length ? <p className="py-10 text-center text-body text-muted-foreground">No payments recorded yet.</p> : (
             <Table>
-              <THead><TR><TH>Payment #</TH><TH>Outlet</TH><TH>Bill</TH><TH>Method</TH><TH>Reference</TH><TH className="text-right">Amount</TH><TH>Date</TH></TR></THead>
+              <THead>
+                <TR>
+                  <TH>Payment #</TH><TH>Outlet</TH><TH>Bill</TH><TH>Method</TH><TH>Reference</TH>
+                  <TH className="text-right">Amount</TH><TH>Date</TH>{isAdmin && <TH className="text-right">Action</TH>}
+                </TR>
+              </THead>
               <TBody>
                 {payments.map((p) => (
                   <TR key={p.id}>
@@ -107,6 +116,13 @@ function ReceivablesView() {
                     <TD className="text-caption text-muted-foreground">{p.referenceNumber ?? '—'}</TD>
                     <TD className="text-right font-medium text-success">{formatINR(p.amount)}</TD>
                     <TD>{format(ist(p.paymentDate), 'dd MMM yyyy')}</TD>
+                    {isAdmin && (
+                      <TD className="text-right">
+                        <Button variant="ghost" size="icon" title="Reverse — entered by mistake" onClick={() => setReverseTarget(p)}>
+                          <Undo2 className="h-4 w-4 text-danger" />
+                        </Button>
+                      </TD>
+                    )}
                   </TR>
                 ))}
               </TBody>
@@ -114,6 +130,8 @@ function ReceivablesView() {
           )}
         </CardContent>
       </Card>
+
+      <ReversePaymentDialog target={reverseTarget} onClose={() => setReverseTarget(null)} />
     </div>
   );
 }

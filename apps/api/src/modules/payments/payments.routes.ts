@@ -1,10 +1,11 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import type { Request, Response } from 'express';
 import { UserRole } from '@prisma/client';
 import { asyncHandler } from '../../shared/utils/asyncHandler';
 import { validate } from '../../shared/middleware/validate';
 import { authGuard } from '../../shared/guards/authGuard';
-import { requireRole } from '../../shared/guards/roleGuard';
+import { requireRole, requireSuperAdmin } from '../../shared/guards/roleGuard';
 import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { ok, created, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
@@ -13,6 +14,8 @@ import {
   type CashPaymentInput, type CreateRazorpayOrderInput, type ListPaymentsQuery, type VerifyRazorpayInput,
 } from './payments.schema';
 import { paymentsService } from './payments.service';
+
+const idParam = z.object({ id: z.string().uuid() });
 
 const user = (req: Request) => {
   if (!req.user) throw AppError.unauthorized();
@@ -68,6 +71,15 @@ router.post(
   requireRole(UserRole.SUPER_ADMIN, UserRole.FRANCHISE_OWNER),
   validate({ body: verifyRazorpaySchema }),
   asyncHandler(async (req: Request, res: Response) => ok(res, await paymentsService.verifyRazorpayPayment(req.body as VerifyRazorpayInput, user(req)), 'Payment recorded')),
+);
+
+// Reverse a payment entered by mistake — main owner only. Re-derives the bill's
+// paid/due/status from what's actually left rather than just subtracting.
+router.delete(
+  '/:id',
+  requireSuperAdmin,
+  validate({ params: idParam }),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await paymentsService.deletePayment(req.params.id), 'Payment reversed')),
 );
 
 export const paymentsRouter = router;
