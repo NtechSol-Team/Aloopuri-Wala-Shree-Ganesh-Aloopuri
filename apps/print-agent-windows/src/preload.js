@@ -14,6 +14,14 @@ contextBridge.exposeInMainWorld('printAgent', {
   listPrinters: () => ipcRenderer.invoke('printer:list'),
   savePrinter: (settings) => ipcRenderer.invoke('printer:save', settings),
   testPrint: () => ipcRenderer.invoke('printer:test'),
+  // BLE (Web Bluetooth) — the transport the POS uses; these printers never
+  // appear as Windows printers, so they need their own pick/scan flow.
+  bleScan: (allDevices) => ipcRenderer.invoke('ble:scan', { allDevices }),
+  bleChoose: (deviceId) => ipcRenderer.invoke('ble:choose', deviceId),
+  bleCancel: () => ipcRenderer.invoke('ble:cancel'),
+  bleStatus: () => ipcRenderer.invoke('ble:status'),
+  onBleDevices: (cb) => ipcRenderer.on('ble:devices', (_e, devices) => cb(devices)),
+
   openBluetoothPairing: () => ipcRenderer.invoke('bluetooth:open-pairing'),
   detectBluetoothPrinters: () => ipcRenderer.invoke('bluetooth:detect'),
   installBluetoothPrinter: (portName, printerName) => ipcRenderer.invoke('bluetooth:install', { portName, printerName }),

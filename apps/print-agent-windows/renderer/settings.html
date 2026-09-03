@@ -74,8 +74,30 @@
     <label for="printerInterface">Connection type</label>
     <select id="printerInterface">
       <option value="system">USB / Bluetooth (Windows printer)</option>
+      <option value="ble">Bluetooth BLE (same as the POS)</option>
       <option value="network">LAN (network address)</option>
     </select>
+
+    <div id="blePrinterField" style="display:none">
+      <label>Bluetooth printer</label>
+      <div class="row">
+        <input id="bleDeviceName" readonly placeholder="None selected" />
+        <button id="bleScan">Scan</button>
+      </div>
+      <p class="hint">
+        Use this if the printer works in the POS but never shows in the list above — BLE
+        printers don't install as Windows printers at all, so this is the only way to reach them.
+      </p>
+      <div id="bleDeviceList" style="display:none; margin-top:10px">
+        <label for="bleDevices">Found devices — pick your printer</label>
+        <select id="bleDevices" size="5"></select>
+        <div class="actions">
+          <button id="bleUse" class="primary">Use this printer</button>
+          <button id="bleStop">Stop scanning</button>
+        </div>
+      </div>
+      <div id="bleMsg" class="msg"></div>
+    </div>
 
     <div id="systemPrinterField">
       <label for="printerName">Printer</label>

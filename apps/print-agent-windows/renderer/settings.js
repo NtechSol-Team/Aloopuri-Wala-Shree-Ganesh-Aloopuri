@@ -41,8 +41,9 @@ async function loadPrinters(selected) {
 }
 
 function togglePrinterFields(iface) {
-  $('systemPrinterField').style.display = iface === 'network' ? 'none' : '';
+  $('systemPrinterField').style.display = iface === 'system' ? '' : 'none';
   $('networkPrinterField').style.display = iface === 'network' ? '' : 'none';
+  $('blePrinterField').style.display = iface === 'ble' ? '' : 'none';
 }
 
 async function init() {
@@ -51,6 +52,7 @@ async function init() {
   $('identifier').value = cfg.userIdentifier || '';
   $('printerInterface').value = cfg.printerInterface || 'system';
   $('printerNetworkAddress').value = cfg.printerNetworkAddress || '';
+  $('bleDeviceName').value = cfg.bleDeviceName || '';
   $('paperWidth').value = String(cfg.paperWidth || 48);
   togglePrinterFields(cfg.printerInterface);
   await loadPrinters(cfg.printerName);
@@ -61,6 +63,54 @@ async function init() {
 
   $('printerInterface').addEventListener('change', (e) => togglePrinterFields(e.target.value));
   $('refreshPrinters').addEventListener('click', () => loadPrinters($('printerName').value));
+
+  // --- BLE printer picking ------------------------------------------------
+  // Electron has no built-in Bluetooth chooser: the main process streams the
+  // devices it discovers here, and the scan stays pending until one is chosen.
+  window.printAgent.onBleDevices((devices) => {
+    const sel = $('bleDevices');
+    const previous = sel.value;
+    sel.innerHTML = '';
+    for (const d of devices) {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.deviceName;
+      sel.appendChild(opt);
+    }
+    if (previous) sel.value = previous;
+    $('bleDeviceList').style.display = devices.length ? '' : 'none';
+    if (devices.length) setMsg($('bleMsg'), `Found ${devices.length} device(s). Pick your printer and press Use.`);
+  });
+
+  $('bleScan').addEventListener('click', async () => {
+    const msg = $('bleMsg');
+    $('bleScan').disabled = true;
+    setMsg(msg, 'Scanning… make sure the printer is on and not connected to anything else.');
+    try {
+      const picked = await window.printAgent.bleScan(false);
+      $('bleDeviceName').value = picked.name;
+      $('bleDeviceList').style.display = 'none';
+      setMsg(msg, `Connected to ${picked.name}. Test Print to confirm.`, 'ok');
+    } catch (err) {
+      const text = err && err.message ? err.message : String(err);
+      setMsg(msg, /cancel|chooser/i.test(text) ? 'Scan cancelled.' : text, 'error');
+    } finally {
+      $('bleScan').disabled = false;
+    }
+  });
+
+  $('bleUse').addEventListener('click', () => {
+    const deviceId = $('bleDevices').value;
+    if (!deviceId) return setMsg($('bleMsg'), 'Pick a device from the list first.', 'error');
+    setMsg($('bleMsg'), 'Connecting…');
+    window.printAgent.bleChoose(deviceId);
+  });
+
+  $('bleStop').addEventListener('click', () => {
+    window.printAgent.bleCancel();
+    $('bleDeviceList').style.display = 'none';
+    setMsg($('bleMsg'), 'Scan stopped.');
+  });
 
   $('saveConnection').addEventListener('click', async () => {
     const btn = $('saveConnection');

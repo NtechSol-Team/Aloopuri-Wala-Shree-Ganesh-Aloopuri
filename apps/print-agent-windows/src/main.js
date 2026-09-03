@@ -8,6 +8,7 @@ const configStore = require('./config-store');
 const apiClient = require('./api-client');
 const socketClient = require('./socket-client');
 const printerManager = require('./printer-manager');
+const bleWorker = require('./ble-worker');
 const receiptBuilder = require('./receipt-builder');
 const tray = require('./tray');
 const notify = require('./notify');
@@ -122,6 +123,19 @@ function wireIpc() {
 
   ipcMain.handle('printer:test', () => runTestPrint());
 
+  // --- BLE (Web Bluetooth) printers -------------------------------------
+  // Scanning stays pending until the user picks from the live device list that
+  // ble-worker streams into Settings, so it isn't awaited here.
+  ipcMain.handle('ble:scan', async (_e, { allDevices } = {}) => {
+    const picked = await bleWorker.startScan({ allDevices });
+    configStore.setPrinter({ printerInterface: 'ble', bleDeviceId: picked.id, bleDeviceName: picked.name });
+    tray.rebuild(trayHandlers);
+    return picked;
+  });
+  ipcMain.handle('ble:choose', (_e, deviceId) => bleWorker.choose(deviceId));
+  ipcMain.handle('ble:cancel', () => bleWorker.cancelScan());
+  ipcMain.handle('ble:status', () => bleWorker.status());
+
   ipcMain.handle('bluetooth:open-pairing', () => printerManager.openBluetoothPairingSettings());
   ipcMain.handle('bluetooth:detect', () => printerManager.detectBluetoothCandidates());
   ipcMain.handle('bluetooth:install', async (_e, { portName, printerName }) => {
@@ -161,6 +175,23 @@ app.whenReady().then(async () => {
   tray.build(trayHandlers);
   wireIpc();
   wireSocketEvents();
+
+  // Devices stream in as Electron discovers them during a scan; Settings shows
+  // the list live so the user can pick as soon as their printer appears rather
+  // than waiting for discovery to finish.
+  bleWorker.setDeviceListener((devices) => {
+    if (settingsWindow) settingsWindow.webContents.send('ble:devices', devices);
+  });
+
+  const cfg = configStore.getConfig();
+  if (cfg.printerInterface === 'ble' && cfg.bleDeviceId) {
+    // Best effort: the OS may still grant the previously-picked printer, in
+    // which case orders print without anyone touching Settings after a reboot.
+    bleWorker.reconnect(cfg.bleDeviceId)
+      .then((d) => console.info('[main] BLE printer reconnected:', d && d.name))
+      .catch((err) => console.warn('[main] BLE printer not reconnected yet:', err.message));
+  }
+
   await setupAutoLaunch();
   await connect();
 

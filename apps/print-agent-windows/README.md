@@ -39,14 +39,30 @@ Two stages, deliberately kept separate:
 
 1. **`node-thermal-printer`** builds the raw ESC/POS byte buffer — formatting
    only (`getBuffer()`), it never sends anything itself.
-2. The bytes are sent ourselves:
-   - **USB or Bluetooth** — both pair as a normal Windows printer queue
-     either way, so both go through `resources/RawPrint.ps1`, a bundled
-     PowerShell script that P/Invokes `winspool.drv` directly (the classic
-     Microsoft "RawPrinterHelper" pattern) to push bytes past the driver
-     untouched.
+2. The bytes are sent ourselves, over one of three transports:
+   - **USB or Bluetooth installed as a Windows printer** — goes through
+     `resources/RawPrint.ps1`, a bundled PowerShell script that P/Invokes
+     `winspool.drv` directly (the classic Microsoft "RawPrinterHelper"
+     pattern) to push bytes past the driver untouched.
    - **LAN** — a raw TCP write straight to the printer's `IP:port` (almost
      always 9100), no OS driver involved.
+   - **Bluetooth BLE** — for the printers that never register as a Windows
+     printer at all. This is the same transport the POS uses in the browser
+     (`apps/web/lib/print/web-bluetooth.ts`), ported into `renderer/ble.js`.
+
+### Why BLE needs a hidden window
+
+`navigator.bluetooth` only exists in a renderer, so the agent keeps one hidden
+`BrowserWindow` (`renderer/ble.html`) alive to own the GATT link; the main
+process drives it via `executeJavaScript`. Electron also ships Web Bluetooth
+with **no device chooser UI** — `requestDevice()` just hangs until the app
+answers the `select-bluetooth-device` event — so `src/ble-worker.js` collects
+the discovered devices, streams them into Settings for the user to pick from,
+and answers the chooser with their choice.
+
+If a printer works in the POS but never appears in the agent's printer
+dropdown, it is a BLE printer: switch Connection type to **Bluetooth BLE** and
+press Scan.
 
 The brief named the `printer` npm package for step 2. That package is
 unmaintained (last release is grunt-era, 2017) and **fails to even install**

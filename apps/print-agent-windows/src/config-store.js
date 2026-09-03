@@ -14,8 +14,14 @@ const store = new Store({
   defaults: {
     serverUrl: '',
     printerName: '',
-    printerInterface: 'system', // 'system' (Windows printer queue) | 'network' (raw TCP, LAN thermal printers)
+    // 'system'  -> Windows printer queue (USB / Bluetooth installed as a printer)
+    // 'network' -> raw TCP to a LAN thermal printer
+    // 'ble'     -> Web Bluetooth, the same transport the POS uses for BLE
+    //              printers, which never appear as Windows printers at all
+    printerInterface: 'system',
     printerNetworkAddress: '', // "host:port" when printerInterface === 'network'
+    bleDeviceId: '', // Web Bluetooth device id when printerInterface === 'ble'
+    bleDeviceName: '',
     paperWidth: 48, // characters per line at the configured font -- 80mm printers, 42/58mm should use ~32
     userIdentifier: '', // email or user code last used to log in, shown back in Settings
     encryptedRefreshToken: null, // Buffer, written by saveRefreshToken()
@@ -29,6 +35,8 @@ function getConfig() {
     printerName: raw.printerName,
     printerInterface: raw.printerInterface,
     printerNetworkAddress: raw.printerNetworkAddress,
+    bleDeviceId: raw.bleDeviceId,
+    bleDeviceName: raw.bleDeviceName,
     paperWidth: raw.paperWidth,
     userIdentifier: raw.userIdentifier,
     hasSavedLogin: !!raw.encryptedRefreshToken,
@@ -39,10 +47,12 @@ function setServerUrl(url) {
   store.set('serverUrl', url.trim().replace(/\/+$/, ''));
 }
 
-function setPrinter({ printerName, printerInterface, printerNetworkAddress, paperWidth }) {
+function setPrinter({ printerName, printerInterface, printerNetworkAddress, bleDeviceId, bleDeviceName, paperWidth }) {
   if (printerName !== undefined) store.set('printerName', printerName);
   if (printerInterface !== undefined) store.set('printerInterface', printerInterface);
   if (printerNetworkAddress !== undefined) store.set('printerNetworkAddress', printerNetworkAddress);
+  if (bleDeviceId !== undefined) store.set('bleDeviceId', bleDeviceId);
+  if (bleDeviceName !== undefined) store.set('bleDeviceName', bleDeviceName);
   if (paperWidth !== undefined) store.set('paperWidth', paperWidth);
 }
 

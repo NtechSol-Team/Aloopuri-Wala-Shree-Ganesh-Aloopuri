@@ -25,6 +25,7 @@ const { app, shell } = require('electron');
 const { execFile } = require('node:child_process');
 const { ThermalPrinter, PrinterTypes } = require('node-thermal-printer');
 const configStore = require('./config-store');
+const bleWorker = require('./ble-worker');
 
 function resourcePath(name) {
   return app.isPackaged
@@ -111,6 +112,13 @@ function buildEscPosBuffer(lines, { paperWidth } = {}) {
 /** Sends already-built ESC/POS bytes to whatever this agent is configured to print to. */
 function sendToConfiguredPrinter(buffer) {
   const cfg = configStore.getConfig();
+  if (cfg.printerInterface === 'ble') {
+    // BLE printers never register as a Windows printer, so there is no queue to
+    // push bytes at -- they're driven over Web Bluetooth from the hidden BLE
+    // window, exactly as the POS drives them from the browser.
+    if (!cfg.bleDeviceId) throw new Error('No Bluetooth printer selected. Pick one in Settings.');
+    return bleWorker.print(buffer, cfg.bleDeviceId);
+  }
   if (cfg.printerInterface === 'network') {
     return sendOverNetwork(buffer, cfg.printerNetworkAddress);
   }
