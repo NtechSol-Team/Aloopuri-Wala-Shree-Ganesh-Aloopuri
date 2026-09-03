@@ -78,18 +78,27 @@ export async function printRaw(bytes: Uint8Array, opts: { statusCheck?: boolean 
 
   if (transport === 'webbt') {
     try {
-      await webBtPrinter.ensureConnected(s.webBtDeviceId);
-      await webBtPrinter.write(bytes);
+      // Connect-send-and-retry-once-on-a-stale-link. These BLE modules drop an
+      // idle link silently, so the first write after a quiet spell routinely
+      // fails on a link the browser still reports as connected.
+      await webBtPrinter.printBytes(bytes, s.webBtDeviceId);
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // Logged as well as returned: callers only surface `error` as a toast, so
       // without this the stack and the preceding [print/ble] trace are lost.
       console.error('[print/ble] printRaw failed', e);
+      // "GATT Server is disconnected. Cannot retrieve services." means nothing
+      // to whoever is standing at the till. By the time this is returned the
+      // link has already been rebuilt and retried once, so what's left to say
+      // is the physical thing to check.
+      const linkDropped = /gatt|cannot retrieve services|link dropped|not connected/i.test(msg);
       return {
         ok: false,
         code: /not connected/i.test(msg) ? 'no-printer' : 'write-failed',
-        error: msg,
+        error: linkDropped
+          ? 'Lost connection to the printer. Check it is switched on and in range, then print again.'
+          : msg,
       };
     }
   }

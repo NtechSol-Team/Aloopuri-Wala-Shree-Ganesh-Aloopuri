@@ -163,7 +163,42 @@ export class WebBluetoothPrinter {
     }
   }
 
-  private async connectTo(device: BluetoothDeviceLike): Promise<void> {
+  /**
+   * True for the drop-mid-handshake errors these modules throw constantly, as
+   * opposed to a real fault (no writable characteristic, unsupported printer).
+   * Chrome words it "GATT Server is disconnected. Cannot retrieve services." —
+   * which is thrown by getPrimaryServices() below when the link died between
+   * gatt.connect() resolving and service discovery running.
+   */
+  private static isLinkDropError(e: unknown): boolean {
+    const msg = e instanceof Error ? e.message : String(e);
+    return /gatt server is disconnected|cannot retrieve services|connection.*(lost|failed)|device is not connected/i.test(msg);
+  }
+
+  /**
+   * connect + discover, retried. A cheap BLE module will happily accept the
+   * connect and then drop the link again before service discovery finishes;
+   * that used to surface as a raw Chrome GATT error on the till right when the
+   * cashier hit print. Retrying the whole handshake is what makes it stick.
+   */
+  private async connectTo(device: BluetoothDeviceLike, attempts = 3): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.connectOnce(device);
+        return;
+      } catch (e) {
+        if (attempt >= attempts || !WebBluetoothPrinter.isLinkDropError(e)) throw e;
+        // Give the module a moment to settle before redialling; these bridges
+        // reject a connect that lands immediately after their own drop.
+        const backoff = 250 * attempt;
+        warn(`handshake attempt ${attempt}/${attempts} lost the link, retrying in ${backoff}ms`, e);
+        try { device.gatt?.disconnect(); } catch { /* already gone */ }
+        await sleep(backoff);
+      }
+    }
+  }
+
+  private async connectOnce(device: BluetoothDeviceLike): Promise<void> {
     if (!device.gatt) throw new Error('Device has no GATT server');
     this.device = device;
 
@@ -288,6 +323,36 @@ export class WebBluetoothPrinter {
       fail(`write failed after ${sent}/${bytes.length} bytes (${Date.now() - startedAt}ms)`, e);
       throw e;
     }
+  }
+
+  /**
+   * The one call the print path should use: make sure the link is up, send the
+   * bytes, and if the link turns out to have gone stale (module dropped it
+   * while the till sat idle, which is the normal case, not the exception),
+   * rebuild it and send again.
+   *
+   * `gatt.connected` reporting true is not proof the link is alive — the drop
+   * is only observed when a write actually goes out — so a single retry after
+   * a genuine failure is the only reliable way to tell a dead link from a dead
+   * printer.
+   */
+  async printBytes(bytes: Uint8Array, savedDeviceId?: string): Promise<void> {
+    await this.ensureConnected(savedDeviceId);
+    try {
+      await this.write(bytes);
+      return;
+    } catch (e) {
+      if (!WebBluetoothPrinter.isLinkDropError(e) && !/not connected|link dropped/i.test(e instanceof Error ? e.message : String(e))) {
+        throw e;
+      }
+      warn('write failed on a stale link — rebuilding the connection and retrying once', e);
+    }
+    // Force a full redial rather than trusting any cached state.
+    this.characteristic = null;
+    try { this.device?.gatt?.disconnect(); } catch { /* already gone */ }
+    await sleep(200);
+    await this.ensureConnected(savedDeviceId);
+    await this.write(bytes);
   }
 
   disconnect(): void {
