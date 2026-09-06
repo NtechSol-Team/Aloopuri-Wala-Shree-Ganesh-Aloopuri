@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { AlertTriangle, ChevronRight, Receipt, Ban, ReceiptText, Clock, Search, Printer, ArrowUpDown, Store, ArrowLeft } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Receipt, Ban, ReceiptText, Clock, Search, Printer, ArrowUpDown, Store, ArrowLeft, FileBarChart, CalendarClock, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -12,24 +12,30 @@ import { Button } from '@/components/ui/button';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { cn, formatINR } from '@/lib/utils';
-import { useRevenueTrend, useTopProducts, useFinancial, useOutletPerformance, useInventoryAnalytics, usePosAnalytics, type TrendPeriod, type PosAnalyticsRange } from '@/hooks/useAnalytics';
+import {
+  useRevenueTrend, useTopProducts, useBusinessOverview, useFinancial, useOutletPerformance,
+  useInventoryAnalytics, usePosAnalytics, type TrendPeriod, type PosAnalyticsRange,
+} from '@/hooks/useAnalytics';
 import { useOutlets } from '@/hooks/useOutlets';
 import { TrendingUp, Wallet, BadgeIndianRupee } from 'lucide-react';
 import { OutletDetailDialog } from '@/components/analytics/outlet-detail-dialog';
 import { useAuthStore } from '@/store/auth.store';
 import { printAnalyticsPaymentModeReport } from '@/lib/receipt-print';
 
-type Tab = 'sales' | 'pos' | 'outlets' | 'inventory' | 'financial';
+type Tab = 'overview' | 'sales' | 'pos' | 'outlets' | 'inventory' | 'financial';
 
-// Store-wide tabs (Sales trend, Outlets, Inventory, Financial P&L) hit
+// Store-wide tabs (Overview, Sales trend, Outlets, Inventory, Financial P&L) hit
 // super-admin-only endpoints — a franchise owner only ever sees their own
 // outlet's POS collections, so they get just that one tab, no picker at all.
-const ALL_TABS = [['sales', 'Sales'], ['pos', 'POS'], ['outlets', 'Outlets'], ['inventory', 'Inventory'], ['financial', 'Financial P&L']] as const;
+const ALL_TABS = [
+  ['overview', 'Overview'], ['sales', 'Sales'], ['pos', 'POS'],
+  ['outlets', 'Outlets'], ['inventory', 'Inventory'], ['financial', 'Financial P&L'],
+] as const;
 
 export default function AnalyticsPage() {
   const role = useAuthStore((s) => s.user?.role);
   const isOwner = role === 'FRANCHISE_OWNER';
-  const [tab, setTab] = useState<Tab>(isOwner ? 'pos' : 'sales');
+  const [tab, setTab] = useState<Tab>(isOwner ? 'pos' : 'overview');
 
   if (isOwner) {
     return (
@@ -46,11 +52,44 @@ export default function AnalyticsPage() {
           <button key={k} onClick={() => setTab(k)} className={cn('border-b-2 px-4 py-2 text-body font-medium', tab === k ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}>{l}</button>
         ))}
       </div>
+      {tab === 'overview' && <OverviewTab />}
       {tab === 'sales' && <SalesTab />}
       {tab === 'pos' && <PosTab />}
       {tab === 'outlets' && <OutletsTab />}
       {tab === 'inventory' && <InventoryTab />}
       {tab === 'financial' && <FinancialTab />}
+    </div>
+  );
+}
+
+/**
+ * The whole business on one screen: how much has ever been billed, what came
+ * in this month, how many bills went out this month and what's still owed on
+ * them, and the running total owed across every bill outstanding — the first
+ * thing the owner should see before drilling into any one report below.
+ */
+function OverviewTab() {
+  const { data, isLoading } = useBusinessOverview();
+
+  if (isLoading || !data) {
+    return <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-28" />)}</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-card-title font-semibold">Business Overview</h2>
+        <p className="text-caption text-muted-foreground">Every bill and POS sale, since day one, and where things stand right now.</p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <KpiCard label="Total Revenue (All Time)" value={formatINR(data.totalRevenueAllTime, { decimals: false })} icon={TrendingUp} accent="primary" />
+        <KpiCard label="Collected This Month" value={formatINR(data.collectedThisMonth, { decimals: false })} icon={Wallet} accent="success" />
+        <KpiCard label="Bills Made This Month" value={String(data.billsMadeThisMonth)} icon={FileBarChart} accent="primary" />
+        <KpiCard label="Billed This Month" value={formatINR(data.billedThisMonth, { decimals: false })} icon={ReceiptText} accent="primary" />
+        <KpiCard label="Pending This Month" value={formatINR(data.pendingThisMonth, { decimals: false })} icon={CalendarClock} accent={data.pendingThisMonth > 0 ? 'warning' : 'primary'} />
+        <KpiCard label="Overall Pending (All Time)" value={formatINR(data.overallPending, { decimals: false })} icon={AlertCircle} accent={data.overallPending > 0 ? 'danger' : 'primary'} />
+      </div>
     </div>
   );
 }

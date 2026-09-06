@@ -23,6 +23,14 @@ export interface InventoryAnalytics {
   lowStock: Array<{ name: string; location: string; quantity: number; reorder: number }>;
   slowMoving: string[];
 }
+export interface BusinessOverview {
+  totalRevenueAllTime: number;
+  collectedThisMonth: number;
+  billsMadeThisMonth: number;
+  billedThisMonth: number;
+  pendingThisMonth: number;
+  overallPending: number;
+}
 
 export interface PosAnalytics {
   summary: {
@@ -52,6 +60,9 @@ export function useRevenueTrend(period: TrendPeriod) {
 }
 export function useTopProducts() {
   return useQuery({ queryKey: ['analytics', 'top'], queryFn: async () => (await api.get<ApiSuccess<TopProducts>>('/analytics/sales/top-products')).data.data });
+}
+export function useBusinessOverview() {
+  return useQuery({ queryKey: ['analytics', 'overview'], queryFn: async () => (await api.get<ApiSuccess<BusinessOverview>>('/analytics/overview')).data.data });
 }
 export function useFinancial() {
   return useQuery({ queryKey: ['analytics', 'financial'], queryFn: async () => (await api.get<ApiSuccess<{ monthly: MonthlyPL[]; current: MonthlyPL | null }>>('/analytics/financial')).data.data });

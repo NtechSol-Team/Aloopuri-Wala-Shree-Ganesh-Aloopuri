@@ -212,6 +212,66 @@ export async function getTopProducts() {
   return { byRevenue, byQuantity };
 }
 
+function num0(rows: Array<{ v: number | null }>): number {
+  return Number(rows[0]?.v ?? 0);
+}
+
+export interface BusinessOverview {
+  /** Every bill ever raised plus every main-branch POS sale ever completed —
+   *  the business's total revenue since day one, not scoped to any month. */
+  totalRevenueAllTime: number;
+  /** Actual money received this month — bill payments plus POS collections
+   *  (cash and digital together), the same "Money In" figure the Financial
+   *  Position card uses, so the two screens never disagree. */
+  collectedThisMonth: number;
+  billsMadeThisMonth: number;
+  billedThisMonth: number;
+  /** What's still owed specifically on bills raised this month. */
+  pendingThisMonth: number;
+  /** What's still owed across every outstanding bill ever raised, regardless
+   *  of month — the number a collections call list would work off of. */
+  overallPending: number;
+}
+
+/**
+ * One-screen business summary: how much the business has ever billed, what
+ * came in this month, how many bills went out this month and what's still
+ * owed on them, and the running total owed across every bill outstanding.
+ * Reads bills/payments/pos_transactions live rather than a materialized view,
+ * so it's never more stale than the last write.
+ */
+export async function getBusinessOverview(): Promise<BusinessOverview> {
+  return cache.getOrSet('analytics:overview', [CacheTag.PAYMENTS, CacheTag.BILLS, CacheTag.DASHBOARD], async () => {
+    const monthStart = startOfMonth(new Date());
+
+    const [
+      billsAllTime, posAllTime, cashInMonth, digitalInMonth, posCashMonth, posDigitalMonth,
+      billsThisMonth, pendingThisMonth, overallPending,
+    ] = await Promise.all([
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(grand_total),0)::float v FROM bills WHERE is_deleted=false AND status<>'CANCELLED'`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(grand_total),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND outlet_id IS NULL`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM payments WHERE is_deleted=false AND channel='CASH' AND payment_date >= ${monthStart}`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM payments WHERE is_deleted=false AND channel='DIGITAL' AND payment_date >= ${monthStart}`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(cash_amount),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(card_amount+upi_amount),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
+      prisma.$queryRaw<Array<{ count: bigint; total: number }>>`SELECT COUNT(*)::bigint AS count, COALESCE(SUM(grand_total),0)::float AS total FROM bills WHERE is_deleted=false AND status<>'CANCELLED' AND bill_date >= ${monthStart}`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(balance_due),0)::float v FROM bills WHERE is_deleted=false AND status IN ('UNPAID','PARTIALLY_PAID') AND bill_date >= ${monthStart}`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(balance_due),0)::float v FROM bills WHERE is_deleted=false AND status IN ('UNPAID','PARTIALLY_PAID')`,
+    ]);
+
+    const billsRow = billsThisMonth[0] ?? { count: 0n, total: 0 };
+
+    return {
+      totalRevenueAllTime: num0(billsAllTime) + num0(posAllTime),
+      collectedThisMonth: num0(cashInMonth) + num0(digitalInMonth) + num0(posCashMonth) + num0(posDigitalMonth),
+      billsMadeThisMonth: Number(billsRow.count),
+      billedThisMonth: Number(billsRow.total),
+      pendingThisMonth: num0(pendingThisMonth),
+      overallPending: num0(overallPending),
+    };
+  });
+}
+
 /** Monthly P&L from the materialized view. */
 export async function getFinancial() {
   const rows = await prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
@@ -556,6 +616,7 @@ export const analyticsService = {
   getDashboard,
   getRevenueTrend,
   getTopProducts,
+  getBusinessOverview,
   getFinancial,
   getOutletPerformance,
   getInventoryAnalytics,

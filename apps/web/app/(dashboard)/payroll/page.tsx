@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
-  Users, CalendarCheck, Wallet, BarChart3, FileText, Play, Check, Undo2,
+  Users, Wallet, FileText, Play, Check, Undo2,
   Download, Pencil, HandCoins, Plus, Trash2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -28,12 +28,15 @@ import {
   MONTH_NAMES, type AttendanceRow, type PayrollRow, type Period, type AdvanceRow, type AdvancePaymentMethod,
 } from '@/hooks/usePayroll';
 
-type Tab = 'dashboard' | 'attendance' | 'salary' | 'advances' | 'reports';
+// Dashboard, Attendance and Salary used to be three separate tabs — checking the
+// month's numbers, then entering attendance, then processing salary meant clicking
+// across all three for one task. They're now one scrolling "Payroll" screen sharing
+// a single period picker, so that whole workflow needs zero tab-switching; Advances
+// and Reports stay separate since they aren't part of that same month-by-month flow.
+type Tab = 'payroll' | 'advances' | 'reports';
 
 const TABS: Array<[Tab, string, typeof Users]> = [
-  ['dashboard', 'Dashboard', BarChart3],
-  ['attendance', 'Attendance', CalendarCheck],
-  ['salary', 'Salary', Wallet],
+  ['payroll', 'Payroll', Wallet],
   ['advances', 'Advances', HandCoins],
   ['reports', 'Reports', FileText],
 ];
@@ -42,7 +45,7 @@ const now = ist();
 const today = () => todayIso();
 
 export default function PayrollPage() {
-  const [tab, setTab] = useState<Tab>('dashboard');
+  const [tab, setTab] = useState<Tab>('payroll');
   const [period, setPeriod] = useState<Period>({ year: now.getFullYear(), month: now.getMonth() + 1 });
 
   return (
@@ -62,14 +65,34 @@ export default function PayrollPage() {
             </button>
           ))}
         </div>
-        {tab !== 'reports' && tab !== 'advances' && <PeriodPicker period={period} onChange={setPeriod} />}
+        {tab === 'payroll' && <PeriodPicker period={period} onChange={setPeriod} />}
       </div>
 
-      {tab === 'dashboard' && <DashboardTab period={period} />}
-      {tab === 'attendance' && <AttendanceTab period={period} />}
-      {tab === 'salary' && <SalaryTab period={period} />}
+      {tab === 'payroll' && <PayrollTab period={period} />}
       {tab === 'advances' && <AdvancesTab />}
       {tab === 'reports' && <ReportsTab />}
+    </div>
+  );
+}
+
+/** Dashboard + Attendance + Salary, stacked on one screen instead of behind
+ *  three tabs — see the month's numbers, enter attendance, and process salary
+ *  without a single tab click in between. */
+function PayrollTab({ period }: { period: Period }) {
+  return (
+    <div className="space-y-8">
+      <section className="space-y-3">
+        <h2 className="text-card-title font-semibold">Dashboard</h2>
+        <DashboardTab period={period} />
+      </section>
+      <section className="space-y-3">
+        <h2 className="text-card-title font-semibold">Attendance</h2>
+        <AttendanceTab period={period} />
+      </section>
+      <section className="space-y-3">
+        <h2 className="text-card-title font-semibold">Salary</h2>
+        <SalaryTab period={period} />
+      </section>
     </div>
   );
 }

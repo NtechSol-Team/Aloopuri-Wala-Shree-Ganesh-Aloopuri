@@ -24,9 +24,7 @@ export function ItemReportTab() {
   const { data: products } = useProducts({ isPosEnabled: false });
   const list = products?.rows ?? [];
   const [productId, setProductId] = useState('');
-  // "That month" is the point of the feature, so default there rather than to
-  // the wider "All" the other report tabs default to.
-  const [period, setPeriod] = useState<PeriodKey>('month');
+  const [period, setPeriod] = useState<PeriodKey>('all');
   const [custom, setCustom] = useState({ from: todayIso(), to: todayIso() });
 
   useEffect(() => {

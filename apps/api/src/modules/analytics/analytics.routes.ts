@@ -24,6 +24,9 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => ok(res, await analyticsService.getRevenueTrend(req.query.period as TrendPeriod))),
 );
 router.get('/sales/top-products', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getTopProducts())));
+// One-screen business summary: all-time revenue, this month's collections/bills/
+// pending, and the overall pending total across every outstanding bill.
+router.get('/overview', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getBusinessOverview())));
 router.get('/financial', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getFinancial())));
 router.get('/outlets', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getOutletPerformance())));
 router.get(
