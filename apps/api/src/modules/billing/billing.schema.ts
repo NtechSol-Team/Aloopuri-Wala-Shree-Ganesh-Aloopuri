@@ -57,8 +57,9 @@ export const createManualBillSchema = z.object({
   charges: z.array(billChargeSchema).max(10).optional(),
 });
 
+// productId omitted entirely means "every product" — see getAllItemsSalesReport.
 export const itemSalesReportQuerySchema = z.object({
-  productId: z.string().uuid(),
+  productId: z.string().uuid().optional(),
   from: istDate.optional(),
   to: istDate.optional(),
 });

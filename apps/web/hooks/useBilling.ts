@@ -144,6 +144,26 @@ export function useItemSalesReport(params: { productId?: string; from?: string; 
   });
 }
 
+export interface AllItemsSalesReport {
+  products: Array<{
+    productId: string; name: string; sku: string; unitName: string; decimalPlaces: number;
+    qty: number; revenue: number; collected: number; pending: number;
+  }>;
+  totalRevenue: number;
+  totalCollected: number;
+  totalPending: number;
+}
+
+/** Every product, one period — the "All" view: same report, rolled up one row
+ *  per product across every outlet instead of one product broken down by outlet. */
+export function useAllItemsSalesReport(params: { from?: string; to?: string }, enabled: boolean) {
+  return useQuery({
+    queryKey: ['bills', 'item-sales-report', 'all', params],
+    enabled,
+    queryFn: async () => (await api.get<ApiSuccess<AllItemsSalesReport>>('/billing/reports/item-sales', { params })).data.data,
+  });
+}
+
 /**
  * Sets the full charge list on a bill, however it was raised — including ones
  * auto-created from a franchise's own order, which has no creation-time step of

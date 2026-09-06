@@ -246,6 +246,56 @@ export async function getItemSalesReport(productId: string, from?: Date, to?: Da
 }
 
 /**
+ * Every product sold in the period, one row each — the "All" view of the same
+ * report above, flipped: instead of one product broken down by outlet, this is
+ * every outlet's sales rolled into one figure per product. Qty isn't summed
+ * across the whole list (a kg of one item and a piece of another don't add
+ * up to anything meaningful) — each row keeps its own unit, same as the
+ * single-product view does per outlet.
+ */
+export async function getAllItemsSalesReport(from?: Date, to?: Date) {
+  const range = istRange(from, to);
+  const rows = await prisma.$queryRaw<Array<{
+    product_id: string; name: string; sku: string; unit_name: string; decimal_places: number;
+    qty: number; revenue: number; collected: number | null; pending: number | null;
+  }>>`
+    SELECT bi.product_id AS product_id, p.name AS name, p.sku AS sku, u.name AS unit_name, u.decimal_places AS decimal_places,
+           SUM(bi.quantity)::float AS qty,
+           SUM(bi.line_total)::float AS revenue,
+           SUM(bi.line_total * b.amount_paid / NULLIF(b.grand_total, 0))::float AS collected,
+           SUM(bi.line_total * b.balance_due / NULLIF(b.grand_total, 0))::float AS pending
+    FROM bill_items bi
+    JOIN bills b ON b.id = bi.bill_id
+    JOIN products p ON p.id = bi.product_id
+    JOIN units u ON u.id = p.unit_id
+    WHERE bi.is_deleted = false AND b.is_deleted = false AND b.status <> 'CANCELLED'
+      ${range?.gte ? Prisma.sql`AND b.bill_date >= ${range.gte}` : Prisma.empty}
+      ${range?.lt ? Prisma.sql`AND b.bill_date < ${range.lt}` : Prisma.empty}
+    GROUP BY bi.product_id, p.name, p.sku, u.name, u.decimal_places
+    ORDER BY revenue DESC
+  `;
+
+  const products = rows.map((r) => ({
+    productId: r.product_id,
+    name: r.name,
+    sku: r.sku,
+    unitName: r.unit_name,
+    decimalPlaces: r.decimal_places,
+    qty: Number(r.qty),
+    revenue: Number(r.revenue),
+    collected: Number(r.collected ?? 0),
+    pending: Number(r.pending ?? 0),
+  }));
+
+  return {
+    products,
+    totalRevenue: products.reduce((s, p) => s + p.revenue, 0),
+    totalCollected: products.reduce((s, p) => s + p.collected, 0),
+    totalPending: products.reduce((s, p) => s + p.pending, 0),
+  };
+}
+
+/**
  * Add/replace the packing-transport-etc charges on a bill after the fact.
  *
  * Bills raised from a franchise's own order (createOrder) are generated the
@@ -527,5 +577,5 @@ export async function deleteBill(user: AuthUser, id: string) {
 
 export const billingService = {
   createBillForOrderTx, afterBillGenerated, listBills, getBill, regeneratePdf,
-  createManualBill, deleteBill, updateBillCharges, getItemSalesReport,
+  createManualBill, deleteBill, updateBillCharges, getItemSalesReport, getAllItemsSalesReport,
 };

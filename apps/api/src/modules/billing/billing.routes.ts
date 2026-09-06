@@ -69,13 +69,15 @@ router.patch(
 
 // One product, one period, outlet-wise — who's buying it and for how much. The
 // main owner's/godown's report, not a franchise owner's: they don't need to see
-// what other outlets bought.
+// what other outlets bought. Omitting productId asks for every product instead,
+// one row per product rolled up across all outlets.
 router.get(
   '/reports/item-sales',
   requireGodownAccess,
   validate({ query: itemSalesReportQuerySchema }),
   asyncHandler(async (req: Request, res: Response) => {
     const q = req.query as unknown as ItemSalesReportQuery;
+    if (!q.productId) return ok(res, await billingService.getAllItemsSalesReport(q.from, q.to));
     return ok(res, await billingService.getItemSalesReport(q.productId, q.from, q.to));
   }),
 );
