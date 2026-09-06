@@ -159,10 +159,26 @@ export async function getBill(user: AuthUser, id: string) {
       charges: { orderBy: { createdAt: 'asc' } },
       outlet: true,
       payments: { where: { isDeleted: false }, orderBy: { paymentDate: 'desc' } },
+      // A Receive Payment split FIFO across several bills doesn't set billId (there's
+      // no single bill to point at) — it carries one allocation row per bill it
+      // touched instead. Without these, a bill paid off as part of a multi-bill
+      // receipt would show no payment history at all.
+      allocations: { where: { payment: { isDeleted: false } }, orderBy: { createdAt: 'desc' }, include: { payment: true } },
     },
   });
   if (!bill) throw AppError.notFound('Bill not found');
-  return bill;
+
+  // Merge both shapes into one payment history. `allocatedAmount` is this bill's
+  // share of the receipt — equal to the full amount for a direct payment, and
+  // possibly less than it for a split one (the rest went to other bills).
+  const directPayments = bill.payments.map((p) => ({ ...p, allocatedAmount: p.amount, splitAcrossBills: false }));
+  const splitPayments = bill.allocations.map((a) => ({ ...a.payment, allocatedAmount: a.amount, splitAcrossBills: true }));
+  const payments = [...directPayments, ...splitPayments].sort(
+    (a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime(),
+  );
+
+  const { allocations: _allocations, ...rest } = bill;
+  return { ...rest, payments };
 }
 
 export async function regeneratePdf(user: AuthUser, id: string) {

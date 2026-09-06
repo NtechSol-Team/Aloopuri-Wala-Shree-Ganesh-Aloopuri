@@ -112,6 +112,7 @@ enum PaymentMethod {
   NET_BANKING
   RAZORPAY
   BANK_TRANSFER
+  CHEQUE
   // Expense-only: the amount is owed but hasn't actually been paid by any
   // method yet. Editing a not-paid expense to a real method is how it gets
   // marked paid — there's no separate status field to keep in sync.
@@ -997,9 +998,10 @@ model Bill {
 
   outlet   Outlet       @relation(fields: [outletId], references: [id])
   order    OutletOrder? @relation(fields: [orderId], references: [id])
-  items    BillItem[]
-  charges  BillCharge[]
-  payments Payment[]
+  items       BillItem[]
+  charges     BillCharge[]
+  payments    Payment[]
+  allocations PaymentAllocation[]
 
   @@index([outletId, status])
   @@index([status, dueDate])
@@ -1106,14 +1108,27 @@ model Payment {
   /// against the bank statement later instead of matching on amount and date alone.
   referenceNumber   String?        @map("reference_number")
   receiptPhotoUrl   String?        @map("receipt_photo_url")
+  // The slice of `amount` that didn't land on any bill — the outlet paid more than
+  // it owed and that excess is being held as credit against a future bill, rather
+  // than silently over-applied to one. Zero for every ordinary payment.
+  advanceAmount     Decimal        @default(0) @map("advance_amount") @db.Decimal(12, 2)
+  // Client-generated, one per Receive Payment attempt: a double-click or a retried
+  // request after a dropped connection carries the same key, so it lands once.
+  idempotencyKey    String?        @unique @map("idempotency_key")
   isDeleted         Boolean        @default(false) @map("is_deleted")
   createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById       String?        @map("created_by") @db.Uuid
 
-  bill   Bill?        @relation(fields: [billId], references: [id])
-  order  OutletOrder? @relation(fields: [orderId], references: [id])
-  outlet Outlet       @relation(fields: [outletId], references: [id])
+  bill        Bill?               @relation(fields: [billId], references: [id])
+  order       OutletOrder?        @relation(fields: [orderId], references: [id])
+  outlet      Outlet              @relation(fields: [outletId], references: [id])
+  // A single receipt split FIFO across several bills — billId above stays null for
+  // these (there's no one bill to point at) and this is the source of truth for
+  // where the money actually went. A payment against exactly one bill still sets
+  // billId directly and carries no allocation rows, so every existing reader that
+  // joins Payment -> Bill via billId keeps working unchanged.
+  allocations PaymentAllocation[]
 
   @@index([billId])
   @@index([orderId])
@@ -1121,6 +1136,26 @@ model Payment {
   @@index([razorpayPaymentId])
   @@index([status])
   @@map("payments")
+}
+
+// One payment's share applied to one bill. Exists only for a "Receive Payment"
+// that spans more than one bill (FIFO across an outlet's oldest-first
+// outstanding bills) — see Payment.allocations. Amounts here always reconcile
+// back to their payment: SUM(allocations.amount) + payment.advanceAmount =
+// payment.amount.
+model PaymentAllocation {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentId String   @map("payment_id") @db.Uuid
+  billId    String   @map("bill_id") @db.Uuid
+  amount    Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  bill    Bill    @relation(fields: [billId], references: [id])
+
+  @@unique([paymentId, billId])
+  @@index([billId])
+  @@map("payment_allocations")
 }
 
 model PaymentAudit {

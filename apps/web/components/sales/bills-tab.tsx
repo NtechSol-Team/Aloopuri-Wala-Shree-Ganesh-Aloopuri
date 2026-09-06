@@ -355,10 +355,13 @@ function BillDetailDialog({ id, onClose }: { id: string | null; onClose: () => v
                   <div key={p.id} className="flex items-center justify-between gap-2 text-body">
                     <span className="min-w-0">
                       <span className="block font-medium">{p.paymentNumber}</span>
-                      <span className="block text-caption text-muted-foreground">{p.method} · {format(ist(p.paymentDate), 'dd MMM yyyy')}</span>
+                      <span className="block text-caption text-muted-foreground">
+                        {p.method} · {format(ist(p.paymentDate), 'dd MMM yyyy')}
+                        {p.splitAcrossBills && ` · part of ${formatINR(p.amount)} received, split across bills`}
+                      </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
-                      <span className="font-medium text-success">{formatINR(p.amount)}</span>
+                      <span className="font-medium text-success">{formatINR(p.allocatedAmount)}</span>
                       <Button
                         variant="ghost" size="icon" title="Reverse — entered by mistake"
                         onClick={() => setReverseTarget({ ...p, bill: { billNumber: bill.billNumber }, outlet: { name: bill.outlet.name } })}

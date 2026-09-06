@@ -19,6 +19,18 @@ import { ReversePaymentDialog } from '@/components/payments/reverse-payment-dial
 const AGING_COLOR: Record<string, string> = { current: 'bg-success', '0-7': 'bg-success', '1-7': 'bg-warning', '8-15': 'bg-warning', '16-30': 'bg-danger', '30+': 'bg-danger' };
 const AGING_LABEL: Record<string, string> = { current: 'Not due', '0-7': '0–7 days', '1-7': '1–7 days', '8-15': '8–15 days', '16-30': '16–30 days', '30+': '30+ days' };
 
+/** What to show in the Bill column for a receipt that may cover several bills at
+ *  once (a Receive Payment, FIFO), or none at all (pure advance/credit). */
+function billCell(p: PaymentRow) {
+  if (p.bill) return p.bill.billNumber;
+  if (p.allocations?.length) {
+    const [first, ...rest] = p.allocations;
+    return rest.length ? `${first.bill.billNumber} +${rest.length} more` : first.bill.billNumber;
+  }
+  if (Number(p.advanceAmount ?? 0) > 0) return 'Advance / Credit';
+  return '—';
+}
+
 /** Due-date pill: red once overdue, amber inside the 5-day reminder window, muted otherwise. */
 function DueCell({ dueDate }: { dueDate: string | null }) {
   if (!dueDate) return <span className="text-muted-foreground">—</span>;
@@ -111,7 +123,7 @@ function ReceivablesView() {
                 {payments.map((p) => (
                   <TR key={p.id}>
                     <TD className="font-medium">{p.paymentNumber}</TD><TD>{p.outlet.name}</TD>
-                    <TD className="text-muted-foreground">{p.bill?.billNumber ?? '—'}</TD>
+                    <TD className="text-muted-foreground">{billCell(p)}</TD>
                     <TD><Badge variant={p.channel === 'DIGITAL' ? 'info' : 'neutral'}>{p.method}</Badge></TD>
                     <TD className="text-caption text-muted-foreground">{p.referenceNumber ?? '—'}</TD>
                     <TD className="text-right font-medium text-success">{formatINR(p.amount)}</TD>

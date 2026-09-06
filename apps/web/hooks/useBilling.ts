@@ -32,6 +32,10 @@ export interface BillDetail extends Omit<BillListItem, 'outlet'> {
   payments: Array<{
     id: string; paymentNumber: string; amount: string; channel: string; method: string; paymentDate: string;
     referenceNumber: string | null; notes: string | null;
+    /** This bill's share of the payment — equal to `amount` unless the receipt was
+     *  also split across other bills (a Receive Payment, FIFO), in which case it's less. */
+    allocatedAmount: string;
+    splitAcrossBills: boolean;
   }>;
 }
 

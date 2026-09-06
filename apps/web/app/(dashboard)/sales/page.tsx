@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ShoppingCart, ReceiptText, BarChart3, Store, ChevronRight, ArrowLeft, Layers } from 'lucide-react';
+import { ShoppingCart, ReceiptText, BarChart3, Store, ChevronRight, ArrowLeft, Layers, HandCoins } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
@@ -10,12 +10,14 @@ import { OrdersTab } from '@/components/sales/orders-tab';
 import { BillsTab } from '@/components/sales/bills-tab';
 import { OrderSummaryTab } from '@/components/sales/order-summary-tab';
 import { ItemReportTab } from '@/components/sales/item-report-tab';
+import { ReceivePaymentTab } from '@/components/sales/receive-payment-tab';
 
 /**
- * Three halves of the same flow, picked at the top: Order is what outlets asked
+ * Four halves of the same flow, picked at the top: Order is what outlets asked
  * for, Sale is what they were billed for, Item Report is one product's sales
- * broken down by outlet — the main owner's/godown's own view, not shown to a
- * franchise owner (they've no reason to see what other outlets bought).
+ * broken down by outlet, and Receive Payment is collecting money against
+ * whatever's still owed — all main-office views, not shown to a franchise
+ * owner (they've no reason to see other outlets' orders or pay themselves).
  *
  * For the main owner, Order opens on today's product-wise totals — what actually has
  * to be packed — with a card per franchise underneath; picking one shows just that
@@ -23,7 +25,7 @@ import { ItemReportTab } from '@/components/sales/item-report-tab';
  * franchise from within the tab. A franchise owner has only their own outlet, so they
  * skip the cards and land straight on the list.
  */
-type Section = 'orders' | 'sales' | 'item-report';
+type Section = 'orders' | 'sales' | 'item-report' | 'receive-payment';
 
 /** null = nothing picked yet (show the cards); 'all' = every outlet, unscoped. */
 type Scope = { id: string | 'all'; name: string } | null;
@@ -37,7 +39,12 @@ export default function SalesPage() {
   const sections: Array<[Section, string, typeof ShoppingCart]> = [
     ['orders', 'Order', ShoppingCart],
     ['sales', 'Sale', ReceiptText],
-    ...(isAdmin ? [['item-report', 'Item Report', BarChart3] as [Section, string, typeof ShoppingCart]] : []),
+    ...(isAdmin
+      ? ([
+          ['item-report', 'Item Report', BarChart3],
+          ['receive-payment', 'Receive Payment', HandCoins],
+        ] as Array<[Section, string, typeof ShoppingCart]>)
+      : []),
   ];
 
   // Switching section drops back to the cards — the outlet picked for orders isn't
@@ -94,8 +101,10 @@ export default function SalesPage() {
         // Bills are one flat list of every sale, no outlet drill-down — the tab's
         // own franchise filter is there to narrow it when that's wanted.
         <BillsTab />
-      ) : (
+      ) : section === 'item-report' ? (
         <ItemReportTab />
+      ) : (
+        <ReceivePaymentTab />
       )}
     </div>
   );

@@ -11,7 +11,9 @@ import { ok, created, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import {
   cashPaymentSchema, createRazorpayOrderSchema, listPaymentsQuerySchema, verifyRazorpaySchema,
+  outstandingBillsQuerySchema, receivePaymentPreviewSchema, receivePaymentSchema, outletPaymentHistoryQuerySchema,
   type CashPaymentInput, type CreateRazorpayOrderInput, type ListPaymentsQuery, type VerifyRazorpayInput,
+  type OutstandingBillsQuery, type ReceivePaymentPreviewInput, type ReceivePaymentInput, type OutletPaymentHistoryQuery,
 } from './payments.schema';
 import { paymentsService } from './payments.service';
 
@@ -80,6 +82,42 @@ router.delete(
   requireSuperAdmin,
   validate({ params: idParam }),
   asyncHandler(async (req: Request, res: Response) => ok(res, await paymentsService.deletePayment(req.params.id), 'Payment reversed')),
+);
+
+// ── Receive Payment (FIFO across an outlet's outstanding bills) ─────────────
+// Collecting money from a franchise is a main-office job, same roster as cash entry.
+const receivePaymentRoles = requireRole(UserRole.SUPER_ADMIN, UserRole.GODOWN_MANAGER);
+
+router.get(
+  '/receive/outstanding',
+  receivePaymentRoles,
+  validate({ query: outstandingBillsQuerySchema }),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await paymentsService.getOutstandingBills((req.query as unknown as OutstandingBillsQuery).outletId))),
+);
+
+router.get(
+  '/receive/history',
+  receivePaymentRoles,
+  validate({ query: outletPaymentHistoryQuerySchema }),
+  asyncHandler(async (req: Request, res: Response) => ok(res, await paymentsService.getOutletPaymentHistory((req.query as unknown as OutletPaymentHistoryQuery).outletId))),
+);
+
+router.post(
+  '/receive/preview',
+  receivePaymentRoles,
+  validate({ body: receivePaymentPreviewSchema }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { outletId, amount } = req.body as ReceivePaymentPreviewInput;
+    return ok(res, await paymentsService.previewReceivePayment(outletId, amount));
+  }),
+);
+
+router.post(
+  '/receive',
+  receivePaymentRoles,
+  writeRateLimiter,
+  validate({ body: receivePaymentSchema }),
+  asyncHandler(async (req: Request, res: Response) => created(res, await paymentsService.receivePayment(req.body as ReceivePaymentInput, user(req)), 'Payment received')),
 );
 
 export const paymentsRouter = router;
