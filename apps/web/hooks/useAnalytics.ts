@@ -24,11 +24,13 @@ export interface InventoryAnalytics {
   slowMoving: string[];
 }
 export interface BusinessOverview {
+  /** Always all-time, regardless of the from/to filter passed to useBusinessOverview. */
   totalRevenueAllTime: number;
-  collectedThisMonth: number;
-  billsMadeThisMonth: number;
-  billedThisMonth: number;
-  pendingThisMonth: number;
+  collected: number;
+  billsMade: number;
+  billed: number;
+  pending: number;
+  /** Always all-time, regardless of the from/to filter — see totalRevenueAllTime. */
   overallPending: number;
 }
 
@@ -61,8 +63,11 @@ export function useRevenueTrend(period: TrendPeriod) {
 export function useTopProducts() {
   return useQuery({ queryKey: ['analytics', 'top'], queryFn: async () => (await api.get<ApiSuccess<TopProducts>>('/analytics/sales/top-products')).data.data });
 }
-export function useBusinessOverview() {
-  return useQuery({ queryKey: ['analytics', 'overview'], queryFn: async () => (await api.get<ApiSuccess<BusinessOverview>>('/analytics/overview')).data.data });
+export function useBusinessOverview(params: { from?: string; to?: string } = {}) {
+  return useQuery({
+    queryKey: ['analytics', 'overview', params],
+    queryFn: async () => (await api.get<ApiSuccess<BusinessOverview>>('/analytics/overview', { params })).data.data,
+  });
 }
 export function useFinancial() {
   return useQuery({ queryKey: ['analytics', 'financial'], queryFn: async () => (await api.get<ApiSuccess<{ monthly: MonthlyPL[]; current: MonthlyPL | null }>>('/analytics/financial')).data.data });

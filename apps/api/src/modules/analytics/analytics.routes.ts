@@ -7,6 +7,7 @@ import { authGuard } from '../../shared/guards/authGuard';
 import { requireSuperAdmin, requireOwnerOrAdmin } from '../../shared/guards/roleGuard';
 import { AppError } from '../../shared/utils/AppError';
 import { ok } from '../../shared/utils/apiResponse';
+import { istDate } from '../../shared/utils/date';
 import { dashboardController } from './analytics.controller';
 import { analyticsService, scopeOutlet, type TrendPeriod } from './analytics.service';
 
@@ -24,9 +25,18 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => ok(res, await analyticsService.getRevenueTrend(req.query.period as TrendPeriod))),
 );
 router.get('/sales/top-products', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getTopProducts())));
-// One-screen business summary: all-time revenue, this month's collections/bills/
-// pending, and the overall pending total across every outstanding bill.
-router.get('/overview', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getBusinessOverview())));
+// One-screen business summary: all-time revenue, the selected period's
+// collections/bills/pending, and the overall pending total across every
+// outstanding bill (that last one always all-time, regardless of from/to).
+router.get(
+  '/overview',
+  requireSuperAdmin,
+  validate({ query: z.object({ from: istDate.optional(), to: istDate.optional() }) }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { from, to } = req.query as unknown as { from?: Date; to?: Date };
+    return ok(res, await analyticsService.getBusinessOverview(from, to));
+  }),
+);
 router.get('/financial', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getFinancial())));
 router.get('/outlets', requireSuperAdmin, asyncHandler(async (_req: Request, res: Response) => ok(res, await analyticsService.getOutletPerformance())));
 router.get(

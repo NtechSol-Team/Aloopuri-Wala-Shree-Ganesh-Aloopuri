@@ -8,10 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { KpiCard } from '@/components/dashboard/kpi-card';
-import { cn, formatINR } from '@/lib/utils';
+import { cn, formatINR, todayIso } from '@/lib/utils';
+import { PERIODS, periodRange, type PeriodKey } from '@/lib/period';
 import {
   useRevenueTrend, useTopProducts, useBusinessOverview, useFinancial, useOutletPerformance,
   useInventoryAnalytics, usePosAnalytics, type TrendPeriod, type PosAnalyticsRange,
@@ -69,27 +72,57 @@ export default function AnalyticsPage() {
  * thing the owner should see before drilling into any one report below.
  */
 function OverviewTab() {
-  const { data, isLoading } = useBusinessOverview();
+  // Defaults to This Month — the same window the figures below used to be
+  // hard-coded to — but every period-scoped card now follows this picker;
+  // only the two explicitly "(All Time)" cards never move with it.
+  const [period, setPeriod] = useState<PeriodKey>('month');
+  const [custom, setCustom] = useState({ from: todayIso(), to: todayIso() });
+  const range = periodRange(period, custom);
+  const periodLabel = PERIODS.find(([key]) => key === period)?.[1] ?? '';
 
-  if (isLoading || !data) {
-    return <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-28" />)}</div>;
-  }
+  const { data, isLoading } = useBusinessOverview(range);
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-card-title font-semibold">Business Overview</h2>
-        <p className="text-caption text-muted-foreground">Every bill and POS sale, since day one, and where things stand right now.</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-card-title font-semibold">Business Overview</h2>
+          <p className="text-caption text-muted-foreground">Every bill and POS sale, since day one, and where things stand right now.</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-1.5">
+            <Label>Period</Label>
+            <Select className="w-40" value={period} onChange={(e) => setPeriod(e.target.value as PeriodKey)}>
+              {PERIODS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </Select>
+          </div>
+          {period === 'custom' && (
+            <>
+              <div className="space-y-1.5">
+                <Label>From</Label>
+                <Input type="date" value={custom.from} max={custom.to} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>To</Label>
+                <Input type="date" value={custom.to} min={custom.from} max={todayIso()} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <KpiCard label="Total Revenue (All Time)" value={formatINR(data.totalRevenueAllTime, { decimals: false })} icon={TrendingUp} accent="primary" />
-        <KpiCard label="Collected This Month" value={formatINR(data.collectedThisMonth, { decimals: false })} icon={Wallet} accent="success" />
-        <KpiCard label="Bills Made This Month" value={String(data.billsMadeThisMonth)} icon={FileBarChart} accent="primary" />
-        <KpiCard label="Billed This Month" value={formatINR(data.billedThisMonth, { decimals: false })} icon={ReceiptText} accent="primary" />
-        <KpiCard label="Pending This Month" value={formatINR(data.pendingThisMonth, { decimals: false })} icon={CalendarClock} accent={data.pendingThisMonth > 0 ? 'warning' : 'primary'} />
-        <KpiCard label="Overall Pending (All Time)" value={formatINR(data.overallPending, { decimals: false })} icon={AlertCircle} accent={data.overallPending > 0 ? 'danger' : 'primary'} />
-      </div>
+      {isLoading || !data ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-28" />)}</div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <KpiCard label="Total Revenue (All Time)" value={formatINR(data.totalRevenueAllTime, { decimals: false })} icon={TrendingUp} accent="primary" />
+          <KpiCard label={`Collected — ${periodLabel}`} value={formatINR(data.collected, { decimals: false })} icon={Wallet} accent="success" />
+          <KpiCard label={`Bills Made — ${periodLabel}`} value={String(data.billsMade)} icon={FileBarChart} accent="primary" />
+          <KpiCard label={`Billed — ${periodLabel}`} value={formatINR(data.billed, { decimals: false })} icon={ReceiptText} accent="primary" />
+          <KpiCard label={`Pending — ${periodLabel}`} value={formatINR(data.pending, { decimals: false })} icon={CalendarClock} accent={data.pending > 0 ? 'warning' : 'primary'} />
+          <KpiCard label="Overall Pending (All Time)" value={formatINR(data.overallPending, { decimals: false })} icon={AlertCircle} accent={data.overallPending > 0 ? 'danger' : 'primary'} />
+        </div>
+      )}
     </div>
   );
 }
