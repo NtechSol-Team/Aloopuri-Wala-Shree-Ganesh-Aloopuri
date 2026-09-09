@@ -75,6 +75,7 @@
     <select id="printerInterface">
       <option value="system">USB / Bluetooth (Windows printer)</option>
       <option value="ble">Bluetooth BLE (same as the POS)</option>
+      <option value="usb-raw">USB (no Windows driver)</option>
       <option value="network">LAN (network address)</option>
     </select>
 
@@ -105,6 +106,14 @@
         <select id="printerName"></select>
         <button id="refreshPrinters">Refresh</button>
       </div>
+    </div>
+
+    <div id="usbRawPrinterField" style="display:none">
+      <p class="hint" style="margin-top:0">
+        Nothing to select here — the printer is plugged in by USB and just found automatically each
+        time something prints, no driver or Windows printer install needed. Use this if the printer
+        doesn't show in the list above and isn't Bluetooth. Test Print below to confirm it's reachable.
+      </p>
     </div>
 
     <div id="networkPrinterField" style="display:none">

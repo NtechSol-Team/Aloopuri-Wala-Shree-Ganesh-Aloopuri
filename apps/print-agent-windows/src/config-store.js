@@ -18,6 +18,9 @@ const store = new Store({
     // 'network' -> raw TCP to a LAN thermal printer
     // 'ble'     -> Web Bluetooth, the same transport the POS uses for BLE
     //              printers, which never appear as Windows printers at all
+    // 'usb-raw' -> a USB printer with no Windows driver at all, reached via a
+    //              bundled vendor DLL instead -- see UsbRawPrint.ps1. Needs no
+    //              extra config (no name/port/id): it finds the printer itself.
     printerInterface: 'system',
     printerNetworkAddress: '', // "host:port" when printerInterface === 'network'
     bleDeviceId: '', // Web Bluetooth device id when printerInterface === 'ble'

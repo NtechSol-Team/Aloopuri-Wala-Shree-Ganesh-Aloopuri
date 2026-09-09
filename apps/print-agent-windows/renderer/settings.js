@@ -44,6 +44,7 @@ function togglePrinterFields(iface) {
   $('systemPrinterField').style.display = iface === 'system' ? '' : 'none';
   $('networkPrinterField').style.display = iface === 'network' ? '' : 'none';
   $('blePrinterField').style.display = iface === 'ble' ? '' : 'none';
+  $('usbRawPrinterField').style.display = iface === 'usb-raw' ? '' : 'none';
 }
 
 async function init() {

@@ -16,6 +16,12 @@
 //          installer. PowerShell + Add-Type needs nothing but Windows itself.
 //        - LAN thermal printer -> a raw TCP write straight to the printer's
 //          IP:port (almost always 9100), no OS driver involved at all.
+//        - USB printer that was never installed as a Windows printer at all
+//          (no driver, doesn't show in Get-Printer) -> UsbRawPrint.ps1, which
+//          P/Invokes a small bundled vendor SDK (JsPrinterDll.dll) that talks
+//          to the printer as a raw USB device directly. That DLL is 32-bit
+//          only, so this one script runs under the 32-bit PowerShell host
+//          specifically -- see powerShellHost() below.
 const net = require('node:net');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -33,10 +39,21 @@ function resourcePath(name) {
     : path.join(__dirname, '..', 'resources', name);
 }
 
-function runPowerShell(args, { timeout = 15000 } = {}) {
+// The 32-bit PowerShell host -- confusingly named "SysWOW64" (it holds the
+// 32-bit binaries on a 64-bit Windows, not the other way round). UsbRawPrint.ps1
+// P/Invokes a 32-bit-only DLL, which throws BadImageFormatException if loaded
+// into the ordinary 64-bit powershell.exe every other script here uses. Falls
+// back to the plain host on a genuinely 32-bit Windows, where that's already 32-bit.
+function powerShellHost({ x86 = false } = {}) {
+  if (!x86) return 'powershell.exe';
+  const candidate = path.join(process.env.WINDIR || 'C:\\Windows', 'SysWOW64', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return fs.existsSync(candidate) ? candidate : 'powershell.exe';
+}
+
+function runPowerShell(args, { timeout = 15000, x86 = false } = {}) {
   return new Promise((resolve, reject) => {
     execFile(
-      'powershell.exe',
+      powerShellHost({ x86 }),
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...args],
       { timeout, windowsHide: true },
       (err, stdout, stderr) => {
@@ -122,6 +139,9 @@ function sendToConfiguredPrinter(buffer) {
   if (cfg.printerInterface === 'network') {
     return sendOverNetwork(buffer, cfg.printerNetworkAddress);
   }
+  if (cfg.printerInterface === 'usb-raw') {
+    return sendToRawUsb(buffer);
+  }
   return sendToWindowsQueue(buffer, cfg.printerName);
 }
 
@@ -134,6 +154,23 @@ async function sendToWindowsQueue(buffer, printerName) {
   fs.writeFileSync(tempFile, buffer);
   try {
     await runPowerShell(['-File', resourcePath('RawPrint.ps1'), '-PrinterName', printerName, '-FilePath', tempFile]);
+  } finally {
+    fs.unlink(tempFile, () => {});
+  }
+}
+
+/** A USB printer that was never installed as a Windows printer -- see UsbRawPrint.ps1. */
+async function sendToRawUsb(buffer) {
+  if (process.platform !== 'win32') {
+    throw new Error('Raw USB printing only works on Windows.');
+  }
+  const tempFile = path.join(os.tmpdir(), `scfc-print-${crypto.randomUUID()}.bin`);
+  fs.writeFileSync(tempFile, buffer);
+  try {
+    await runPowerShell(
+      ['-File', resourcePath('UsbRawPrint.ps1'), '-DllPath', resourcePath('JsPrinterDll.dll'), '-FilePath', tempFile],
+      { x86: true },
+    );
   } finally {
     fs.unlink(tempFile, () => {});
   }

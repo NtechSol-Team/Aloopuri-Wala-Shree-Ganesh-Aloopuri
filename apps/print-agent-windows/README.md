@@ -39,7 +39,7 @@ Two stages, deliberately kept separate:
 
 1. **`node-thermal-printer`** builds the raw ESC/POS byte buffer — formatting
    only (`getBuffer()`), it never sends anything itself.
-2. The bytes are sent ourselves, over one of three transports:
+2. The bytes are sent ourselves, over one of four transports:
    - **USB or Bluetooth installed as a Windows printer** — goes through
      `resources/RawPrint.ps1`, a bundled PowerShell script that P/Invokes
      `winspool.drv` directly (the classic Microsoft "RawPrinterHelper"
@@ -49,6 +49,12 @@ Two stages, deliberately kept separate:
    - **Bluetooth BLE** — for the printers that never register as a Windows
      printer at all. This is the same transport the POS uses in the browser
      (`apps/web/lib/print/web-bluetooth.ts`), ported into `renderer/ble.js`.
+   - **USB with no Windows driver at all** — for a USB printer that doesn't
+     show in `Get-Printer` and isn't Bluetooth either. `resources/UsbRawPrint.ps1`
+     P/Invokes a small bundled vendor SDK, `resources/JsPrinterDll.dll`, whose
+     `OpenUsb()` finds the printer itself (no port/VID/PID to configure) and
+     writes bytes to it directly, bypassing the print spooler the same way
+     `RawPrint.ps1` bypasses the driver. See "Bundled vendor DLL" below.
 
 ### Why BLE needs a hidden window
 
@@ -62,15 +68,35 @@ and answers the chooser with their choice.
 
 If a printer works in the POS but never appears in the agent's printer
 dropdown, it is a BLE printer: switch Connection type to **Bluetooth BLE** and
-press Scan.
+press Scan. If it's plugged in by USB cable (not Bluetooth) and still never
+appears, Windows has no driver for it at all — switch to **USB (no Windows
+driver)** instead; there's nothing to configure, just Test Print to confirm.
+
+### Bundled vendor DLL (`JsPrinterDll.dll`)
+
+A generic ESC/POS thermal-printer SDK sold under several reseller brand names
+(Xprinter among them — the same brand this app's Bluetooth name-matching
+already recognises), used only for the raw-USB transport above. It's a plain
+Win32 DLL — **32-bit only** (built well before x64 was the default), which
+matters: `UsbRawPrint.ps1` has to run under the 32-bit PowerShell host
+(`%WINDIR%\SysWOW64\WindowsPowerShell\v1.0\powershell.exe` — yes, the 32-bit
+binaries live under the confusingly-named "SysWOW64"), or `Add-Type`'s
+P/Invoke throws `BadImageFormatException` trying to load a 32-bit DLL into
+the ordinary 64-bit `powershell.exe` every other script here uses.
+`printer-manager.js`'s `powerShellHost({ x86: true })` picks the right one
+automatically (falling back to the plain host on a genuinely 32-bit Windows,
+where that's already 32-bit). No further configuration needed: `OpenUsb()`
+takes no arguments — it finds the USB printer itself, freshly, on every print
+(no persistent connection to go stale between jobs, unlike BLE).
 
 The brief named the `printer` npm package for step 2. That package is
 unmaintained (last release is grunt-era, 2017) and **fails to even install**
 on any machine with Python ≥3.12 (`distutils` was removed) — which would have
 made "generate a single .exe" unreliable depending on whose machine builds it.
-The PowerShell approach needs nothing but Windows itself: **this app has zero
-native/compiled dependencies**, which also means no `node-gyp` rebuild step
-is needed after `npm install`.
+The PowerShell approach needs nothing but Windows itself: no `node-gyp`
+rebuild step after `npm install`, for any transport including the raw-USB one
+— `JsPrinterDll.dll` is a prebuilt vendor binary invoked via P/Invoke exactly
+like the OS's own `winspool.drv` is, not a Node native addon.
 
 Receipt layout matches `apps/web/lib/print/receipt-escpos.ts`'s
 `pickListBytes()` exactly (same store name sizing, same field order, same
@@ -90,10 +116,16 @@ src/
   tray.js                   Tray icon + context menu
   notify.js                  Windows notifications
   preload.js                  contextBridge for the settings window
+  ble-worker.js               Main-process side of the BLE transport (see below)
 renderer/
   settings.html, settings.js  Settings window UI (server, login, printer, test print)
-resources/
-  RawPrint.ps1                  Bundled at build time (extraResources) — not inside app.asar
+  ble.html, ble.js             Hidden window owning the Web Bluetooth GATT link
+resources/                     Bundled at build time (extraResources) — not inside app.asar
+  RawPrint.ps1                  USB/Bluetooth installed as a Windows printer
+  UsbRawPrint.ps1                USB with no Windows driver at all
+  JsPrinterDll.dll                Vendor SDK UsbRawPrint.ps1 P/Invokes (32-bit only)
+  ListPrinters.ps1                Enumerates Windows-known printers for Settings
+  BluetoothPrinter.ps1            Binds a paired Bluetooth COM port to a printer
 build/
   icon.ico, icon.png, tray-*.png  Generated placeholder icons — swap for real branding
 ```
@@ -155,10 +187,35 @@ the reason), and on connect/disconnect.
 ## Known limits / things only a real Windows machine can confirm
 
 Built and verified as far as this can go without Windows hardware:
-`npm install` is clean (zero native deps), the app boots, the settings window
+`npm install` is clean (zero Node-native deps), the app boots, the settings window
 renders and its IPC round-trips correctly (config get/save, printer list,
 login) — verified live. Not verifiable from here: `Get-Printer` output on a
 real Windows box, `RawPrint.ps1` actually reaching a physical printer, the
 Windows startup registration, and Bluetooth-as-printer-queue behavior — these
 need testing on an actual Windows machine with a printer attached before
 relying on it in production.
+
+**The raw-USB transport (`UsbRawPrint.ps1` / `JsPrinterDll.dll`) can't be
+fully exercised here** — there's no real Windows machine to load a Win32 DLL
+on. What's actually been checked: the DLL is a genuine 32-bit PE with
+`OpenUsb`/`WriteUsb`/`CloseUsb` exported under those exact names and calling
+convention, matching the vendor's own working, compiled C++ example project
+in the SDK exactly — same call sequence, same failure-sentinel check
+(`INVALID_HANDLE_VALUE`, not null). The PowerShell script itself was run
+(under PowerShell 7 on macOS, since that's what's installable here) and its
+`Add-Type` C# source **compiles cleanly** — no syntax or type errors — and
+parameter binding, the bundled-path lookup, and `Test-Path` all work
+correctly against the real bundled file. The one thing that *did* fail in
+that test is expected and not a bug: PowerShell 7 layers its own native-DLL
+resolution on top of the OS loader (`PowerShellAssemblyLoadContext.NativeDllHandler`,
+visible in the exception's stack trace) and that layer doesn't exist in
+Windows PowerShell 5.1 — the actual `powershell.exe` this app spawns
+(never `pwsh.exe`) — so it isn't evidence about how this behaves on the real
+target. What's genuinely unverified: does the classic Win32 `LoadLibrary`
+path actually resolve a 32-bit DLL from the 32-bit PowerShell host, does
+`OpenUsb()` find this specific printer model, and does the printed output
+look right. Needs a real Windows machine with the printer plugged in before
+relying on it in production. If `Test Print` on this connection type fails
+with "No USB printer found", the DLL's own enumeration didn't see it — try
+the ordinary **USB / Bluetooth (Windows printer)** option instead if the
+printer does show up in Windows' own printer list.
