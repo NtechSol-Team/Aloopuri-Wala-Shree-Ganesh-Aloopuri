@@ -9,7 +9,7 @@ import {
   Users, Wallet, FileText, Play, Check, Undo2,
   Download, Pencil, HandCoins, Plus, Trash2,
   CheckCircle2, XCircle, Clock, CalendarDays, Hourglass, BadgeIndianRupee,
-  CalendarCheck, Calculator, ClipboardList, Receipt, CreditCard, BarChart3, Settings as SettingsIcon,
+  CalendarCheck, Calculator, ClipboardList, Receipt, CreditCard, BarChart3,
   TrendingUp, TrendingDown, MoreVertical, Search, SlidersHorizontal, ChevronRight,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -170,12 +170,11 @@ function QuickActionGrid({ onScrollToOverview, onSwitchTab }: { onScrollToOvervi
     { label: 'Payment', sub: 'Pay / View', icon: CreditCard, accent: 'success', onClick: onScrollToOverview },
     { label: 'Advance', sub: 'Add / View', icon: HandCoins, accent: 'warning', onClick: () => onSwitchTab('advances') },
     { label: 'Reports', sub: 'All Reports', icon: BarChart3, accent: 'primary', onClick: () => onSwitchTab('reports') },
-    { label: 'Settings', sub: 'Preferences', icon: SettingsIcon, accent: 'primary', href: '/settings' },
   ];
 
   return (
     <Card className="p-3">
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-9">
+      <div className="grid grid-cols-4 gap-2 sm:grid-cols-4 lg:grid-cols-8">
         {actions.map((a) => {
           const body = (
             <>
