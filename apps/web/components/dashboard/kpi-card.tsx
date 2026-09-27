@@ -20,12 +20,19 @@ const accentBg: Record<NonNullable<KpiCardProps['accent']>, string> = {
 };
 
 export function KpiCard({ label, value, icon: Icon, changePct, href, accent = 'primary' }: KpiCardProps) {
+  // The 32px kpi size only has room for a handful of characters before it runs
+  // into the icon badge — a longer formatted amount (₹6,73,175 and up) would
+  // spill past the card's edge at that size instead of wrapping, since a
+  // comma-separated number has nowhere natural to break. Step the size down
+  // for longer values, and keep break-words as a fallback for whatever's left.
+  const valueSizeClass = value.length >= 8 ? 'text-card-title' : 'text-kpi';
+
   const body = (
     <Card className={cn('p-5 transition-shadow', href && 'cursor-pointer hover:shadow-md')}>
       <div className="flex items-start justify-between">
         <div className="min-w-0">
           <p className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-          <p className="mt-2 text-kpi font-bold leading-none">{value}</p>
+          <p className={cn('mt-2 break-words font-bold leading-tight', valueSizeClass)}>{value}</p>
           {changePct !== undefined && (
             <div
               className={cn(

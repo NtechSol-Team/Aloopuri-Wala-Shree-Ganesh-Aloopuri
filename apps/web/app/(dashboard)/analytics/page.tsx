@@ -283,7 +283,11 @@ function PosDetail({ outletId, header }: { outletId?: string | 'main'; header?: 
     <div className="space-y-4">
       {topRow}
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+      {/* Capped at 4 columns, not 7 — seven cards this size (a rupee figure can
+          run to ₹16,27,895) don't have room to breathe past four in a row even
+          on a wide screen; two rows of four (plus one) reads fine and never
+          squeezes a value against the card edge. */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
         <KpiCard label="Today's POS Sales" value={formatINR(summary.todayRevenue, { decimals: false })} icon={Receipt} accent="primary" />
         <KpiCard label="This Month" value={formatINR(summary.monthRevenue, { decimals: false })} icon={TrendingUp} accent="success" />
         <KpiCard label="Last Month" value={formatINR(summary.lastMonthRevenue, { decimals: false })} icon={TrendingUp} accent="primary" />
