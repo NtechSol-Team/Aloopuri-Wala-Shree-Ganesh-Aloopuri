@@ -1,6 +1,7 @@
 'use client';
 
 import { useDeferredValue, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, Ruler, Tags, ListTree, Search, Store } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -42,7 +43,10 @@ export default function ItemMasterPage() {
     ...(showEmployees ? [['employees', 'Employees'] as [Tab, string]] : []),
   ];
 
-  const [tab, setTab] = useState<Tab>('categories');
+  // Lets another page deep-link straight to a tab (e.g. Payroll's "Employees" and
+  // "Salary" quick-action tiles land here, on Employees, without an extra click).
+  const requestedTab = useSearchParams().get('tab') as Tab | null;
+  const [tab, setTab] = useState<Tab>(requestedTab && TABS.some(([k]) => k === requestedTab) ? requestedTab : 'categories');
 
   return (
     <div className="space-y-5">

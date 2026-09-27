@@ -1,25 +1,29 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
   Users, Wallet, FileText, Play, Check, Undo2,
   Download, Pencil, HandCoins, Plus, Trash2,
+  CheckCircle2, XCircle, Clock, CalendarDays, Hourglass, BadgeIndianRupee,
+  CalendarCheck, Calculator, ClipboardList, Receipt, CreditCard, BarChart3, Settings as SettingsIcon,
+  TrendingUp, TrendingDown, MoreVertical, Search, SlidersHorizontal, ChevronRight,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
+import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
-import { KpiCard } from '@/components/dashboard/kpi-card';
 import { cn, formatINR, ist, istDateInput, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
-import { useEmployees, SALARY_TYPE_LABEL } from '@/hooks/useEmployees';
+import { useEmployees, activeSalary, SALARY_TYPE_LABEL, type Employee } from '@/hooks/useEmployees';
 import {
   useAttendance, useSaveAttendance, usePayroll, useGeneratePayroll, useUpdatePayroll,
   useMarkPayrollPaid, useRevertPayroll, usePayrollDashboard, openPayslip, downloadCsv,
@@ -68,32 +72,129 @@ export default function PayrollPage() {
         {tab === 'payroll' && <PeriodPicker period={period} onChange={setPeriod} />}
       </div>
 
-      {tab === 'payroll' && <PayrollTab period={period} />}
+      {tab === 'payroll' && <PayrollTab period={period} onSwitchTab={setTab} />}
       {tab === 'advances' && <AdvancesTab />}
       {tab === 'reports' && <ReportsTab />}
     </div>
   );
 }
 
-/** Dashboard + Attendance + Salary, stacked on one screen instead of behind
- *  three tabs — see the month's numbers, enter attendance, and process salary
- *  without a single tab click in between. */
-function PayrollTab({ period }: { period: Period }) {
+/** Dashboard + Attendance + Salary, merged into one screen instead of three
+ *  separate tables behind three tabs — the KPI strip, quick-action shortcuts,
+ *  one combined per-employee table (attendance + pay side by side), and the
+ *  running totals are all visible without a single click to get to any of
+ *  them. Quick actions that only make sense for one employee at a time (mark
+ *  attendance, view a payslip, record a payment) scroll down to that row's own
+ *  action menu rather than guessing which employee was meant. */
+function PayrollTab({ period, onSwitchTab }: { period: Period; onSwitchTab: (t: Tab) => void }) {
+  const overviewRef = useRef<HTMLDivElement>(null);
+  const scrollToOverview = () => overviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
   return (
-    <div className="space-y-8">
-      <section className="space-y-3">
-        <h2 className="text-card-title font-semibold">Dashboard</h2>
-        <DashboardTab period={period} />
-      </section>
-      <section className="space-y-3">
-        <h2 className="text-card-title font-semibold">Attendance</h2>
-        <AttendanceTab period={period} />
-      </section>
-      <section className="space-y-3">
-        <h2 className="text-card-title font-semibold">Salary</h2>
-        <SalaryTab period={period} />
-      </section>
+    <div className="space-y-5">
+      <PayrollKpiStrip period={period} />
+      <QuickActionGrid onScrollToOverview={scrollToOverview} onSwitchTab={onSwitchTab} />
+      <EmployeePayrollOverview ref={overviewRef} period={period} onSwitchTab={onSwitchTab} />
     </div>
+  );
+}
+
+const KPI_ICON_BG: Record<string, string> = {
+  primary: 'bg-primary/10 text-primary',
+  success: 'bg-success/10 text-success',
+  warning: 'bg-warning/10 text-warning',
+  danger: 'bg-danger/10 text-danger',
+};
+
+/** One compact stat tile — smaller and denser than the full KpiCard, so eight
+ *  of them read as one strip instead of eight separate dashboard cards. */
+function StatTile({ label, value, icon: Icon, accent = 'primary' }: {
+  label: string; value: string; icon: typeof Users; accent?: 'primary' | 'success' | 'warning' | 'danger';
+}) {
+  return (
+    <Card className="flex items-center gap-3 p-3">
+      <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', KPI_ICON_BG[accent])}>
+        <Icon className="h-4.5 w-4.5" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-caption text-muted-foreground">{label}</span>
+        <span className="block text-label font-bold leading-tight">{value}</span>
+      </span>
+    </Card>
+  );
+}
+
+/** The whole month at a glance: headcount + today's-entered attendance mix on
+ *  the left, this month's payroll money on the right — eight tiles, one glance. */
+function PayrollKpiStrip({ period }: { period: Period }) {
+  const { data: dash, isLoading: dashLoading } = usePayrollDashboard(period);
+  const { data: payroll, isLoading: payrollLoading } = usePayroll(period);
+
+  if (dashLoading || payrollLoading || !dash) {
+    return <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-[68px]" />)}</div>;
+  }
+
+  const a = dash.attendance;
+  const totals = payroll?.totals;
+  const leave = a.paidLeave + a.unpaidLeave;
+
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+      <StatTile label="Total Employees" value={String(dash.totalEmployees)} icon={Users} accent="primary" />
+      <StatTile label="Present" value={String(a.presentDays)} icon={CheckCircle2} accent="success" />
+      <StatTile label="Absent" value={String(a.absentDays)} icon={XCircle} accent="danger" />
+      <StatTile label="Half Day" value={String(a.halfDays)} icon={Clock} accent="warning" />
+      <StatTile label="Leave" value={String(leave)} icon={CalendarDays} accent="primary" />
+      <StatTile label="Total Salary" value={formatINR(totals?.net ?? 0, { decimals: false })} icon={Wallet} accent="primary" />
+      <StatTile label="Paid" value={formatINR(totals?.paid ?? 0, { decimals: false })} icon={BadgeIndianRupee} accent="success" />
+      <StatTile label="Pending" value={formatINR(totals?.pending ?? 0, { decimals: false })} icon={Hourglass} accent={totals && totals.pending > 0 ? 'warning' : 'primary'} />
+    </div>
+  );
+}
+
+interface QuickAction { label: string; sub: string; icon: typeof Users; accent: keyof typeof KPI_ICON_BG; onClick?: () => void; href?: string }
+
+/** Nine shortcuts to the parts of this page (or the app) each thing actually
+ *  lives in. Employees and Salary setup live under Item Master, not here — see
+ *  employees-tab.tsx — so those two are real links; everything else that's
+ *  per-employee (attendance, payslip, payment) scrolls to the table below,
+ *  where every row's own action menu has it, rather than guessing which
+ *  employee "Mark Attendance" as a bare button would mean. */
+function QuickActionGrid({ onScrollToOverview, onSwitchTab }: { onScrollToOverview: () => void; onSwitchTab: (t: Tab) => void }) {
+  const actions: QuickAction[] = [
+    { label: 'Employees', sub: 'Add / View / Edit', icon: Users, accent: 'primary', href: '/item-master?tab=employees' },
+    { label: 'Attendance', sub: 'Mark / View', icon: CalendarCheck, accent: 'success', onClick: onScrollToOverview },
+    { label: 'Salary', sub: 'Setup Salary', icon: Calculator, accent: 'primary', href: '/item-master?tab=employees' },
+    { label: 'Payroll', sub: 'Process Payroll', icon: ClipboardList, accent: 'primary', onClick: onScrollToOverview },
+    { label: 'Payslip', sub: 'View / Print', icon: Receipt, accent: 'danger', onClick: onScrollToOverview },
+    { label: 'Payment', sub: 'Pay / View', icon: CreditCard, accent: 'success', onClick: onScrollToOverview },
+    { label: 'Advance', sub: 'Add / View', icon: HandCoins, accent: 'warning', onClick: () => onSwitchTab('advances') },
+    { label: 'Reports', sub: 'All Reports', icon: BarChart3, accent: 'primary', onClick: () => onSwitchTab('reports') },
+    { label: 'Settings', sub: 'Preferences', icon: SettingsIcon, accent: 'primary', href: '/settings' },
+  ];
+
+  return (
+    <Card className="p-3">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-9">
+        {actions.map((a) => {
+          const body = (
+            <>
+              <span className={cn('flex h-11 w-11 items-center justify-center rounded-xl', KPI_ICON_BG[a.accent])}>
+                <a.icon className="h-5 w-5" />
+              </span>
+              <span className="text-center text-caption font-semibold leading-tight">{a.label}</span>
+              <span className="text-center text-[11px] leading-tight text-muted-foreground">{a.sub}</span>
+            </>
+          );
+          const className = 'flex flex-col items-center gap-1.5 rounded-lg p-2 text-center transition-colors hover:bg-surface active:scale-[0.98]';
+          return a.href ? (
+            <Link key={a.label} href={a.href} className={className}>{body}</Link>
+          ) : (
+            <button key={a.label} type="button" onClick={a.onClick} className={className}>{body}</button>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
 
@@ -108,155 +209,6 @@ function PeriodPicker({ period, onChange }: { period: Period; onChange: (p: Peri
         {years.map((y) => <option key={y} value={y}>{y}</option>)}
       </Select>
     </div>
-  );
-}
-
-// ───────────────────────────── Dashboard ────────────────────────────────────
-function DashboardTab({ period }: { period: Period }) {
-  const { data, isLoading } = usePayrollDashboard(period);
-
-  if (isLoading || !data) {
-    return <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-28" />)}</div>;
-  }
-
-  const a = data.attendance;
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Total Employees" value={String(data.totalEmployees)} icon={Users} accent="primary" />
-        <KpiCard label="Active Employees" value={String(data.activeEmployees)} icon={Users} accent="primary" />
-        <KpiCard label="Payroll Processed" value={String(data.payrollProcessed)} icon={Check} accent="primary" />
-        <KpiCard label="Payroll Pending" value={String(data.payrollPending)} icon={Wallet} accent={data.payrollPending > 0 ? 'danger' : 'primary'} />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="p-4">
-          <p className="text-caption uppercase tracking-wide text-muted-foreground">Salary paid · {data.period}</p>
-          <p className="mt-1 text-2xl font-extrabold">{formatINR(data.totalSalaryExpense)}</p>
-          <p className="mt-1 text-caption text-muted-foreground">
-            {data.pendingSalaryAmount > 0 ? `${formatINR(data.pendingSalaryAmount)} still pending` : 'Nothing pending'}
-          </p>
-        </Card>
-
-        <Card className="p-4 lg:col-span-2">
-          <p className="mb-3 text-caption uppercase tracking-wide text-muted-foreground">Attendance summary · {data.period}</p>
-          {a.employeesRecorded === 0 ? (
-            <p className="text-body text-muted-foreground">No attendance recorded for this month yet.</p>
-          ) : (
-            <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
-              {[
-                ['Present', a.presentDays], ['Absent', a.absentDays], ['Half days', a.halfDays],
-                ['Paid leave', a.paidLeave], ['Unpaid leave', a.unpaidLeave], ['OT hours', a.overtimeHours],
-              ].map(([label, value]) => (
-                <div key={label as string} className="rounded-md border border-border p-2 text-center">
-                  <p className="text-caption text-muted-foreground">{label as string}</p>
-                  <p className="text-label font-bold">{value as number}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <Card className="p-4">
-        <p className="mb-3 text-caption uppercase tracking-wide text-muted-foreground">Employees by department</p>
-        {!data.byDepartment.length ? (
-          <p className="text-body text-muted-foreground">No active employees yet.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {data.byDepartment.map((d) => (
-              <div key={d.department} className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5">
-                <span className="text-body">{d.department}</span>
-                <Badge variant="info">{d.count}</Badge>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-// ───────────────────────────── Attendance ───────────────────────────────────
-function AttendanceTab({ period }: { period: Period }) {
-  const { data: employees } = useEmployees({ status: 'ACTIVE' });
-  const { data: attendance, isLoading } = useAttendance(period);
-  const [editing, setEditing] = useState<{ employeeId: string; name: string; existing?: AttendanceRow } | null>(null);
-
-  const byEmployee = useMemo(
-    () => new Map((attendance ?? []).map((a) => [a.employeeId, a])),
-    [attendance],
-  );
-
-  const rows = employees ?? [];
-
-  return (
-    <Card className="overflow-hidden">
-      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-body text-muted-foreground">
-          Enter each employee&apos;s attendance for {MONTH_NAMES[period.month - 1]} {period.year}. Payroll uses these figures.
-        </p>
-      </div>
-
-      {isLoading ? (
-        <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
-      ) : !rows.length ? (
-        <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <Users className="h-8 w-8 text-muted-foreground" />
-          <p className="text-body text-muted-foreground">No active employees. Add them under Employees first.</p>
-        </div>
-      ) : (
-        <Table>
-          <THead>
-            <TR>
-              <TH>Employee</TH><TH>Salary type</TH><TH className="text-right">Working days</TH>
-              <TH className="text-right">Present</TH><TH className="text-right">Absent</TH><TH className="text-right">Half</TH>
-              <TH className="text-right">Paid leave</TH><TH className="text-right">Unpaid</TH><TH className="text-right">OT hrs</TH>
-              <TH className="text-right">Payable</TH><TH className="text-right">Action</TH>
-            </TR>
-          </THead>
-          <TBody>
-            {rows.map((e) => {
-              const a = byEmployee.get(e.id);
-              return (
-                <TR key={e.id}>
-                  <TD className="font-medium">
-                    {e.name}
-                    <span className="ml-1.5 text-caption text-muted-foreground">{e.employeeNo}</span>
-                  </TD>
-                  <TD className="text-caption">{SALARY_TYPE_LABEL[e.salaryType]}</TD>
-                  {a ? (
-                    <>
-                      <TD className="text-right">{Number(a.totalWorkingDays)}</TD>
-                      <TD className="text-right">{Number(a.presentDays)}</TD>
-                      <TD className="text-right">{Number(a.absentDays)}</TD>
-                      <TD className="text-right">{Number(a.halfDays)}</TD>
-                      <TD className="text-right">{Number(a.paidLeave)}</TD>
-                      <TD className="text-right">{Number(a.unpaidLeave)}</TD>
-                      <TD className="text-right">{Number(a.overtimeHours)}</TD>
-                      <TD className="text-right font-semibold">{a.payableDays}</TD>
-                    </>
-                  ) : (
-                    <TD className="text-center text-caption text-muted-foreground" colSpan={8}>Not recorded</TD>
-                  )}
-                  <TD className="text-right">
-                    <Button size="sm" variant={a ? 'ghost' : 'secondary'} onClick={() => setEditing({ employeeId: e.id, name: e.name, existing: a })}>
-                      {a ? <Pencil className="h-3.5 w-3.5" /> : 'Enter'}
-                    </Button>
-                  </TD>
-                </TR>
-              );
-            })}
-          </TBody>
-        </Table>
-      )}
-
-      <AttendanceDialog
-        target={editing}
-        period={period}
-        onClose={() => setEditing(null)}
-      />
-    </Card>
   );
 }
 
@@ -360,137 +312,346 @@ function Num({ label, value, onChange, step = 1 }: { label: string; value: numbe
   );
 }
 
-// ─────────────────────────────── Salary ─────────────────────────────────────
-function SalaryTab({ period }: { period: Period }) {
-  const { data, isLoading } = usePayroll(period);
-  const generate = useGeneratePayroll();
-  const markPaid = useMarkPayrollPaid();
-  const revert = useRevertPayroll();
-  const [adjusting, setAdjusting] = useState<PayrollRow | null>(null);
+// ───────────────────── Employee Payroll Overview ─────────────────────────────
+const PAGE_SIZE = 5;
+type PayrollStatusFilter = 'ALL' | 'PAID' | 'PENDING' | 'NOT_PROCESSED';
 
-  const rows = data?.rows ?? [];
-  const totals = data?.totals;
+interface OverviewRow {
+  employee: Employee;
+  attendance?: AttendanceRow;
+  payroll?: PayrollRow;
+}
 
-  const runGenerate = () =>
-    generate.mutate(period, {
-      onSuccess: (r) => {
-        const parts = [`${r.created} created`, `${r.updated} updated`];
-        if (r.skippedPaid) parts.push(`${r.skippedPaid} already paid (left alone)`);
-        toast.success(`${r.period}: ${parts.join(', ')}`);
-        if (r.skippedNoAttendance.length) {
-          toast(`No attendance for: ${r.skippedNoAttendance.join(', ')}`, { icon: '⚠️', duration: 7000 });
-        }
-      },
-      onError: (e) => toast.error(apiErrorMessage(e)),
-    });
+/** Present/Absent/etc. come from attendance (null until entered); Basic/
+ *  Earnings/Deductions/Net come from the generated payroll row once there is
+ *  one — before that, Basic falls back to the employee's own configured rate
+ *  (activeSalary) so the column isn't just blank for a month nobody's run
+ *  Process Payroll on yet, and Net matches Basic since nothing's been added
+ *  or taken off it. */
+function figuresFor(r: OverviewRow) {
+  const { attendance: a, payroll: p, employee } = r;
+  const basic = p ? Number(p.grossSalary) : activeSalary(employee).amount;
+  const earnings = p ? Number(p.allowances) + Number(p.overtimeAmount) + Number(p.bonus) + Number(p.incentives) : 0;
+  const deductions = p ? Number(p.deductions) + Number(p.advanceRecovery) + Number(p.loanRecovery) : 0;
+  const net = p ? Number(p.netSalary) : basic;
+  const statusLabel = !p ? 'Not Processed' : p.status === 'PAID' ? 'Paid' : 'Pending';
+  const badgeVariant: BadgeProps['variant'] = !p ? 'neutral' : p.status === 'PAID' ? 'success' : 'warning';
+  return {
+    present: a ? Number(a.presentDays) : null,
+    absent: a ? Number(a.absentDays) : null,
+    halfDay: a ? Number(a.halfDays) : null,
+    leave: a ? Number(a.paidLeave) + Number(a.unpaidLeave) : null,
+    otHours: a ? Number(a.overtimeHours) : null,
+    basic, earnings, deductions, net, statusLabel, badgeVariant,
+  };
+}
 
-  const pay = (row: PayrollRow) =>
-    markPaid.mutate(
-      { id: row.id, paymentDate: today() },
-      {
-        onSuccess: () => toast.success(`${row.employee.name} — salary marked paid and booked as an expense`),
-        onError: (e) => toast.error(apiErrorMessage(e)),
-      },
+function statusOf(r: OverviewRow): PayrollStatusFilter {
+  return !r.payroll ? 'NOT_PROCESSED' : r.payroll.status === 'PAID' ? 'PAID' : 'PENDING';
+}
+
+/** One combined row per employee — attendance and pay side by side — instead
+ *  of two separate tables you had to cross-reference by name. Search, a
+ *  status filter, CSV export, and pagination (five at a time, matching a
+ *  quick glance rather than one long scroll), plus a single action menu per
+ *  row instead of a strip of icon buttons competing for space. */
+const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onSwitchTab: (t: Tab) => void }>(
+  function EmployeePayrollOverview({ period, onSwitchTab }, ref) {
+    const { data: employees, isLoading: employeesLoading } = useEmployees({ status: 'ACTIVE' });
+    const { data: attendance, isLoading: attendanceLoading } = useAttendance(period);
+    const { data: payroll, isLoading: payrollLoading } = usePayroll(period);
+    const generate = useGeneratePayroll();
+    const markPaid = useMarkPayrollPaid();
+    const revert = useRevertPayroll();
+    const [editingAttendance, setEditingAttendance] = useState<{ employeeId: string; name: string; existing?: AttendanceRow } | null>(null);
+    const [adjusting, setAdjusting] = useState<PayrollRow | null>(null);
+    const [search, setSearch] = useState('');
+    const [statusFilter, setStatusFilter] = useState<PayrollStatusFilter>('ALL');
+    const [showFilter, setShowFilter] = useState(false);
+    const [page, setPage] = useState(1);
+
+    const attendanceByEmployee = useMemo(() => new Map((attendance ?? []).map((a) => [a.employeeId, a])), [attendance]);
+    const payrollByEmployee = useMemo(() => new Map((payroll?.rows ?? []).map((p) => [p.employeeId, p])), [payroll]);
+
+    const allRows: OverviewRow[] = useMemo(
+      () => (employees ?? []).map((e) => ({ employee: e, attendance: attendanceByEmployee.get(e.id), payroll: payrollByEmployee.get(e.id) })),
+      [employees, attendanceByEmployee, payrollByEmployee],
     );
 
-  const undo = (row: PayrollRow) => {
-    if (!window.confirm(`Undo payment for ${row.employee.name}? The booked expense will be removed.`)) return;
-    revert.mutate(row.id, {
-      onSuccess: () => toast.success('Payment reverted'),
-      onError: (e) => toast.error(apiErrorMessage(e)),
-    });
+    const filtered = useMemo(() => {
+      const q = search.trim().toLowerCase();
+      return allRows.filter((r) => {
+        if (statusFilter !== 'ALL' && statusOf(r) !== statusFilter) return false;
+        if (!q) return true;
+        return r.employee.name.toLowerCase().includes(q) || r.employee.employeeNo.toLowerCase().includes(q);
+      });
+    }, [allRows, search, statusFilter]);
+
+    useEffect(() => { setPage(1); }, [search, statusFilter, period.year, period.month]);
+
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const isLoading = employeesLoading || attendanceLoading || payrollLoading;
+
+    const runGenerate = () =>
+      generate.mutate(period, {
+        onSuccess: (r) => {
+          const parts = [`${r.created} created`, `${r.updated} updated`];
+          if (r.skippedPaid) parts.push(`${r.skippedPaid} already paid (left alone)`);
+          toast.success(`${r.period}: ${parts.join(', ')}`);
+          if (r.skippedNoAttendance.length) {
+            toast(`No attendance for: ${r.skippedNoAttendance.join(', ')}`, { icon: '⚠️', duration: 7000 });
+          }
+        },
+        onError: (e) => toast.error(apiErrorMessage(e)),
+      });
+
+    const pay = (row: PayrollRow) =>
+      markPaid.mutate(
+        { id: row.id, paymentDate: today() },
+        {
+          onSuccess: () => toast.success(`${row.employee.name} — salary marked paid and booked as an expense`),
+          onError: (e) => toast.error(apiErrorMessage(e)),
+        },
+      );
+
+    const undo = (row: PayrollRow) => {
+      if (!window.confirm(`Undo payment for ${row.employee.name}? The booked expense will be removed.`)) return;
+      revert.mutate(row.id, {
+        onSuccess: () => toast.success('Payment reverted'),
+        onError: (e) => toast.error(apiErrorMessage(e)),
+      });
+    };
+
+    const exportCsv = () => downloadCsv(
+      `payroll-overview-${period.year}-${String(period.month).padStart(2, '0')}.csv`,
+      ['Employee ID', 'Name', 'Present', 'Absent', 'Half Day', 'Leave', 'OT Hours', 'Basic Salary', 'Earnings', 'Deductions', 'Net Salary', 'Status'],
+      filtered.map((r) => {
+        const f = figuresFor(r);
+        return [r.employee.employeeNo, r.employee.name, f.present, f.absent, f.halfDay, f.leave, f.otHours, f.basic, f.earnings, f.deductions, f.net, f.statusLabel];
+      }),
+    );
+
+    const nudgeToRow = () => toast('Pick an employee\'s ⋮ menu below to do this for them.', { icon: 'ℹ️' });
+
+    return (
+      <div ref={ref} className="space-y-4">
+        <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-card-title font-semibold">Employee Payroll Overview</h2>
+            <p className="text-caption text-muted-foreground">
+              {MONTH_NAMES[period.month - 1]} {period.year} — attendance and salary, side by side. Uses each employee&apos;s salary
+              structure and this month&apos;s attendance; already-paid rows are never restated.
+            </p>
+          </div>
+          <Button onClick={runGenerate} loading={generate.isPending}><Play className="h-4 w-4" /> Process Payroll</Button>
+        </Card>
+
+        <Card className="overflow-hidden">
+          <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input className="pl-9" placeholder="Search Employee…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Button variant="secondary" size="sm" onClick={() => setShowFilter((v) => !v)}>
+                  <SlidersHorizontal className="h-3.5 w-3.5" /> Filter
+                </Button>
+                {showFilter && (
+                  <div className="absolute right-0 z-20 mt-1 w-48 space-y-1.5 rounded-md border border-border bg-card p-3 shadow-lg">
+                    <Label>Payment status</Label>
+                    <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as PayrollStatusFilter)}>
+                      <option value="ALL">All</option>
+                      <option value="NOT_PROCESSED">Not Processed</option>
+                      <option value="PENDING">Pending</option>
+                      <option value="PAID">Paid</option>
+                    </Select>
+                  </div>
+                )}
+              </div>
+              <Button variant="secondary" size="sm" onClick={exportCsv} disabled={!filtered.length}>
+                <Download className="h-3.5 w-3.5" /> Export
+              </Button>
+            </div>
+          </div>
+
+          {isLoading ? (
+            <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
+          ) : !allRows.length ? (
+            <div className="flex flex-col items-center gap-3 py-16 text-center">
+              <Users className="h-8 w-8 text-muted-foreground" />
+              <p className="text-body text-muted-foreground">No active employees. Add them under Employees first.</p>
+            </div>
+          ) : !filtered.length ? (
+            <p className="py-16 text-center text-body text-muted-foreground">No employee matches this search or filter.</p>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <Table>
+                  <THead>
+                    <TR>
+                      <TH>#</TH><TH>Employee Name</TH>
+                      <TH className="text-right">Present</TH><TH className="text-right">Absent</TH>
+                      <TH className="text-right">Half Day</TH><TH className="text-right">Leave</TH>
+                      <TH className="text-right">OT Hours</TH><TH className="text-right">Basic Salary</TH>
+                      <TH className="text-right">Earnings</TH><TH className="text-right">Deductions</TH>
+                      <TH className="text-right">Net Salary</TH><TH>Payment Status</TH><TH className="text-right">Action</TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {pageRows.map((r, i) => {
+                      const f = figuresFor(r);
+                      const menuItems = [
+                        {
+                          label: r.attendance ? 'Edit Attendance' : 'Mark Attendance', icon: CalendarCheck,
+                          onClick: () => setEditingAttendance({ employeeId: r.employee.id, name: r.employee.name, existing: r.attendance }),
+                        },
+                        ...(r.payroll
+                          ? [
+                              { label: 'View Payslip', icon: Download, onClick: () => openPayslip(r.payroll!.id, r.payroll!.payrollNo).catch((e) => toast.error(apiErrorMessage(e))) },
+                              ...(r.payroll.status !== 'PAID'
+                                ? [
+                                    { label: 'Adjust Bonus / Deductions', icon: Pencil, onClick: () => setAdjusting(r.payroll!) },
+                                    { label: 'Mark as Paid', icon: Check, onClick: () => pay(r.payroll!) },
+                                  ]
+                                : [{ label: 'Undo Payment', icon: Undo2, danger: true, onClick: () => undo(r.payroll!) }]),
+                            ]
+                          : []),
+                      ];
+                      return (
+                        <TR key={r.employee.id}>
+                          <TD className="text-caption text-muted-foreground">{(page - 1) * PAGE_SIZE + i + 1}</TD>
+                          <TD>
+                            <span className="block font-medium">{r.employee.name}</span>
+                            <span className="block text-caption text-muted-foreground">{r.employee.department ?? SALARY_TYPE_LABEL[r.employee.salaryType]}</span>
+                          </TD>
+                          <TD className="text-right">{f.present ?? '—'}</TD>
+                          <TD className="text-right">{f.absent ?? '—'}</TD>
+                          <TD className="text-right">{f.halfDay ?? '—'}</TD>
+                          <TD className="text-right">{f.leave ?? '—'}</TD>
+                          <TD className="text-right">{f.otHours ?? '—'}</TD>
+                          <TD className="text-right">{formatINR(f.basic)}</TD>
+                          <TD className="text-right text-success">{f.earnings > 0 ? `+${formatINR(f.earnings)}` : '—'}</TD>
+                          <TD className="text-right text-danger">{f.deductions > 0 ? `-${formatINR(f.deductions)}` : '—'}</TD>
+                          <TD className="text-right font-semibold">{formatINR(f.net)}</TD>
+                          <TD><Badge variant={f.badgeVariant}>{f.statusLabel}</Badge></TD>
+                          <TD className="text-right"><RowMenu items={menuItems} /></TD>
+                        </TR>
+                      );
+                    })}
+                  </TBody>
+                </Table>
+              </div>
+
+              <div className="flex flex-col gap-2 border-t border-border p-4 text-caption text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                <span>Showing {(page - 1) * PAGE_SIZE + 1} to {Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} employees</span>
+                <div className="flex items-center gap-1">
+                  <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>Prev</Button>
+                  {Array.from({ length: totalPages }).map((_, i) => (
+                    <Button key={i} size="sm" variant={page === i + 1 ? 'primary' : 'ghost'} onClick={() => setPage(i + 1)}>{i + 1}</Button>
+                  ))}
+                  <Button variant="secondary" size="sm" disabled={page === totalPages} onClick={() => setPage((p) => p + 1)}>
+                    Next <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </Card>
+
+        <PayrollSummaryStrip rows={payroll?.rows ?? []} totals={payroll?.totals} />
+
+        <Card className="p-3">
+          <p className="mb-2 px-1 text-caption font-semibold uppercase tracking-wide text-muted-foreground">Quick Actions</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            <Button variant="secondary" className="justify-start" onClick={nudgeToRow}><CalendarCheck className="h-4 w-4" /> Mark Attendance</Button>
+            <Button variant="secondary" className="justify-start" loading={generate.isPending} onClick={runGenerate}><Play className="h-4 w-4" /> Process Payroll</Button>
+            <Button variant="secondary" className="justify-start" onClick={nudgeToRow}><Receipt className="h-4 w-4" /> Generate Payslip</Button>
+            <Button variant="secondary" className="justify-start" onClick={nudgeToRow}><CreditCard className="h-4 w-4" /> Record Payment</Button>
+            <Button variant="secondary" className="justify-start" onClick={() => onSwitchTab('reports')}><BarChart3 className="h-4 w-4" /> View Reports</Button>
+          </div>
+        </Card>
+
+        <AttendanceDialog target={editingAttendance} period={period} onClose={() => setEditingAttendance(null)} />
+        <AdjustDialog row={adjusting} onClose={() => setAdjusting(null)} />
+      </div>
+    );
+  },
+);
+
+function PayrollSummaryStrip({ rows, totals }: { rows: PayrollRow[]; totals?: { gross: number; net: number; paid: number; pending: number } }) {
+  const totalEarnings = rows.reduce((s, r) => s + Number(r.allowances) + Number(r.overtimeAmount) + Number(r.bonus) + Number(r.incentives), 0);
+  const totalDeductions = rows.reduce((s, r) => s + Number(r.deductions) + Number(r.advanceRecovery) + Number(r.loanRecovery), 0);
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <StatTile label="Total Earnings" value={formatINR(totalEarnings, { decimals: false })} icon={TrendingUp} accent="success" />
+      <StatTile label="Total Deductions" value={formatINR(totalDeductions, { decimals: false })} icon={TrendingDown} accent="danger" />
+      <StatTile label="Net Payable" value={formatINR(totals?.net ?? 0, { decimals: false })} icon={Wallet} accent="primary" />
+      <StatTile label="Paid Amount" value={formatINR(totals?.paid ?? 0, { decimals: false })} icon={BadgeIndianRupee} accent="success" />
+      <StatTile label="Pending Amount" value={formatINR(totals?.pending ?? 0, { decimals: false })} icon={Hourglass} accent={totals && totals.pending > 0 ? 'warning' : 'primary'} />
+    </div>
+  );
+}
+
+interface RowMenuItem { label: string; icon: typeof Users; onClick: () => void; danger?: boolean }
+
+/** One action menu per row instead of a strip of icon buttons competing for
+ *  space — matches the image's single "⋮" Action column, and scales to
+ *  however many actions a given row actually has (a not-yet-processed
+ *  employee only gets "Mark Attendance"; a paid one gets payslip + undo). */
+function RowMenu({ items }: { items: RowMenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, right: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Portaled to <body> rather than positioned relative to the button: the
+  // table around it scrolls horizontally (overflow-x-auto), which — per the
+  // CSS spec — quietly turns overflow-y auto too, clipping an absolutely
+  // positioned menu that tried to live inside it. Fixed-position + measuring
+  // the button's own rect sidesteps that entirely.
+  const openMenu = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) setCoords({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    setOpen(true);
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (triggerRef.current?.contains(e.target as Node)) return;
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [open]);
+
   return (
-    <div className="space-y-4">
-      <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-body">
-            Generate salary for <span className="font-semibold">{MONTH_NAMES[period.month - 1]} {period.year}</span>
-          </p>
-          <p className="text-caption text-muted-foreground">
-            Uses each employee&apos;s salary structure and this month&apos;s attendance. Already-paid rows are never restated.
-          </p>
-        </div>
-        <Button onClick={runGenerate} loading={generate.isPending}><Play className="h-4 w-4" /> Generate Salary</Button>
-      </Card>
-
-      {totals && rows.length > 0 && (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <KpiCard label="Gross" value={formatINR(totals.gross)} icon={Wallet} accent="primary" />
-          <KpiCard label="Net Payable" value={formatINR(totals.net)} icon={Wallet} accent="primary" />
-          <KpiCard label="Paid" value={formatINR(totals.paid)} icon={Check} accent="primary" />
-          <KpiCard label="Pending" value={formatINR(totals.pending)} icon={Wallet} accent={totals.pending > 0 ? 'danger' : 'primary'} />
-        </div>
+    <>
+      <Button ref={triggerRef} variant="ghost" size="icon" onClick={() => (open ? setOpen(false) : openMenu())}>
+        <MoreVertical className="h-4 w-4" />
+      </Button>
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          style={{ position: 'fixed', top: coords.top, right: coords.right }}
+          className="z-50 w-56 rounded-md border border-border bg-card py-1 shadow-lg"
+        >
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              onClick={() => { setOpen(false); item.onClick(); }}
+              className={cn('flex w-full items-center gap-2 px-3 py-2 text-left text-body hover:bg-surface', item.danger && 'text-danger')}
+            >
+              <item.icon className="h-4 w-4" /> {item.label}
+            </button>
+          ))}
+        </div>,
+        document.body,
       )}
-
-      <Card className="overflow-hidden">
-        {isLoading ? (
-          <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
-        ) : !rows.length ? (
-          <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <Wallet className="h-8 w-8 text-muted-foreground" />
-            <p className="text-body text-muted-foreground">No salary generated for this month yet.</p>
-            <p className="text-caption text-muted-foreground">Enter attendance first, then click Generate Salary.</p>
-          </div>
-        ) : (
-          <Table>
-            <THead>
-              <TR>
-                <TH>Payroll #</TH><TH>Employee</TH><TH>Basis</TH>
-                <TH className="text-right">Payable days</TH><TH className="text-right">Gross</TH>
-                <TH className="text-right">Additions</TH><TH className="text-right">Deductions</TH>
-                <TH className="text-right">Net</TH><TH>Status</TH><TH className="text-right">Actions</TH>
-              </TR>
-            </THead>
-            <TBody>
-              {rows.map((r) => {
-                const additions = Number(r.allowances) + Number(r.overtimeAmount) + Number(r.bonus) + Number(r.incentives);
-                const subtractions = Number(r.deductions) + Number(r.advanceRecovery) + Number(r.loanRecovery);
-                const isPaid = r.status === 'PAID';
-                return (
-                  <TR key={r.id}>
-                    <TD className="font-medium">{r.payrollNo}</TD>
-                    <TD>
-                      {r.employee.name}
-                      <span className="ml-1.5 text-caption text-muted-foreground">{r.employee.employeeNo}</span>
-                    </TD>
-                    <TD className="text-caption">{SALARY_TYPE_LABEL[r.salaryType]}</TD>
-                    <TD className="text-right">{Number(r.payableDays)} / {Number(r.totalWorkingDays)}</TD>
-                    <TD className="text-right">{formatINR(r.grossSalary)}</TD>
-                    <TD className="text-right text-success">{additions > 0 ? `+${formatINR(additions)}` : '—'}</TD>
-                    <TD className="text-right text-danger">{subtractions > 0 ? `-${formatINR(subtractions)}` : '—'}</TD>
-                    <TD className="text-right font-semibold">{formatINR(r.netSalary)}</TD>
-                    <TD>
-                      <Badge variant={isPaid ? 'success' : 'warning'}>{isPaid ? 'Paid' : 'Pending'}</Badge>
-                      {r.paymentDate && <span className="ml-1.5 text-caption text-muted-foreground">{format(ist(r.paymentDate), 'dd MMM')}</span>}
-                    </TD>
-                    <TD>
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" title="Salary slip" onClick={() => openPayslip(r.id, r.payrollNo).catch((e) => toast.error(apiErrorMessage(e)))}>
-                          <Download className="h-4 w-4" />
-                        </Button>
-                        {!isPaid && (
-                          <>
-                            <Button variant="ghost" size="icon" title="Adjust bonus / deductions" onClick={() => setAdjusting(r)}><Pencil className="h-4 w-4" /></Button>
-                            <Button size="sm" loading={markPaid.isPending} onClick={() => pay(r)}><Check className="h-3.5 w-3.5" /> Pay</Button>
-                          </>
-                        )}
-                        {isPaid && (
-                          <Button variant="ghost" size="icon" title="Undo payment" onClick={() => undo(r)}><Undo2 className="h-4 w-4 text-danger" /></Button>
-                        )}
-                      </div>
-                    </TD>
-                  </TR>
-                );
-              })}
-            </TBody>
-          </Table>
-        )}
-      </Card>
-
-      <AdjustDialog row={adjusting} onClose={() => setAdjusting(null)} />
-    </div>
+    </>
   );
 }
 
