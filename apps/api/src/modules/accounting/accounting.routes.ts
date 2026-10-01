@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { Request, Response } from 'express';
-import { subDays } from 'date-fns';
 import { asyncHandler } from '../../shared/utils/asyncHandler';
 import { validate } from '../../shared/middleware/validate';
 import { authGuard } from '../../shared/guards/authGuard';
@@ -9,7 +8,7 @@ import { requireSuperAdmin } from '../../shared/guards/roleGuard';
 import { ok } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import { accountingService } from './accounting.service';
-import { istDate } from '../../shared/utils/date';
+import { istDate, endOfIstDayExclusive } from '../../shared/utils/date';
 
 const router = Router();
 router.use(authGuard, requireSuperAdmin); // the owner's finance hub
@@ -25,9 +24,11 @@ router.get(
   '/daybook',
   validate({ query: z.object({ from: istDate.optional(), to: istDate.optional() }) }),
   asyncHandler(async (req: Request, res: Response) => {
-    const to = (req.query.to as unknown as Date) ?? new Date();
-    const from = (req.query.from as unknown as Date) ?? subDays(to, 30);
-    return ok(res, await accountingService.getDayBook(from, to));
+    // No bounds = all time (the old code quietly fell back to the last 30 days).
+    // `to` is the last day to INCLUDE: the query wants an exclusive bound, so it's
+    // pushed to the next IST midnight — otherwise "Today" dropped all of today.
+    const q = req.query as unknown as { from?: Date; to?: Date };
+    return ok(res, await accountingService.getDayBook(q.from, q.to ? endOfIstDayExclusive(q.to) : undefined));
   }),
 );
 
@@ -35,11 +36,9 @@ router.get(
   '/cashbook',
   validate({ query: z.object({ from: istDate.optional(), to: istDate.optional() }) }),
   asyncHandler(async (req: Request, res: Response) => {
+    // No bounds = all time from the very first entry (opening 0), not the last 30 days.
     const q = req.query as unknown as { from?: Date; to?: Date };
-    const to = q.to ? new Date(q.to.getTime() + 24 * 60 * 60 * 1000) : undefined;
-    const resolvedTo = to ?? new Date();
-    const from = q.from ?? subDays(resolvedTo, 30);
-    return ok(res, await accountingService.getCashBook(from, resolvedTo));
+    return ok(res, await accountingService.getCashBook(q.from, q.to ? endOfIstDayExclusive(q.to) : undefined));
   }),
 );
 

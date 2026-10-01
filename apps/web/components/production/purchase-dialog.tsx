@@ -59,7 +59,9 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [invoiceNumber, setInvoice] = useState('');
   const [billDate, setBillDate] = useState(today());
-  const [paymentMethod, setMethod] = useState('CASH');
+  // No pre-selected method: defaulting to CASH silently recorded bank/UPI
+  // payments as cash and drove the Cash Book negative. It has to be chosen.
+  const [paymentMethod, setMethod] = useState('');
   const [payMode, setPayMode] = useState<'full' | 'credit' | 'partial'>('full');
   const [customPaid, setCustomPaid] = useState(0);
   const [creditDays, setCreditDays] = useState(30);
@@ -95,7 +97,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
       setSupplier(editBill.supplierName ?? ''); setGstin(editBill.supplierGstin ?? '');
       setSupplierState(''); setShowSuggestions(false);
       setInvoice(editBill.invoiceNumber ?? ''); setBillDate(istDateInput(editBill.billDate));
-      setMethod(editBill.paymentMethod ?? 'CASH');
+      setMethod(editBill.paymentMethod && editBill.paymentMethod !== 'NOT_PAID' ? editBill.paymentMethod : '');
       const paid = Number(editBill.amountPaid);
       const total = Number(editBill.totalAmount);
       setPayMode(paid <= 0 ? 'credit' : paid >= total ? 'full' : 'partial');
@@ -119,7 +121,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
     initedRef.current = true;
     setIsGstBill(true);
     setSupplier(''); setGstin(''); setSupplierState(''); setShowSuggestions(false);
-    setInvoice(''); setBillDate(today()); setMethod('CASH'); setPayMode('full'); setCustomPaid(0); setCreditDays(30); setRoundOff(0);
+    setInvoice(''); setBillDate(today()); setMethod(''); setPayMode('full'); setCustomPaid(0); setCreditDays(30); setRoundOff(0);
     setNewCatLine(-1); setNewCatName('');
     setLines(isBranch || !rmList.length ? (catList.length ? [newOtherLine()] : []) : [newRawLine()]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -198,6 +200,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
 
   const submit = () => {
     if (!lines.length) { toast.error('Add at least one line'); return; }
+    if (paidNow > 0 && !paymentMethod) { toast.error('Choose how this payment was made — Cash, UPI, Bank Transfer or Card.'); return; }
     for (const l of lines) {
       if (l.kind === 'RAW_MATERIAL' && (!l.rawMaterialId || l.quantity <= 0)) { toast.error('Fill all raw-material lines'); return; }
       if (l.kind === 'FINISHED_GOOD' && (!l.productId || l.quantity <= 0)) { toast.error('Fill all finished-good lines'); return; }
@@ -213,7 +216,7 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
     const payload = {
       supplierName: supplierName || undefined, supplierGstin: supplierGstin || undefined, supplierStateName: supplierState || undefined,
       invoiceNumber: invoiceNumber || undefined,
-      intakeDate: billDate, paymentMethod, amountPaidNow: paidNow, isGstBill, roundOff,
+      intakeDate: billDate, paymentMethod: paidNow > 0 ? paymentMethod : undefined, amountPaidNow: paidNow, isGstBill, roundOff,
       creditDays: balance > 0 ? creditDays : undefined,
       items,
     };
@@ -492,7 +495,12 @@ export function PurchaseDialog({ open, onOpenChange, editBill }: { open: boolean
               ))}
             </div>
             {payMode === 'partial' && <Input type="number" step="0.01" className="h-9 w-32" placeholder="Paid now" value={customPaid} onChange={(e) => setCustomPaid(Number(e.target.value))} />}
-            <Select className="h-9 w-40" value={paymentMethod} onChange={(e) => setMethod(e.target.value)}>{METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}</Select>
+            {paidNow > 0 && (
+              <Select className="h-9 w-44" value={paymentMethod} aria-invalid={!paymentMethod} onChange={(e) => setMethod(e.target.value)}>
+                <option value="" disabled>Paid by… (choose)</option>
+                {METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+              </Select>
+            )}
             <div className="ml-auto text-right text-caption"><span className="text-success">Paying {formatINR(paidNow)}</span>{balance > 0 && <span className="ml-2 text-danger">Balance {formatINR(balance)}</span>}</div>
           </div>
 

@@ -18,10 +18,10 @@ export async function getPosition() {
 
     const [
       cashIn, digitalIn, posCash, posDigital, posSalesMonth, billingMonth,
-      expensesMonth, paidExpensesMonth, purchasesMonth, receivables, rawStock, fgValue, cogsMonth, payables,
+      expensesMonth, paidExpensesMonth, purchasesMonth, receivables, rawStock, fgValue, cogsMonth, payables, supplierPaidMonth,
     ] = await Promise.all([
-      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM payments WHERE is_deleted=false AND channel='CASH' AND payment_date >= ${monthStart}`,
-      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM payments WHERE is_deleted=false AND channel='DIGITAL' AND payment_date >= ${monthStart}`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM payments WHERE is_deleted=false AND status='SUCCESS' AND channel='CASH' AND payment_date >= ${monthStart}`,
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM payments WHERE is_deleted=false AND status='SUCCESS' AND channel='DIGITAL' AND payment_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(cash_amount),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(card_amount+upi_amount),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(grand_total),0)::float v FROM pos_transactions WHERE status='COMPLETED' AND is_deleted=false AND sold_at >= ${monthStart} AND outlet_id IS NULL`,
@@ -29,9 +29,11 @@ export async function getPosition() {
       // Accrual total — every expense incurred this month, paid or not. Feeds P&L:
       // an owed-but-unpaid expense is still a real cost against this month's profit.
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM expenses WHERE is_deleted=false AND outlet_id IS NULL AND expense_date >= ${monthStart}`,
-      // Cash-basis total — excludes NOT_PAID. Feeds Money Out / Net Cash Flow below,
-      // which must reflect what actually left the business, not what's merely owed.
-      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM expenses WHERE is_deleted=false AND outlet_id IS NULL AND payment_method<>'NOT_PAID' AND expense_date >= ${monthStart}`,
+      // Cash-basis total — feeds Money Out / Net Cash Flow below, which must reflect
+      // what actually left the business: not NOT_PAID (owed), not partner-paid (his
+      // money, a debt to him), and not rows generated from a supplier bill (that
+      // money is counted once, as the supplier payment). Same rule as the Day Book.
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(amount),0)::float v FROM expenses WHERE is_deleted=false AND outlet_id IS NULL AND payment_method<>'NOT_PAID' AND paid_by='COMPANY' AND supplier_bill_id IS NULL AND expense_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(total_cost),0)::float v FROM raw_material_intake WHERE is_deleted=false AND intake_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(balance_due),0)::float v FROM bills WHERE is_deleted=false AND status IN ('UNPAID','PARTIALLY_PAID')`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(current_stock*cost_per_unit),0)::float v FROM raw_materials WHERE is_deleted=false`,
@@ -43,12 +45,16 @@ export async function getPosition() {
         )::float v`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(total_material_cost),0)::float v FROM production_batches WHERE is_deleted=false AND production_date >= ${monthStart}`,
       prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(balance_due),0)::float v FROM supplier_bills WHERE is_deleted=false AND outlet_id IS NULL AND status IN ('UNPAID','PARTIALLY_PAID')`,
+      // Money actually paid to suppliers this month (any method) — what Money Out
+      // counts, instead of the value of goods received (purchasesMonth), which
+      // counted credit purchases as spent and missed finished goods entirely.
+      prisma.$queryRaw<Array<{ v: number }>>`SELECT COALESCE(SUM(sp.amount),0)::float v FROM supplier_payments sp JOIN supplier_bills b ON b.id=sp.supplier_bill_id WHERE sp.is_deleted=false AND b.is_deleted=false AND b.outlet_id IS NULL AND sp.payment_date >= ${monthStart}`,
     ]);
 
     const moneyInCash = num(cashIn) + num(posCash);
     const moneyInDigital = num(digitalIn) + num(posDigital);
     const moneyIn = moneyInCash + moneyInDigital;
-    const moneyOut = num(paidExpensesMonth) + num(purchasesMonth);
+    const moneyOut = num(paidExpensesMonth) + num(supplierPaidMonth);
     const revenueMonth = num(posSalesMonth) + num(billingMonth);
     const grossProfit = revenueMonth - num(cogsMonth);
     const netProfit = grossProfit - num(expensesMonth);
@@ -69,6 +75,7 @@ export async function getPosition() {
       // they're each labelled as, instead of quietly disagreeing over unpaid ones.
       paidExpensesMonth: num(paidExpensesMonth),
       purchasesMonth: num(purchasesMonth),
+      supplierPaymentsMonth: num(supplierPaidMonth),
       cogsMonth: num(cogsMonth),
       grossProfit,
       netProfit,
@@ -82,7 +89,7 @@ export async function getPosition() {
 }
 
 export interface DayBookEntry {
-  type: 'PAYMENT_IN' | 'POS_SALE' | 'EXPENSE' | 'PURCHASE';
+  type: 'PAYMENT_IN' | 'POS_SALE' | 'EXPENSE' | 'SUPPLIER_PAYMENT';
   date: string;
   party: string | null;
   method: string | null;
@@ -91,15 +98,31 @@ export interface DayBookEntry {
   outflow: number;
 }
 
-/** Unified chronological cash/bank ledger between two dates. */
-export async function getDayBook(from: Date, to: Date) {
-  const fromIso = from.toISOString();
-  const toIso = to.toISOString();
-  const rows = await prisma.$queryRawUnsafe<Array<{ type: string; txn_date: Date; party: string | null; method: string | null; reference: string | null; inflow: number; outflow: number }>>(
-    `
+/** `AND col >= from AND col < to`, each half only when given. `to` is exclusive. */
+function within(col: string, from?: Date, to?: Date): Prisma.Sql {
+  return Prisma.sql`${from ? Prisma.sql`AND ${Prisma.raw(col)} >= ${from}` : Prisma.empty} ${to ? Prisma.sql`AND ${Prisma.raw(col)} < ${to}` : Prisma.empty}`;
+}
+
+/**
+ * Every rupee that actually moved, in or out, between two dates — cash and
+ * bank together. `to` is exclusive; omit either bound for an open range.
+ *
+ * Money OUT is only what the company actually paid:
+ *  - Supplier payments, by any method — not the value of goods received. A
+ *    purchase bought on credit hasn't cost any money yet; paying for it later
+ *    has. (This also covers finished-goods purchases, which the old "goods
+ *    received" row never included at all.)
+ *  - Expenses the company itself paid. A NOT_PAID expense hasn't been paid by
+ *    anyone yet, and one a partner paid from his own pocket is a debt to him,
+ *    not company money leaving — both are still costs in the P&L, just not
+ *    money out here. Expense rows generated from a supplier bill are skipped
+ *    too: that money is already counted once, as the supplier payment.
+ */
+export async function getDayBook(from?: Date, to?: Date) {
+  const rows = await prisma.$queryRaw<Array<{ type: string; txn_date: Date; party: string | null; method: string | null; reference: string | null; inflow: number; outflow: number }>>`
     SELECT 'PAYMENT_IN' AS type, p.payment_date AS txn_date, o.name AS party, p.method::text AS method, p.payment_number AS reference, p.amount::float AS inflow, 0::float AS outflow
       FROM payments p JOIN outlets o ON o.id=p.outlet_id
-      WHERE p.is_deleted=false AND p.payment_date BETWEEN $1::timestamptz AND $2::timestamptz
+      WHERE p.is_deleted=false AND p.status='SUCCESS' ${within('p.payment_date', from, to)}
     UNION ALL
     -- POS sales are rolled up one row per day per payment mode (not one row per
     -- sale) — a single counter can ring up hundreds of walk-in bills a day, which
@@ -108,21 +131,21 @@ export async function getDayBook(from: Date, to: Date) {
            count(*)::text || CASE WHEN count(*)=1 THEN ' bill' ELSE ' bills' END,
            SUM(t.grand_total)::float, 0::float
       FROM pos_transactions t
-      WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.sold_at BETWEEN $1::timestamptz AND $2::timestamptz AND t.outlet_id IS NULL
+      WHERE t.status='COMPLETED' AND t.is_deleted=false AND t.outlet_id IS NULL ${within('t.sold_at', from, to)}
       GROUP BY date_trunc('day', t.sold_at), t.payment_mode
     UNION ALL
     SELECT 'EXPENSE', e.expense_date, e.paid_to, e.payment_method::text, ec.name, 0::float, e.amount::float
       FROM expenses e JOIN expense_categories ec ON ec.id=e.category_id
-      WHERE e.is_deleted=false AND e.outlet_id IS NULL AND e.expense_date BETWEEN $1::timestamptz AND $2::timestamptz
+      WHERE e.is_deleted=false AND e.outlet_id IS NULL
+        AND e.payment_method <> 'NOT_PAID' AND e.paid_by = 'COMPANY' AND e.supplier_bill_id IS NULL
+        ${within('e.expense_date', from, to)}
     UNION ALL
-    SELECT 'PURCHASE', i.intake_date, i.supplier_name, NULL, i.invoice_number, 0::float, i.total_cost::float
-      FROM raw_material_intake i WHERE i.is_deleted=false AND i.intake_date BETWEEN $1::timestamptz AND $2::timestamptz
-    ORDER BY txn_date DESC
-    LIMIT 500`,
-    fromIso,
-    toIso,
-  );
+    SELECT 'SUPPLIER_PAYMENT', sp.payment_date, b.supplier_name, sp.method::text, b.bill_number, 0::float, sp.amount::float
+      FROM supplier_payments sp JOIN supplier_bills b ON b.id=sp.supplier_bill_id
+      WHERE sp.is_deleted=false AND b.is_deleted=false AND b.outlet_id IS NULL ${within('sp.payment_date', from, to)}
+    ORDER BY txn_date DESC`;
 
+  // Totals over every row — no LIMIT, so a long range can't silently undercount.
   const totalIn = rows.reduce((s, r) => s + Number(r.inflow), 0);
   const totalOut = rows.reduce((s, r) => s + Number(r.outflow), 0);
   return {
@@ -195,7 +218,7 @@ async function cashRowsFor(before?: Date): Promise<CashRow[]> {
       `,
     ),
     prisma.expense.findMany({
-      where: { isDeleted: false, outletId: null, paymentMethod: 'CASH', paidBy: 'COMPANY', ...(b ? { expenseDate: b } : {}) },
+      where: { isDeleted: false, outletId: null, paymentMethod: 'CASH', paidBy: 'COMPANY', supplierBillId: null, ...(b ? { expenseDate: b } : {}) },
       select: { id: true, amount: true, expenseDate: true, paidTo: true, category: { select: { name: true } } },
     }),
     prisma.supplierPayment.findMany({

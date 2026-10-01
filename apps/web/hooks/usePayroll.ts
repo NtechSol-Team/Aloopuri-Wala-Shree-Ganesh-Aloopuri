@@ -67,6 +67,9 @@ export interface PayrollRow {
   };
 }
 
+/** How a salary actually left the business — feeds the Cash Book (only CASH counts there). */
+export type SalaryPaymentMethod = 'CASH' | 'UPI' | 'BANK_TRANSFER' | 'CHEQUE';
+
 export interface PayrollTotals { gross: number; net: number; paid: number; pending: number }
 
 export interface PayrollDashboard {
@@ -150,8 +153,8 @@ export function useUpdatePayroll() {
 export function useMarkPayrollPaid() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, paymentDate }: { id: string; paymentDate: string }) =>
-      (await api.post<ApiSuccess<PayrollRow>>(`/payroll/${id}/pay`, { paymentDate })).data.data,
+    mutationFn: async ({ id, paymentDate, paymentMethod }: { id: string; paymentDate: string; paymentMethod: SalaryPaymentMethod }) =>
+      (await api.post<ApiSuccess<PayrollRow>>(`/payroll/${id}/pay`, { paymentDate, paymentMethod })).data.data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['payroll'] });
       // Paying books an Expense, which feeds the P&L.

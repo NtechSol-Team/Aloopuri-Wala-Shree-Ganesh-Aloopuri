@@ -88,7 +88,10 @@ export const recordPurchaseSchema = z.object({
   intakeDate: istDate.default(() => new Date()),
   // Some suppliers (unregistered / composition scheme) don't charge GST at all.
   isGstBill: z.boolean().default(true),
-  paymentMethod: z.nativeEnum(PaymentMethod).default(PaymentMethod.CASH),
+  // Required whenever money is paid now (see the refine below). It used to default
+  // to CASH, which silently recorded bank/UPI supplier payments as cash and drove
+  // the Cash Book negative — so it must now be chosen explicitly.
+  paymentMethod: z.nativeEnum(PaymentMethod).optional(),
   // How much is paid to the supplier at entry: 0 = full credit, < total = partial.
   amountPaidNow: z.coerce.number().min(0).default(0),
   // Manual +/- adjustment folded into the grand total (e.g. rounding a cash
@@ -98,6 +101,10 @@ export const recordPurchaseSchema = z.object({
   creditDays: z.coerce.number().int().positive().max(365).optional(),
   notes: z.string().max(500).optional(),
   items: z.array(z.discriminatedUnion('kind', [rawMaterialLine, finishedGoodLine, otherLine])).min(1, 'Add at least one line'),
+}).superRefine((d, ctx) => {
+  if (d.amountPaidNow > 0 && (!d.paymentMethod || d.paymentMethod === PaymentMethod.NOT_PAID)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['paymentMethod'], message: 'Choose how this payment was made — Cash, UPI, Bank Transfer or Card.' });
+  }
 });
 export type RecordPurchaseInput = z.infer<typeof recordPurchaseSchema>;
 

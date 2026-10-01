@@ -1,4 +1,4 @@
-import { Prisma, PayrollStatus, ExpenseLocation, PaymentMethod } from '@prisma/client';
+import { Prisma, PayrollStatus, ExpenseLocation } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { cache, CacheTag } from '../../config/cache';
 import { AppError } from '../../shared/utils/AppError';
@@ -308,7 +308,7 @@ export async function markPayrollPaid(id: string, input: MarkPaidInput, userId: 
         categoryId,
         amount: row.netSalary,
         expenseDate: input.paymentDate,
-        paymentMethod: PaymentMethod.CASH,
+        paymentMethod: input.paymentMethod,
         location: ExpenseLocation.GENERAL,
         paidTo: row.employee.name,
         note: `Salary ${periodLabel(row.year, row.month)} — ${row.employee.name} (${row.employee.employeeNo})`,

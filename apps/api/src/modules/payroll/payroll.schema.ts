@@ -54,6 +54,11 @@ export const updatePayrollSchema = z.object({
 
 export const markPaidSchema = z.object({
   paymentDate: istDate.default(() => new Date()),
+  // How the salary actually left the business. Was hard-coded to CASH, which
+  // counted every bank-paid salary as cash leaving the cash box.
+  paymentMethod: z.enum([PaymentMethod.CASH, PaymentMethod.UPI, PaymentMethod.BANK_TRANSFER, PaymentMethod.CHEQUE], {
+    errorMap: () => ({ message: 'Choose how the salary was paid — Cash, UPI, Bank Transfer or Cheque.' }),
+  }),
 });
 
 export const listPayrollQuerySchema = z.object({

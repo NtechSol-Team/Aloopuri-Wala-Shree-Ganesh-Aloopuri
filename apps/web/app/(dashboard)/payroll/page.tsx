@@ -29,7 +29,7 @@ import {
   useMarkPayrollPaid, useRevertPayroll, usePayrollDashboard, openPayslip, downloadCsv,
   useEmployeeMasterReport, useAttendanceReport, useSalaryRegisterReport, useMonthlySummaryReport,
   useAdvances, useCreateAdvance, useUpdateAdvance, useDeleteAdvance,
-  MONTH_NAMES, type AttendanceRow, type PayrollRow, type Period, type AdvanceRow, type AdvancePaymentMethod,
+  MONTH_NAMES, type AttendanceRow, type PayrollRow, type Period, type AdvanceRow, type AdvancePaymentMethod, type SalaryPaymentMethod,
 } from '@/hooks/usePayroll';
 
 // Dashboard, Attendance and Salary used to be three separate tabs — checking the
@@ -360,8 +360,8 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
     const { data: attendance, isLoading: attendanceLoading } = useAttendance(period);
     const { data: payroll, isLoading: payrollLoading } = usePayroll(period);
     const generate = useGeneratePayroll();
-    const markPaid = useMarkPayrollPaid();
     const revert = useRevertPayroll();
+    const [paying, setPaying] = useState<PayrollRow | null>(null);
     const [editingAttendance, setEditingAttendance] = useState<{ employeeId: string; name: string; existing?: AttendanceRow } | null>(null);
     const [adjusting, setAdjusting] = useState<PayrollRow | null>(null);
     const [search, setSearch] = useState('');
@@ -404,15 +404,6 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
         },
         onError: (e) => toast.error(apiErrorMessage(e)),
       });
-
-    const pay = (row: PayrollRow) =>
-      markPaid.mutate(
-        { id: row.id, paymentDate: today() },
-        {
-          onSuccess: () => toast.success(`${row.employee.name} — salary marked paid and booked as an expense`),
-          onError: (e) => toast.error(apiErrorMessage(e)),
-        },
-      );
 
     const undo = (row: PayrollRow) => {
       if (!window.confirm(`Undo payment for ${row.employee.name}? The booked expense will be removed.`)) return;
@@ -512,7 +503,7 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
                               ...(r.payroll.status !== 'PAID'
                                 ? [
                                     { label: 'Adjust Bonus / Deductions', icon: Pencil, onClick: () => setAdjusting(r.payroll!) },
-                                    { label: 'Mark as Paid', icon: Check, onClick: () => pay(r.payroll!) },
+                                    { label: 'Mark as Paid', icon: Check, onClick: () => setPaying(r.payroll!) },
                                   ]
                                 : [{ label: 'Undo Payment', icon: Undo2, danger: true, onClick: () => undo(r.payroll!) }]),
                             ]
@@ -574,6 +565,7 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
 
         <AttendanceDialog target={editingAttendance} period={period} onClose={() => setEditingAttendance(null)} />
         <AdjustDialog row={adjusting} onClose={() => setAdjusting(null)} />
+        <PaySalaryDialog row={paying} onClose={() => setPaying(null)} />
       </div>
     );
   },
@@ -651,6 +643,64 @@ function RowMenu({ items }: { items: RowMenuItem[] }) {
         document.body,
       )}
     </>
+  );
+}
+
+const SALARY_METHODS: Array<[SalaryPaymentMethod, string]> = [
+  ['CASH', 'Cash'], ['UPI', 'UPI'], ['BANK_TRANSFER', 'Bank Transfer'], ['CHEQUE', 'Cheque'],
+];
+
+/** Marking a salary paid books it as an expense — so how it was paid matters:
+ *  only a CASH salary comes out of the Cash Book. No method is pre-selected, for
+ *  the same reason the purchase screen no longer pre-selects one. */
+function PaySalaryDialog({ row, onClose }: { row: PayrollRow | null; onClose: () => void }) {
+  const markPaid = useMarkPayrollPaid();
+  const [method, setMethod] = useState<SalaryPaymentMethod | ''>('');
+  const [date, setDate] = useState(today());
+
+  useEffect(() => {
+    if (row) { setMethod(''); setDate(today()); }
+  }, [row]);
+
+  if (!row) return null;
+
+  const submit = () => {
+    if (!method) { toast.error('Choose how the salary was paid.'); return; }
+    markPaid.mutate(
+      { id: row.id, paymentDate: date, paymentMethod: method },
+      {
+        onSuccess: () => { toast.success(`${row.employee.name} — salary marked paid and booked as an expense`); onClose(); },
+        onError: (e) => toast.error(apiErrorMessage(e)),
+      },
+    );
+  };
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Pay salary — {row.employee.name}</DialogTitle>
+          <DialogDescription>{row.payrollNo} · net {formatINR(row.netSalary)}</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label>Paid by</Label>
+            <Select value={method} aria-invalid={!method} onChange={(e) => setMethod(e.target.value as SalaryPaymentMethod)}>
+              <option value="" disabled>Choose…</option>
+              {SALARY_METHODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Payment date</Label>
+            <Input type="date" value={date} max={today()} onChange={(e) => setDate(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} loading={markPaid.isPending} disabled={!method}><Check className="h-4 w-4" /> Mark as Paid</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

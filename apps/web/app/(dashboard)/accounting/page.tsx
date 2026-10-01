@@ -61,7 +61,7 @@ function PositionTab() {
       {/* Cash flow */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Money In (month)" value={formatINR(p.moneyIn, { decimals: false })} icon={ArrowUpRight} accent="success" sub={`Cash ${formatINR(p.moneyInCash, { decimals: false })} · Digital ${formatINR(p.moneyInDigital, { decimals: false })}`} />
-        <Stat label="Money Out (month)" value={formatINR(p.moneyOut, { decimals: false })} icon={ArrowDownRight} accent="danger" sub={`Expenses ${formatINR(p.paidExpensesMonth, { decimals: false })} · Purchases ${formatINR(p.purchasesMonth, { decimals: false })}`} />
+        <Stat label="Money Out (month)" value={formatINR(p.moneyOut, { decimals: false })} icon={ArrowDownRight} accent="danger" sub={`Expenses ${formatINR(p.paidExpensesMonth, { decimals: false })} · Supplier payments ${formatINR(p.supplierPaymentsMonth, { decimals: false })}`} />
         <Stat label="Net Cash Flow" value={formatINR(p.netCashFlow, { decimals: false })} icon={Wallet} accent={p.netCashFlow >= 0 ? 'success' : 'danger'} />
         <Stat label="Receivables (AR)" value={formatINR(p.receivables, { decimals: false })} icon={ReceiptText} accent="warning" sub="owed by outlets" />
       </div>
@@ -87,7 +87,7 @@ function PositionTab() {
             <Line label="Inventory total" value={p.stockValue} bold />
             <div className="my-1 border-t border-border" />
             <Line label="Receivables (owed to us)" value={p.receivables} accent="success" />
-            <Line label="Payables (we owe suppliers)" value={-p.payables} accent="danger" />
+            <Line label="Payables (we owe suppliers)" value={p.payables} accent="danger" />
             <Line label="Net (receivables − payables)" value={p.receivables - p.payables} bold />
             <p className="pt-1 text-caption text-muted-foreground">Tip: collect receivables faster than you pay payables to keep cash positive.</p>
           </CardContent>
@@ -116,7 +116,8 @@ function Stat({ label, value, icon: Icon, accent, sub }: { label: string; value:
 function Line({ label, value, bold, muted, accent }: { label: string; value: number; bold?: boolean; muted?: boolean; accent?: 'success' | 'danger' }) {
   return (
     <div className={cn('flex justify-between', bold && 'font-semibold', muted && 'text-muted-foreground', accent === 'success' && 'text-success', accent === 'danger' && 'text-danger')}>
-      <span>{label}</span><span>{formatINR(value)}</span>
+      {/* `|| 0` turns a negated zero (-0) into 0, so "– Cost of goods" on an empty month reads ₹0.00, not ₹-0.00. */}
+      <span>{label}</span><span>{formatINR(value || 0)}</span>
     </div>
   );
 }
@@ -125,7 +126,7 @@ const TYPE_META: Record<string, { label: string; icon: typeof Wallet; variant: '
   PAYMENT_IN: { label: 'Payment', icon: ReceiptText, variant: 'success' },
   POS_SALE: { label: 'POS Sale', icon: Wallet, variant: 'success' },
   EXPENSE: { label: 'Expense', icon: TrendingUp, variant: 'danger' },
-  PURCHASE: { label: 'Purchase', icon: ShoppingCart, variant: 'danger' },
+  SUPPLIER_PAYMENT: { label: 'Supplier Payment', icon: ShoppingCart, variant: 'danger' },
 };
 
 /** Escapes a CSV cell — quotes doubled, whole field quoted when it contains a delimiter. */
@@ -135,8 +136,8 @@ function csvCell(v: string | number): string {
 }
 
 function DayBookTab() {
-  // No range picked yet defaults to the last 30 days, same as before this had a
-  // picker at all — see accounting.routes.ts's /daybook handler.
+  // "All" sends no range, which the API now treats as all time (it used to
+  // quietly mean the last 30 days).
   const [period, setPeriod] = useState<PeriodKey>('all');
   const [custom, setCustom] = useState({ from: todayIso(), to: todayIso() });
   const range = periodRange(period, custom);
@@ -145,7 +146,7 @@ function DayBookTab() {
   const exportCsv = () => {
     if (!data) return;
     const rows: string[] = [
-      ['Day Book', range.from ? `${range.from} to ${range.to}` : 'Last 30 days'].map(csvCell).join(','),
+      ['Day Book', range.from ? `${range.from} to ${range.to}` : 'All time'].map(csvCell).join(','),
       ['Date', 'Type', 'Party', 'Reference', 'Method', 'In', 'Out'].join(','),
       ...data.entries.map((e) =>
         [format(ist(e.date), 'dd-MM-yyyy'), TYPE_META[e.type].label, e.party ?? '', e.reference ?? '', e.method?.replace('_', ' ') ?? '', e.inflow || '', e.outflow || '']
@@ -159,7 +160,7 @@ function DayBookTab() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `day-book-${range.from ?? 'last-30-days'}${range.to && range.to !== range.from ? `_to_${range.to}` : ''}.csv`;
+    a.download = `day-book-${range.from ?? 'all-time'}${range.to && range.to !== range.from ? `_to_${range.to}` : ''}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
   };
@@ -170,7 +171,7 @@ function DayBookTab() {
         <div className="space-y-1.5">
           <Label>Period</Label>
           <Select className="w-40" value={period} onChange={(e) => setPeriod(e.target.value as PeriodKey)}>
-            {PERIODS.map(([key, label]) => <option key={key} value={key}>{key === 'all' ? 'Last 30 Days' : label}</option>)}
+            {PERIODS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </Select>
         </div>
         {period === 'custom' && (
@@ -202,7 +203,7 @@ function DayBookTab() {
       <Card className="overflow-hidden">
         <CardHeader>
           <CardTitle>
-            Day Book — {range.from ? `${format(ist(range.from), 'dd MMM yyyy')} to ${format(ist(range.to!), 'dd MMM yyyy')}` : 'last 30 days'}
+            Day Book — {range.from ? `${format(ist(range.from), 'dd MMM yyyy')} to ${format(ist(range.to!), 'dd MMM yyyy')}` : 'all time'}
           </CardTitle>
         </CardHeader>
         {isLoading ? (
@@ -271,7 +272,7 @@ function CashBookTab() {
   const exportCsv = () => {
     if (!data) return;
     const rows: string[] = [
-      ['Cash Book', range.from ? `${range.from} to ${range.to}` : 'Last 30 days'].map(csvCell).join(','),
+      ['Cash Book', range.from ? `${range.from} to ${range.to}` : 'All time'].map(csvCell).join(','),
       ['Opening Balance', '', '', '', '', data.openingBalance].map(csvCell).join(','),
       ['Date', 'Type', 'Source / Destination', 'Reference', 'In', 'Out', 'Balance'].join(','),
       ...data.entries.map((e) =>
@@ -286,7 +287,7 @@ function CashBookTab() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cash-book-${range.from ?? 'last-30-days'}${range.to && range.to !== range.from ? `_to_${range.to}` : ''}.csv`;
+    a.download = `cash-book-${range.from ?? 'all-time'}${range.to && range.to !== range.from ? `_to_${range.to}` : ''}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
   };
@@ -302,7 +303,7 @@ function CashBookTab() {
         <div className="space-y-1.5">
           <Label>Period</Label>
           <Select className="w-40" value={period} onChange={(e) => setPeriod(e.target.value as PeriodKey)}>
-            {PERIODS.map(([key, label]) => <option key={key} value={key}>{key === 'all' ? 'Last 30 Days' : label}</option>)}
+            {PERIODS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </Select>
         </div>
         {period === 'custom' && (
@@ -334,7 +335,7 @@ function CashBookTab() {
       <Card className="overflow-hidden">
         <CardHeader>
           <CardTitle>
-            Cash Book — {range.from ? `${format(ist(range.from), 'dd MMM yyyy')} to ${format(ist(range.to!), 'dd MMM yyyy')}` : 'last 30 days'}
+            Cash Book — {range.from ? `${format(ist(range.from), 'dd MMM yyyy')} to ${format(ist(range.to!), 'dd MMM yyyy')}` : 'all time'}
           </CardTitle>
         </CardHeader>
         {isLoading || !data ? (

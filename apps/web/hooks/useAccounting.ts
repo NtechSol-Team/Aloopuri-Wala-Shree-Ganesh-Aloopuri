@@ -13,12 +13,14 @@ export interface FinancialPosition {
   /** Cash-basis total — excludes Not Paid expenses. What Money Out's breakdown shows. */
   paidExpensesMonth: number;
   purchasesMonth: number; cogsMonth: number;
+  /** Money actually paid to suppliers this month — what Money Out counts. */
+  supplierPaymentsMonth: number;
   grossProfit: number; netProfit: number;
   receivables: number; payables: number; rawStockValue: number; finishedGoodsValue: number; stockValue: number;
 }
 
 export interface DayBookEntry {
-  type: 'PAYMENT_IN' | 'POS_SALE' | 'EXPENSE' | 'PURCHASE';
+  type: 'PAYMENT_IN' | 'POS_SALE' | 'EXPENSE' | 'SUPPLIER_PAYMENT';
   date: string; party: string | null; method: string | null; reference: string | null;
   inflow: number; outflow: number;
 }

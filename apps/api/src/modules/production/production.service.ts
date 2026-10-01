@@ -1,4 +1,4 @@
-import { Prisma, ContactType } from '@prisma/client';
+import { Prisma, ContactType, PaymentMethod } from '@prisma/client';
 import { addDays } from 'date-fns';
 import { prisma } from '../../config/prisma';
 import { logger } from '../../config/logger';
@@ -236,6 +236,15 @@ export async function logIntake(input: LogIntakeInput, userId: string) {
  * full bill is reconstructable and shows in the Day Book / Expenses.
  */
 type PurchaseInput = import('./production.schema').RecordPurchaseInput;
+
+/** The schema already refuses a payment with no method; this keeps the type honest
+ *  (and fails loudly rather than guessing) if that ever stops being true. */
+function requirePaidMethod(m: PaymentMethod | undefined): PaymentMethod {
+  if (!m || m === PaymentMethod.NOT_PAID) {
+    throw AppError.badRequest('Choose how this payment was made — Cash, UPI, Bank Transfer or Card.', undefined, 'paymentMethod');
+  }
+  return m;
+}
 type PurchaseItem = PurchaseInput['items'][number];
 
 /**
@@ -426,7 +435,7 @@ async function applyPurchaseLines(
     } else {
       await tx.expense.create({
         data: {
-          categoryId: item.categoryId, amount: base, expenseDate: input.intakeDate, paymentMethod: input.paymentMethod,
+          categoryId: item.categoryId, amount: base, expenseDate: input.intakeDate, paymentMethod: input.paymentMethod ?? PaymentMethod.NOT_PAID,
           taxRate: item.taxRate, taxAmount: tax, hsnCode: item.hsnCode,
           paidTo: input.supplierName, supplierName: input.supplierName, invoiceNumber: input.invoiceNumber,
           // The expense follows the bill's books — a branch purchase is the branch's cost.
@@ -492,7 +501,7 @@ export async function logPurchase(input: PurchaseInput, user: AuthUser) {
         amountPaid: paidNow,
         balanceDue: balance,
         status,
-        paymentMethod: input.paymentMethod,
+        paymentMethod: input.paymentMethod ?? null,
         creditDays,
         dueDate,
         isGstBill: input.isGstBill,
@@ -510,7 +519,7 @@ export async function logPurchase(input: PurchaseInput, user: AuthUser) {
       await tx.supplierPayment.create({
         data: {
           paymentNumber: await nextDocNumber(tx, 'SUPPLIER_PAYMENT'),
-          supplierBillId: bill.id, amount: paidNow, method: input.paymentMethod,
+          supplierBillId: bill.id, amount: paidNow, method: requirePaidMethod(input.paymentMethod),
           paymentDate: input.intakeDate, paidById: userId, createdById: userId,
         },
       });
@@ -639,7 +648,7 @@ export async function updatePurchase(id: string, input: PurchaseInput, user: Aut
         amountPaid: paidNow,
         balanceDue: balance,
         status,
-        paymentMethod: input.paymentMethod,
+        paymentMethod: input.paymentMethod ?? null,
         creditDays: creditDays ?? null,
         dueDate,
         isGstBill: input.isGstBill,
@@ -653,7 +662,7 @@ export async function updatePurchase(id: string, input: PurchaseInput, user: Aut
       await tx.supplierPayment.create({
         data: {
           paymentNumber: await nextDocNumber(tx, 'SUPPLIER_PAYMENT'),
-          supplierBillId: bill.id, amount: paidNow, method: input.paymentMethod,
+          supplierBillId: bill.id, amount: paidNow, method: requirePaidMethod(input.paymentMethod),
           paymentDate: input.intakeDate, paidById: userId, createdById: userId,
         },
       });
