@@ -144,6 +144,27 @@ export function useItemSalesReport(params: { productId?: string; from?: string; 
   });
 }
 
+export interface ItemSalesReportDetail {
+  product: { id: string; name: string; sku: string; unitName: string; decimalPlaces: number };
+  outlet: { id: string; name: string };
+  totalQty: number;
+  totalRevenue: number;
+  totalCollected: number;
+  totalPending: number;
+  totalTax: number;
+  bills: Array<{ lineId: string; billId: string; billNumber: string; billDate: string; qty: number; rate: number; taxAmount: number; lineTotal: number; collected: number; pending: number }>;
+}
+
+/** The drill-down behind one outlet row in the item report — every bill that
+ *  outlet was charged this product on, with the per-unit rate and line total. */
+export function useItemSalesReportDetail(params: { productId?: string; outletId?: string; from?: string; to?: string }, enabled: boolean) {
+  return useQuery({
+    queryKey: ['bills', 'item-sales-report', 'detail', params],
+    enabled: enabled && !!params.productId && !!params.outletId,
+    queryFn: async () => (await api.get<ApiSuccess<ItemSalesReportDetail>>('/billing/reports/item-sales/detail', { params })).data.data,
+  });
+}
+
 export interface AllItemsSalesReport {
   products: Array<{
     productId: string; name: string; sku: string; unitName: string; decimalPlaces: number;

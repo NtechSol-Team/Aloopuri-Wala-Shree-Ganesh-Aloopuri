@@ -23,6 +23,7 @@ import {
 import { useUnits, useSaveUnit, useDeleteUnit, type Unit } from '@/hooks/useUnits';
 import { ProductFormDialog } from '@/components/products/product-form-dialog';
 import { BomDialog } from '@/components/products/bom-dialog';
+import { ProductPriceHistoryDialog } from '@/components/products/product-price-history-dialog';
 import { AssetsTab } from '@/components/assets/assets-tab';
 import { EmployeesSection } from '@/components/employees/employees-tab';
 
@@ -87,6 +88,7 @@ function ProductsTab() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [creating, setCreating] = useState(false);
   const [bomProduct, setBomProduct] = useState<Product | null>(null);
+  const [historyProduct, setHistoryProduct] = useState<Product | null>(null);
   const del = useDeleteProduct();
 
   return (
@@ -115,7 +117,16 @@ function ProductsTab() {
           <TBody>
             {data.rows.map((p) => (
               <TR key={p.id}>
-                <TD className="font-medium">{p.name}</TD>
+                <TD>
+                  <button
+                    type="button"
+                    className="font-medium text-primary hover:underline"
+                    title="View price history"
+                    onClick={() => setHistoryProduct(p)}
+                  >
+                    {p.name}
+                  </button>
+                </TD>
                 <TD className="text-muted-foreground">{p.sku}</TD>
                 <TD>{p.category.name}</TD>
                 <TD>{p.unit.name}</TD>
@@ -144,6 +155,7 @@ function ProductsTab() {
 
       <ProductFormDialog open={creating || !!editing} onOpenChange={(v) => { if (!v) { setCreating(false); setEditing(null); } }} product={editing} categories={categories ?? []} />
       <BomDialog product={bomProduct} onClose={() => setBomProduct(null)} />
+      <ProductPriceHistoryDialog product={historyProduct} onClose={() => setHistoryProduct(null)} />
     </Card>
   );
 }

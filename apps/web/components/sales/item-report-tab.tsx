@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { BarChart3, Search, Store } from 'lucide-react';
+import { BarChart3, Receipt, Search, Store } from 'lucide-react';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
@@ -12,7 +13,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR, formatQtyWithUnit, ist, todayIso } from '@/lib/utils';
 import { PERIODS, periodRange, type PeriodKey } from '@/lib/period';
 import { useProducts } from '@/hooks/useProducts';
-import { useItemSalesReport, useAllItemsSalesReport } from '@/hooks/useBilling';
+import { useItemSalesReport, useItemSalesReportDetail, useAllItemsSalesReport } from '@/hooks/useBilling';
 
 /** Distinguishes "every product" from "no product picked yet" — never a real product id. */
 const ALL_PRODUCTS = '__all__';
@@ -36,6 +37,7 @@ export function ItemReportTab() {
   const [period, setPeriod] = useState<PeriodKey>('all');
   const [custom, setCustom] = useState({ from: todayIso(), to: todayIso() });
   const [search, setSearch] = useState('');
+  const [drillOutlet, setDrillOutlet] = useState<{ outletId: string; outletName: string } | null>(null);
 
   useEffect(() => {
     if (!productId && list[0]) setProductId(list[0].id);
@@ -194,7 +196,10 @@ export function ItemReportTab() {
           </div>
 
           <Card className="overflow-hidden">
-            <CardHeader><CardTitle>{single.data.product.name} — Outlet-wise</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>{single.data.product.name} — Outlet-wise</CardTitle>
+              <p className="text-caption text-muted-foreground">Click a franchise to see the actual bills behind its figures.</p>
+            </CardHeader>
             {!single.data.outlets.length ? (
               <div className="flex flex-col items-center gap-3 py-14 text-center">
                 <Store className="h-7 w-7 text-muted-foreground" />
@@ -211,8 +216,12 @@ export function ItemReportTab() {
                   </THead>
                   <TBody>
                     {single.data.outlets.map((o) => (
-                      <TR key={o.outletId}>
-                        <TD className="font-medium">{o.outletName}</TD>
+                      <TR
+                        key={o.outletId}
+                        className="cursor-pointer hover:bg-surface"
+                        onClick={() => setDrillOutlet({ outletId: o.outletId, outletName: o.outletName })}
+                      >
+                        <TD className="font-medium text-primary">{o.outletName}</TD>
                         <TD className="text-right tabular-nums">{formatQtyWithUnit(o.qty, { name: single.data.product.unitName, decimalPlaces: single.data.product.decimalPlaces })}</TD>
                         <TD className="text-right font-medium tabular-nums">{formatINR(o.revenue)}</TD>
                         <TD className="text-right tabular-nums text-success">{formatINR(o.collected)}</TD>
@@ -226,6 +235,99 @@ export function ItemReportTab() {
           </Card>
         </>
       )}
+
+      <ItemOutletBillsDialog
+        productId={isAll ? undefined : productId}
+        outlet={drillOutlet}
+        range={range}
+        onClose={() => setDrillOutlet(null)}
+      />
     </div>
+  );
+}
+
+/**
+ * The bill-by-bill trail behind one outlet's row: every invoice that outlet
+ * was charged this product on, each with the per-unit rate it was sold at and
+ * the line total — so a figure on the summary table can be checked against
+ * the actual bills it was built from, not just trusted as a rollup.
+ */
+function ItemOutletBillsDialog({
+  productId, outlet, range, onClose,
+}: { productId?: string; outlet: { outletId: string; outletName: string } | null; range: { from?: string; to?: string }; onClose: () => void }) {
+  const detail = useItemSalesReportDetail(
+    { productId, outletId: outlet?.outletId, ...range },
+    !!productId && !!outlet,
+  );
+
+  return (
+    <Dialog open={!!outlet} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{outlet?.outletName}{detail.data ? ` — ${detail.data.product.name}` : ''}</DialogTitle>
+          <DialogDescription>Every bill this franchise was charged for this item in the selected period.</DialogDescription>
+        </DialogHeader>
+
+        {detail.isLoading || !detail.data ? (
+          <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
+        ) : !detail.data.bills.length ? (
+          <div className="flex flex-col items-center gap-3 py-10 text-center">
+            <Receipt className="h-7 w-7 text-muted-foreground" />
+            <p className="text-body text-muted-foreground">No bills in this period.</p>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div>
+                <p className="text-caption uppercase tracking-wide text-muted-foreground">Total Qty</p>
+                <p className="font-semibold">{formatQtyWithUnit(detail.data.totalQty, { name: detail.data.product.unitName, decimalPlaces: detail.data.product.decimalPlaces })}</p>
+              </div>
+              <div>
+                <p className="text-caption uppercase tracking-wide text-muted-foreground">Revenue</p>
+                <p className="font-semibold">{formatINR(detail.data.totalRevenue)}</p>
+              </div>
+              <div>
+                <p className="text-caption uppercase tracking-wide text-muted-foreground">Collected</p>
+                <p className="font-semibold text-success">{formatINR(detail.data.totalCollected)}</p>
+              </div>
+              <div>
+                <p className="text-caption uppercase tracking-wide text-muted-foreground">Pending</p>
+                <p className={cn('font-semibold', detail.data.totalPending > 0 && 'text-danger')}>{formatINR(detail.data.totalPending)}</p>
+              </div>
+            </div>
+
+            <div className="max-h-[50vh] overflow-y-auto overflow-x-auto scrollbar-thin rounded-md border border-border">
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Bill No.</TH><TH>Date</TH><TH className="text-right">Qty</TH>
+                    <TH className="text-right">Rate</TH><TH className="text-right">Tax</TH><TH className="text-right">Total</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {detail.data.bills.map((b) => (
+                    <TR key={b.lineId}>
+                      <TD className="font-medium">{b.billNumber}</TD>
+                      <TD className="whitespace-nowrap">{format(ist(b.billDate), 'dd MMM yyyy')}</TD>
+                      <TD className="text-right tabular-nums">{formatQtyWithUnit(b.qty, { name: detail.data!.product.unitName, decimalPlaces: detail.data!.product.decimalPlaces })}</TD>
+                      <TD className="text-right tabular-nums">{formatINR(b.rate)}</TD>
+                      <TD className="text-right tabular-nums text-muted-foreground">{formatINR(b.taxAmount)}</TD>
+                      <TD className="text-right font-medium tabular-nums">{formatINR(b.lineTotal)}</TD>
+                    </TR>
+                  ))}
+                  <TR className="bg-surface font-bold">
+                    <TD colSpan={2}>Total</TD>
+                    <TD className="text-right tabular-nums">{formatQtyWithUnit(detail.data.totalQty, { name: detail.data.product.unitName, decimalPlaces: detail.data.product.decimalPlaces })}</TD>
+                    <TD />
+                    <TD className="text-right tabular-nums">{formatINR(detail.data.totalTax)}</TD>
+                    <TD className="text-right tabular-nums">{formatINR(detail.data.totalRevenue)}</TD>
+                  </TR>
+                </TBody>
+              </Table>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

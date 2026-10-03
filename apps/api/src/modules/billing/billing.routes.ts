@@ -9,8 +9,8 @@ import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { created, ok, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import {
-  createManualBillSchema, listBillsQuerySchema, updateBillChargesSchema, itemSalesReportQuerySchema,
-  type CreateManualBillInput, type ListBillsQuery, type UpdateBillChargesInput, type ItemSalesReportQuery,
+  createManualBillSchema, listBillsQuerySchema, updateBillChargesSchema, itemSalesReportQuerySchema, itemSalesReportDetailQuerySchema,
+  type CreateManualBillInput, type ListBillsQuery, type UpdateBillChargesInput, type ItemSalesReportQuery, type ItemSalesReportDetailQuery,
 } from './billing.schema';
 import { billingService } from './billing.service';
 import { renderBillPdf } from './billing.pdf';
@@ -79,6 +79,20 @@ router.get(
     const q = req.query as unknown as ItemSalesReportQuery;
     if (!q.productId) return ok(res, await billingService.getAllItemsSalesReport(q.from, q.to));
     return ok(res, await billingService.getItemSalesReport(q.productId, q.from, q.to));
+  }),
+);
+
+// One product, one outlet, one period, bill-by-bill — the drill-down from the
+// outlet row above: every bill that outlet was charged for this product, with
+// the per-unit rate and line total so the figure on the summary row traces
+// back to the actual invoices it was built from.
+router.get(
+  '/reports/item-sales/detail',
+  requireGodownAccess,
+  validate({ query: itemSalesReportDetailQuerySchema }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as ItemSalesReportDetailQuery;
+    return ok(res, await billingService.getItemSalesReportDetail(q.productId, q.outletId, q.from, q.to));
   }),
 );
 

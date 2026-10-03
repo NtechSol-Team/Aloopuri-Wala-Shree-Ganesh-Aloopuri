@@ -232,7 +232,7 @@ export async function updatePayroll(id: string, input: UpdatePayrollInput) {
   const row = await prisma.payroll.findFirst({
     where: { id, isDeleted: false },
     select: {
-      id: true, status: true, salaryType: true,
+      id: true, status: true, salaryType: true, employeeId: true,
       monthlySalary: true, perDaySalary: true, perHourSalary: true, shiftSalary: true, overtimeRate: true,
       totalWorkingDays: true, presentDays: true, halfDays: true, paidLeave: true, unpaidLeave: true,
       overtimeHours: true, workingHours: true,
@@ -242,6 +242,16 @@ export async function updatePayroll(id: string, input: UpdatePayrollInput) {
   if (!row) throw AppError.notFound('Payroll record not found');
   if (row.status === PayrollStatus.PAID) {
     throw AppError.invalidState('This salary has already been paid and can no longer be edited');
+  }
+  if (input.advanceRecovery !== undefined && input.advanceRecovery > 0) {
+    const owed = Number(await outstandingAdvanceBalance(row.employeeId));
+    if (input.advanceRecovery > owed + 0.001) {
+      throw AppError.badRequest(
+        `Advance recovery (₹${input.advanceRecovery}) is more than this employee owes (₹${owed}).`,
+        undefined,
+        'advanceRecovery',
+      );
+    }
   }
 
   const computed = computePayroll(
@@ -302,6 +312,15 @@ export async function markPayrollPaid(id: string, input: MarkPaidInput, userId: 
   if (row.status === PayrollStatus.PAID) throw AppError.invalidState('This salary is already marked paid');
 
   const saved = await prisma.$transaction(async (tx) => {
+    // The advance balance can change between generating this row and paying it
+    // (another month paid first, an advance edited). Paying anyway would cut the
+    // salary by more than recovery can actually clear — refuse instead.
+    const owed = await outstandingAdvanceBalance(row.employeeId, tx);
+    if (new Prisma.Decimal(row.advanceRecovery).greaterThan(owed.add(0.001))) {
+      throw AppError.invalidState(
+        `This payslip recovers ₹${Number(row.advanceRecovery)} of advance, but ${row.employee.name} now owes only ₹${Number(owed)}. Adjust the Advance and try again.`,
+      );
+    }
     const categoryId = await salaryCategoryId(tx);
     const expense = await tx.expense.create({
       data: {

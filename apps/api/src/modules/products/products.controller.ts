@@ -34,9 +34,11 @@ export const getProductController = async (req: Request, res: Response) =>
 export const createProductController = async (req: Request, res: Response) =>
   created(res, await productsService.createProduct(req.body as CreateProductInput, actor(req)), 'Product created');
 export const updateProductController = async (req: Request, res: Response) =>
-  ok(res, await productsService.updateProduct(req.params.id, req.body as UpdateProductInput), 'Product updated');
+  ok(res, await productsService.updateProduct(req.params.id, req.body as UpdateProductInput, actor(req)), 'Product updated');
 export const deleteProductController = async (req: Request, res: Response) =>
   ok(res, await productsService.deleteProduct(req.params.id), 'Product deactivated');
+export const getProductPriceHistoryController = async (req: Request, res: Response) =>
+  ok(res, await productsService.getProductPriceHistory(req.params.id));
 
 export const uploadProductPhotoController = async (req: Request, res: Response) => {
   if (!req.file) throw AppError.badRequest('No image uploaded', undefined, 'file');

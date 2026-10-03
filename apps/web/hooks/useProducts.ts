@@ -189,6 +189,23 @@ export function useDeleteProduct() {
   });
 }
 
+// ── Price history ──
+export interface ProductPriceHistoryRow {
+  id: string;
+  basePrice: string;
+  mrp: string;
+  changedAt: string;
+  changedByName: string | null;
+}
+
+export function useProductPriceHistory(productId: string | null) {
+  return useQuery({
+    queryKey: ['products', productId, 'price-history'],
+    enabled: !!productId,
+    queryFn: async () => (await api.get<ApiSuccess<ProductPriceHistoryRow[]>>(`/products/${productId}/price-history`)).data.data,
+  });
+}
+
 // ── BOM ──
 export function useBom(productId: string | null) {
   return useQuery({

@@ -101,10 +101,15 @@ export function computePayroll(
   const deductions = adjustments.deductions !== undefined ? D(adjustments.deductions) : D(structure.deductions);
   const bonus = D(adjustments.bonus);
   const incentives = D(adjustments.incentives);
-  const advanceRecovery = D(adjustments.advanceRecovery);
   const loanRecovery = D(adjustments.loanRecovery);
 
   const earnings = grossSalary.add(allowances).add(overtimeAmount).add(bonus).add(incentives);
+  // Advance recovery can only come out of pay that's actually there. Without this
+  // cap a ₹5,000 recovery against ₹3,000 of pay clamped net to 0 yet still cleared
+  // the full ₹5,000 off the advance at payment — ₹2,000 written off for nothing.
+  // Whatever doesn't fit stays outstanding for next month.
+  const advanceRoom = Prisma.Decimal.max(earnings.sub(deductions).sub(loanRecovery), new Prisma.Decimal(0));
+  const advanceRecovery = Prisma.Decimal.min(D(adjustments.advanceRecovery), advanceRoom);
   const withheld = deductions.add(advanceRecovery).add(loanRecovery);
   // Recoveries can exceed earnings in a bad month; a negative payslip is meaningless,
   // so the balance simply carries rather than showing money owed back.

@@ -164,13 +164,17 @@ export async function createProduct(input: CreateProductInput, createdById: stri
     // there it moves on through production, transfers and Fulfil.
     await tx.godownStock.create({ data: { productId: created.id, quantity: openingStock } });
     await tx.mainBranchStock.create({ data: { productId: created.id, quantity: 0 } });
+    // First entry in the price trail — the price it launched at.
+    await tx.productPriceHistory.create({
+      data: { productId: created.id, basePrice: created.basePrice, mrp: created.mrp, changedById: createdById },
+    });
     return created;
   });
   invalidate();
   return product;
 }
 
-export async function updateProduct(id: string, input: UpdateProductInput) {
+export async function updateProduct(id: string, input: UpdateProductInput, changedById?: string) {
   const existing = await getProduct(id);
   const { addStock, ...productInput } = input;
 
@@ -191,6 +195,11 @@ export async function updateProduct(id: string, input: UpdateProductInput) {
       }
     }
   }
+  // Only a real change in rupees counts — resaving the form unchanged (or editing
+  // some other field) shouldn't pad the price trail with a no-op entry.
+  const priceChanged =
+    (productInput.basePrice !== undefined && Number(productInput.basePrice) !== Number(existing.basePrice)) ||
+    (productInput.mrp !== undefined && Number(productInput.mrp) !== Number(existing.mrp));
 
   const product = await prisma.$transaction(async (tx) => {
     // Increment first, update+select second — so the Godown quantity the caller
@@ -206,10 +215,36 @@ export async function updateProduct(id: string, input: UpdateProductInput) {
         update: { quantity: { increment: addStock } },
       });
     }
-    return tx.product.update({ where: { id }, data: productInput, select: productSelect });
+    const updated = await tx.product.update({ where: { id }, data: productInput, select: productSelect });
+    if (priceChanged) {
+      await tx.productPriceHistory.create({
+        data: { productId: id, basePrice: updated.basePrice, mrp: updated.mrp, changedById },
+      });
+    }
+    return updated;
   });
   invalidate();
   return product;
+}
+
+export async function getProductPriceHistory(id: string) {
+  await getProduct(id);
+  const rows = await prisma.productPriceHistory.findMany({
+    where: { productId: id },
+    orderBy: { changedAt: 'desc' },
+  });
+  const changedByIds = [...new Set(rows.map((r) => r.changedById).filter((v): v is string => !!v))];
+  const users = changedByIds.length
+    ? await prisma.user.findMany({ where: { id: { in: changedByIds } }, select: { id: true, name: true } })
+    : [];
+  const nameById = new Map(users.map((u) => [u.id, u.name]));
+  return rows.map((r) => ({
+    id: r.id,
+    basePrice: r.basePrice,
+    mrp: r.mrp,
+    changedAt: r.changedAt,
+    changedByName: r.changedById ? (nameById.get(r.changedById) ?? null) : null,
+  }));
 }
 
 export async function setProductPhoto(id: string, photoUrl: string) {
@@ -386,7 +421,7 @@ export async function deleteRawMaterial(id: string) {
 
 export const productsService = {
   listCategories, createCategory, updateCategory, deleteCategory,
-  listProducts, getProduct, createProduct, updateProduct, setProductPhoto, removeProductPhoto, deleteProduct,
+  listProducts, getProduct, createProduct, updateProduct, setProductPhoto, removeProductPhoto, deleteProduct, getProductPriceHistory,
   getBom, setBom,
   listRawMaterials, createRawMaterial, updateRawMaterial, deleteRawMaterial,
 };

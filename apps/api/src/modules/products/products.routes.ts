@@ -33,6 +33,7 @@ productsRouter.patch('/:id', requireSuperAdmin, validate({ params: idParam, body
 productsRouter.delete('/:id', requireSuperAdmin, validate({ params: idParam }), asyncHandler(c.deleteProductController));
 productsRouter.post('/:id/photo', requireSuperAdmin, validate({ params: idParam }), imageUpload('products').single('file'), asyncHandler(c.uploadProductPhotoController));
 productsRouter.delete('/:id/photo', requireSuperAdmin, validate({ params: idParam }), asyncHandler(c.removeProductPhotoController));
+productsRouter.get('/:id/price-history', requireSuperAdmin, validate({ params: idParam }), asyncHandler(c.getProductPriceHistoryController));
 productsRouter.get('/:id/bom', validate({ params: idParam }), asyncHandler(c.getBomController));
 productsRouter.put('/:id/bom', requireSuperAdmin, validate({ params: idParam, body: setBomSchema }), asyncHandler(c.setBomController));
 

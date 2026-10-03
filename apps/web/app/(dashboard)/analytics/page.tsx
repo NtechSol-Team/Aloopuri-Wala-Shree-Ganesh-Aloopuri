@@ -22,6 +22,7 @@ import {
 import { useOutlets } from '@/hooks/useOutlets';
 import { TrendingUp, Wallet, BadgeIndianRupee } from 'lucide-react';
 import { OutletDetailDialog } from '@/components/analytics/outlet-detail-dialog';
+import { OutletExpensesView } from '@/components/analytics/outlet-expenses-view';
 import { useAuthStore } from '@/store/auth.store';
 import { printAnalyticsPaymentModeReport } from '@/lib/receipt-print';
 
@@ -195,19 +196,31 @@ function TopChart({ title, data, money }: { title: string; data: Array<{ name: s
  */
 function PosTab() {
   const { data: outlets } = useOutlets();
+  const isMainOwner = useAuthStore((s) => s.user?.role) === 'SUPER_ADMIN';
   const [scope, setScope] = useState<{ id: string | 'main'; name: string } | null>(null);
+  const [showExpenses, setShowExpenses] = useState(false);
+  // Outlet expenses are the main owner's private ledger for a franchise outlet —
+  // the Main Branch till's costs are already company expenses, so no button there.
+  const canTrackExpenses = isMainOwner && !!scope && scope.id !== 'main';
+
+  if (scope && showExpenses && canTrackExpenses) {
+    return <OutletExpensesView outletId={scope.id} outletName={scope.name} onBack={() => setShowExpenses(false)} />;
+  }
 
   if (scope) {
     return (
       <PosDetail
         outletId={scope.id}
         header={
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setScope(null)}><ArrowLeft className="h-4 w-4" /> All outlets</Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => { setScope(null); setShowExpenses(false); }}><ArrowLeft className="h-4 w-4" /> All outlets</Button>
             <div>
               <p className="text-body font-semibold">{scope.name}</p>
               <p className="text-caption text-muted-foreground">POS analytics</p>
             </div>
+            {canTrackExpenses && (
+              <Button size="sm" onClick={() => setShowExpenses(true)}><Wallet className="h-4 w-4" /> Expenses</Button>
+            )}
           </div>
         }
       />

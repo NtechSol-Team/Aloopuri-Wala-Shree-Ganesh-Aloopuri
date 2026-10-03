@@ -23,7 +23,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogD
 import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { cn, formatINR, ist, istDateInput, todayIso } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api';
-import { useEmployees, activeSalary, SALARY_TYPE_LABEL, type Employee } from '@/hooks/useEmployees';
+import { useEmployees, SALARY_TYPE_LABEL, type Employee } from '@/hooks/useEmployees';
 import {
   useAttendance, useSaveAttendance, usePayroll, useGeneratePayroll, useUpdatePayroll,
   useMarkPayrollPaid, useRevertPayroll, usePayrollDashboard, openPayslip, downloadCsv,
@@ -321,27 +321,70 @@ interface OverviewRow {
   payroll?: PayrollRow;
 }
 
-/** Present/Absent/etc. come from attendance (null until entered); Basic/
- *  Earnings/Deductions/Net come from the generated payroll row once there is
- *  one — before that, Basic falls back to the employee's own configured rate
- *  (activeSalary) so the column isn't just blank for a month nobody's run
- *  Process Payroll on yet, and Net matches Basic since nothing's been added
- *  or taken off it. */
-function figuresFor(r: OverviewRow) {
-  const { attendance: a, payroll: p, employee } = r;
-  const basic = p ? Number(p.grossSalary) : activeSalary(employee).amount;
-  const earnings = p ? Number(p.allowances) + Number(p.overtimeAmount) + Number(p.bonus) + Number(p.incentives) : 0;
-  const deductions = p ? Number(p.deductions) + Number(p.advanceRecovery) + Number(p.loanRecovery) : 0;
-  const net = p ? Number(p.netSalary) : basic;
-  const statusLabel = !p ? 'Not Processed' : p.status === 'PAID' ? 'Paid' : 'Pending';
-  const badgeVariant: BadgeProps['variant'] = !p ? 'neutral' : p.status === 'PAID' ? 'success' : 'warning';
+/** What's actually saved for this employee right now — the fallback shown
+ *  whenever there's no unsaved edit sitting in the Present/Absent/Advance
+ *  cells. Advance falls back to the employee's live outstanding balance
+ *  before payroll is generated — the same figure Generate Salary would
+ *  pre-fill a brand-new row with. */
+function serverValues(r: OverviewRow, outstandingByEmployee: Map<string, number>) {
   return {
-    present: a ? Number(a.presentDays) : null,
-    absent: a ? Number(a.absentDays) : null,
-    halfDay: a ? Number(a.halfDays) : null,
-    leave: a ? Number(a.paidLeave) + Number(a.unpaidLeave) : null,
-    otHours: a ? Number(a.overtimeHours) : null,
-    basic, earnings, deductions, net, statusLabel, badgeVariant,
+    present: r.attendance ? Number(r.attendance.presentDays) : 0,
+    absent: r.attendance ? Number(r.attendance.absentDays) : 0,
+    advance: r.payroll ? Number(r.payroll.advanceRecovery) : (outstandingByEmployee.get(r.employee.id) ?? 0),
+  };
+}
+
+/**
+ * Mirrors payroll.calc.ts's computePayroll, for the live preview of a row
+ * payroll hasn't been generated for yet — Basic/Net update the instant you
+ * type, instead of staying blank until Finalize Payroll runs. Half days, paid
+ * leave, hours and overtime already entered through "Half Day / Leave / OT…"
+ * are folded in exactly as the server does, so the preview never disagrees
+ * with what Finalize then books.
+ */
+function previewSalary(employee: Employee, attendance: AttendanceRow | undefined, present: number, advanceOwed: number) {
+  const totalWorkingDays = attendance ? Number(attendance.totalWorkingDays) : DEFAULT_WORKING_DAYS;
+  const payableDays = present + Number(attendance?.paidLeave ?? 0) + Number(attendance?.halfDays ?? 0) / 2;
+  let basic = 0;
+  switch (employee.salaryType) {
+    case 'MONTHLY':
+      basic = totalWorkingDays > 0 ? (Number(employee.monthlySalary ?? 0) / totalWorkingDays) * payableDays : Number(employee.monthlySalary ?? 0);
+      break;
+    case 'DAILY': basic = Number(employee.perDaySalary ?? 0) * payableDays; break;
+    case 'SHIFT': basic = Number(employee.shiftSalary ?? 0) * payableDays; break;
+    case 'HOURLY': basic = Number(employee.perHourSalary ?? 0) * Number(attendance?.workingHours ?? 0); break;
+  }
+  const overtime = Number(attendance?.overtimeHours ?? 0) * Number(employee.overtimeRate ?? 0);
+  const earnings = Number(employee.allowances ?? 0) + overtime;
+  const deductions = Number(employee.deductions ?? 0);
+  // Same cap as the server: recovery only comes out of pay that's actually there.
+  const advance = Math.min(advanceOwed, Math.max(basic + earnings - deductions, 0));
+  const net = Math.max(basic + earnings - deductions - advance, 0);
+  return { basic, earnings, deductions, advance, net };
+}
+
+/** Basic/Earnings/Deductions/Net come from the real generated payroll row once
+ *  there is one (authoritative, audited); before that they're the live preview
+ *  above, off whatever's currently typed into Present/Absent/Advance. Advance
+ *  is always its own figure now — Deductions no longer folds it in, so the two
+ *  columns never double-count the same rupee. */
+function figuresFor(r: OverviewRow, live: { present: number; absent: number; advance: number }) {
+  const p = r.payroll;
+  if (p) {
+    return {
+      basic: Number(p.grossSalary),
+      earnings: Number(p.allowances) + Number(p.overtimeAmount) + Number(p.bonus) + Number(p.incentives),
+      deductions: Number(p.deductions) + Number(p.loanRecovery),
+      advance: Number(p.advanceRecovery),
+      net: Number(p.netSalary),
+      statusLabel: p.status === 'PAID' ? 'Paid' : 'Pending',
+      badgeVariant: (p.status === 'PAID' ? 'success' : 'warning') as BadgeProps['variant'],
+    };
+  }
+  const preview = previewSalary(r.employee, r.attendance, live.present, live.advance);
+  return {
+    basic: preview.basic, earnings: preview.earnings, deductions: preview.deductions, advance: preview.advance,
+    net: preview.net, statusLabel: 'Not Processed', badgeVariant: 'neutral' as BadgeProps['variant'],
   };
 }
 
@@ -350,17 +393,24 @@ function statusOf(r: OverviewRow): PayrollStatusFilter {
 }
 
 /** One combined row per employee — attendance and pay side by side — instead
- *  of two separate tables you had to cross-reference by name. Search, a
- *  status filter, CSV export, and pagination (five at a time, matching a
- *  quick glance rather than one long scroll), plus a single action menu per
- *  row instead of a strip of icon buttons competing for space. */
+ *  of two separate tables you had to cross-reference by name. Present, Absent
+ *  and Advance are typed straight into the table, Excel-style, each cell
+ *  saving on blur; Basic/Net recalculate live as you type, with the real
+ *  figures taking over the moment Finalize Payroll runs. Search, a status
+ *  filter, CSV export, and pagination (five at a time), plus a single action
+ *  menu per row instead of a strip of icon buttons competing for space. */
 const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onSwitchTab: (t: Tab) => void }>(
   function EmployeePayrollOverview({ period, onSwitchTab }, ref) {
     const { data: employees, isLoading: employeesLoading } = useEmployees({ status: 'ACTIVE' });
     const { data: attendance, isLoading: attendanceLoading } = useAttendance(period);
     const { data: payroll, isLoading: payrollLoading } = usePayroll(period);
+    // Every employee's live outstanding advance, for the pre-Finalize preview in
+    // the Advance column — one request for everyone rather than one per row.
+    const { data: advances } = useAdvances({ status: 'OUTSTANDING' });
     const generate = useGeneratePayroll();
     const revert = useRevertPayroll();
+    const saveAttendance = useSaveAttendance();
+    const updateAdvance = useUpdatePayroll();
     const [paying, setPaying] = useState<PayrollRow | null>(null);
     const [editingAttendance, setEditingAttendance] = useState<{ employeeId: string; name: string; existing?: AttendanceRow } | null>(null);
     const [adjusting, setAdjusting] = useState<PayrollRow | null>(null);
@@ -368,9 +418,21 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
     const [statusFilter, setStatusFilter] = useState<PayrollStatusFilter>('ALL');
     const [showFilter, setShowFilter] = useState(false);
     const [page, setPage] = useState(1);
+    // Unsaved cell edits, keyed by employee — only the fields actually being typed
+    // into live here; anything not mid-edit falls back to serverValues().
+    const [edits, setEdits] = useState<Record<string, { present?: string; absent?: string; advance?: string }>>({});
+
+    // A fresh month starts with nothing mid-edit — stale typed values from the
+    // last month shouldn't carry over when the period picker changes.
+    useEffect(() => { setEdits({}); }, [period.year, period.month]);
 
     const attendanceByEmployee = useMemo(() => new Map((attendance ?? []).map((a) => [a.employeeId, a])), [attendance]);
     const payrollByEmployee = useMemo(() => new Map((payroll?.rows ?? []).map((p) => [p.employeeId, p])), [payroll]);
+    const outstandingByEmployee = useMemo(() => {
+      const m = new Map<string, number>();
+      for (const a of advances?.rows ?? []) m.set(a.employeeId, (m.get(a.employeeId) ?? 0) + (Number(a.amount) - Number(a.amountRecovered)));
+      return m;
+    }, [advances]);
 
     const allRows: OverviewRow[] = useMemo(
       () => (employees ?? []).map((e) => ({ employee: e, attendance: attendanceByEmployee.get(e.id), payroll: payrollByEmployee.get(e.id) })),
@@ -391,6 +453,88 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
     const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
     const isLoading = employeesLoading || attendanceLoading || payrollLoading;
+
+    // The cell values to actually show: whatever's mid-edit, else what's saved.
+    const cellValues = (r: OverviewRow) => {
+      const sv = serverValues(r, outstandingByEmployee);
+      const e = edits[r.employee.id];
+      return {
+        present: e?.present ?? String(sv.present),
+        absent: e?.absent ?? String(sv.absent),
+        advance: e?.advance ?? String(sv.advance),
+      };
+    };
+    const toNum = (s: string) => { const n = Number(s); return Number.isFinite(n) ? n : 0; };
+
+    const setCell = (employeeId: string, field: 'present' | 'absent' | 'advance', value: string) =>
+      setEdits((prev) => ({ ...prev, [employeeId]: { ...prev[employeeId], [field]: value } }));
+    const clearCell = (employeeId: string, field: 'present' | 'absent' | 'advance') =>
+      setEdits((prev) => {
+        const { [field]: _omit, ...rest } = prev[employeeId] ?? {};
+        return { ...prev, [employeeId]: rest };
+      });
+
+    /** Present/Absent are saved together — Excel-style, commit on blur. A row
+     *  already finalized (pending payment) is recalculated straight after, so
+     *  its salary can never sit on stale attendance. */
+    const commitAttendance = (r: OverviewRow) => {
+      const { present, absent } = cellValues(r);
+      const p = toNum(present);
+      const a = toNum(absent);
+      const workingDays = r.attendance ? Number(r.attendance.totalWorkingDays) : DEFAULT_WORKING_DAYS;
+      const otherDays = Number(r.attendance?.halfDays ?? 0) + Number(r.attendance?.paidLeave ?? 0) + Number(r.attendance?.unpaidLeave ?? 0);
+      if (p < 0 || a < 0) { toast.error('Days cannot be negative'); return; }
+      if (p + a + otherDays > workingDays) {
+        toast.error(`Days entered (${p + a + otherDays}) exceed the ${workingDays} working days this month`);
+        return;
+      }
+      const sv = serverValues(r, outstandingByEmployee);
+      if (p === sv.present && a === sv.absent) { clearCell(r.employee.id, 'present'); clearCell(r.employee.id, 'absent'); return; }
+      saveAttendance.mutate(
+        {
+          employeeId: r.employee.id, year: period.year, month: period.month, totalWorkingDays: workingDays,
+          presentDays: p, absentDays: a, halfDays: Number(r.attendance?.halfDays ?? 0), paidLeave: Number(r.attendance?.paidLeave ?? 0),
+          unpaidLeave: Number(r.attendance?.unpaidLeave ?? 0), overtimeHours: Number(r.attendance?.overtimeHours ?? 0),
+          ...(r.attendance?.workingHours != null ? { workingHours: Number(r.attendance.workingHours) } : {}),
+          ...(r.attendance?.notes ? { notes: r.attendance.notes } : {}),
+        },
+        {
+          onSuccess: () => {
+            clearCell(r.employee.id, 'present'); clearCell(r.employee.id, 'absent');
+            if (r.payroll && r.payroll.status !== 'PAID') {
+              generate.mutate(
+                { ...period, employeeIds: [r.employee.id] },
+                { onError: (e) => toast.error(`Attendance saved, but salary didn't recalculate: ${apiErrorMessage(e)}`) },
+              );
+            }
+          },
+          onError: (e) => toast.error(apiErrorMessage(e)),
+        },
+      );
+    };
+
+    /** Advance only persists once payroll's been generated for this employee —
+     *  there's no row yet to save an override onto before that, so the cell
+     *  just shows (and types over) the live outstanding-balance preview, which
+     *  Finalize Payroll will pick up automatically. */
+    const commitAdvance = (r: OverviewRow) => {
+      if (!r.payroll || r.payroll.status === 'PAID') return;
+      const value = toNum(cellValues(r).advance);
+      if (value < 0) { toast.error('Advance cannot be negative'); clearCell(r.employee.id, 'advance'); return; }
+      if (value === Number(r.payroll.advanceRecovery)) { clearCell(r.employee.id, 'advance'); return; }
+      updateAdvance.mutate(
+        { id: r.payroll.id, advanceRecovery: value },
+        {
+          onSuccess: (saved) => {
+            clearCell(r.employee.id, 'advance');
+            if (Number(saved.advanceRecovery) < value) {
+              toast(`Only ${formatINR(Number(saved.advanceRecovery))} fits in this month's pay — the rest stays outstanding for next month.`, { icon: 'ℹ️', duration: 6000 });
+            }
+          },
+          onError: (e) => { clearCell(r.employee.id, 'advance'); toast.error(apiErrorMessage(e)); },
+        },
+      );
+    };
 
     const runGenerate = () =>
       generate.mutate(period, {
@@ -415,14 +559,13 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
 
     const exportCsv = () => downloadCsv(
       `payroll-overview-${period.year}-${String(period.month).padStart(2, '0')}.csv`,
-      ['Employee ID', 'Name', 'Present', 'Absent', 'Half Day', 'Leave', 'OT Hours', 'Basic Salary', 'Earnings', 'Deductions', 'Net Salary', 'Status'],
+      ['Employee ID', 'Name', 'Present', 'Absent', 'Basic Salary', 'Earnings', 'Advance', 'Deductions', 'Net Salary', 'Status'],
       filtered.map((r) => {
-        const f = figuresFor(r);
-        return [r.employee.employeeNo, r.employee.name, f.present, f.absent, f.halfDay, f.leave, f.otHours, f.basic, f.earnings, f.deductions, f.net, f.statusLabel];
+        const sv = serverValues(r, outstandingByEmployee);
+        const f = figuresFor(r, sv);
+        return [r.employee.employeeNo, r.employee.name, sv.present, sv.absent, f.basic, f.earnings, f.advance, f.deductions, f.net, f.statusLabel];
       }),
     );
-
-    const nudgeToRow = () => toast('Pick an employee\'s ⋮ menu below to do this for them.', { icon: 'ℹ️' });
 
     return (
       <div ref={ref} className="space-y-4">
@@ -430,11 +573,11 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
           <div>
             <h2 className="text-card-title font-semibold">Employee Payroll Overview</h2>
             <p className="text-caption text-muted-foreground">
-              {MONTH_NAMES[period.month - 1]} {period.year} — attendance and salary, side by side. Uses each employee&apos;s salary
-              structure and this month&apos;s attendance; already-paid rows are never restated.
+              {MONTH_NAMES[period.month - 1]} {period.year} — type Present/Absent and Advance straight into the table, like a
+              spreadsheet; Basic and Net update as you go. Finalize Payroll locks the month in and books it. Already-paid rows are never restated.
             </p>
           </div>
-          <Button onClick={runGenerate} loading={generate.isPending}><Play className="h-4 w-4" /> Process Payroll</Button>
+          <Button onClick={runGenerate} loading={generate.isPending}><Play className="h-4 w-4" /> Finalize Payroll</Button>
         </Card>
 
         <Card className="overflow-hidden">
@@ -483,18 +626,20 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
                     <TR>
                       <TH>#</TH><TH>Employee Name</TH>
                       <TH className="text-right">Present</TH><TH className="text-right">Absent</TH>
-                      <TH className="text-right">Half Day</TH><TH className="text-right">Leave</TH>
-                      <TH className="text-right">OT Hours</TH><TH className="text-right">Basic Salary</TH>
-                      <TH className="text-right">Earnings</TH><TH className="text-right">Deductions</TH>
+                      <TH className="text-right">Basic Salary</TH><TH className="text-right">Earnings</TH>
+                      <TH className="text-right">Advance</TH><TH className="text-right">Deductions</TH>
                       <TH className="text-right">Net Salary</TH><TH>Payment Status</TH><TH className="text-right">Action</TH>
                     </TR>
                   </THead>
                   <TBody>
                     {pageRows.map((r, i) => {
-                      const f = figuresFor(r);
+                      const cells = cellValues(r);
+                      const live = { present: toNum(cells.present), absent: toNum(cells.absent), advance: toNum(cells.advance) };
+                      const f = figuresFor(r, live);
+                      const locked = r.payroll?.status === 'PAID';
                       const menuItems = [
                         {
-                          label: r.attendance ? 'Edit Attendance' : 'Mark Attendance', icon: CalendarCheck,
+                          label: 'Half Day / Leave / OT…', icon: CalendarCheck,
                           onClick: () => setEditingAttendance({ employeeId: r.employee.id, name: r.employee.name, existing: r.attendance }),
                         },
                         ...(r.payroll
@@ -516,13 +661,21 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
                             <span className="block font-medium">{r.employee.name}</span>
                             <span className="block text-caption text-muted-foreground">{r.employee.department ?? SALARY_TYPE_LABEL[r.employee.salaryType]}</span>
                           </TD>
-                          <TD className="text-right">{f.present ?? '—'}</TD>
-                          <TD className="text-right">{f.absent ?? '—'}</TD>
-                          <TD className="text-right">{f.halfDay ?? '—'}</TD>
-                          <TD className="text-right">{f.leave ?? '—'}</TD>
-                          <TD className="text-right">{f.otHours ?? '—'}</TD>
+                          <TD className="text-right">
+                            <CellInput value={cells.present} disabled={locked} onChange={(v) => setCell(r.employee.id, 'present', v)} onBlur={() => commitAttendance(r)} />
+                          </TD>
+                          <TD className="text-right">
+                            <CellInput value={cells.absent} disabled={locked} onChange={(v) => setCell(r.employee.id, 'absent', v)} onBlur={() => commitAttendance(r)} />
+                          </TD>
                           <TD className="text-right">{formatINR(f.basic)}</TD>
                           <TD className="text-right text-success">{f.earnings > 0 ? `+${formatINR(f.earnings)}` : '—'}</TD>
+                          <TD className="text-right">
+                            <CellInput
+                              value={cells.advance} disabled={locked || !r.payroll}
+                              title={!r.payroll ? 'Outstanding balance — applies automatically once Finalize Payroll runs' : undefined}
+                              onChange={(v) => setCell(r.employee.id, 'advance', v)} onBlur={() => commitAdvance(r)}
+                            />
+                          </TD>
                           <TD className="text-right text-danger">{f.deductions > 0 ? `-${formatINR(f.deductions)}` : '—'}</TD>
                           <TD className="text-right font-semibold">{formatINR(f.net)}</TD>
                           <TD><Badge variant={f.badgeVariant}>{f.statusLabel}</Badge></TD>
@@ -554,11 +707,10 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
 
         <Card className="p-3">
           <p className="mb-2 px-1 text-caption font-semibold uppercase tracking-wide text-muted-foreground">Quick Actions</p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-            <Button variant="secondary" className="justify-start" onClick={nudgeToRow}><CalendarCheck className="h-4 w-4" /> Mark Attendance</Button>
-            <Button variant="secondary" className="justify-start" loading={generate.isPending} onClick={runGenerate}><Play className="h-4 w-4" /> Process Payroll</Button>
-            <Button variant="secondary" className="justify-start" onClick={nudgeToRow}><Receipt className="h-4 w-4" /> Generate Payslip</Button>
-            <Button variant="secondary" className="justify-start" onClick={nudgeToRow}><CreditCard className="h-4 w-4" /> Record Payment</Button>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+            <Button variant="secondary" className="justify-start" loading={generate.isPending} onClick={runGenerate}><Play className="h-4 w-4" /> Finalize Payroll</Button>
+            <Button variant="secondary" className="justify-start" onClick={() => toast('Pick an employee\'s ⋮ menu above to download their slip.', { icon: 'ℹ️' })}><Receipt className="h-4 w-4" /> Generate Payslip</Button>
+            <Button variant="secondary" className="justify-start" onClick={() => toast('Pick an employee\'s ⋮ menu above to record their payment.', { icon: 'ℹ️' })}><CreditCard className="h-4 w-4" /> Record Payment</Button>
             <Button variant="secondary" className="justify-start" onClick={() => onSwitchTab('reports')}><BarChart3 className="h-4 w-4" /> View Reports</Button>
           </div>
         </Card>
@@ -570,6 +722,23 @@ const EmployeePayrollOverview = forwardRef<HTMLDivElement, { period: Period; onS
     );
   },
 );
+
+/** A single Excel-style cell: no visible border/background until it's
+ *  focused, so a table full of them reads as data, not a form. */
+function CellInput({ value, onChange, onBlur, disabled, title }: {
+  value: string; onChange: (v: string) => void; onBlur: () => void; disabled?: boolean; title?: string;
+}) {
+  return (
+    <input
+      type="number" min={0} step="0.01" title={title} disabled={disabled}
+      className="h-8 w-20 rounded border border-transparent bg-transparent px-1.5 text-right tabular-nums outline-none transition-colors hover:border-border focus:border-primary focus:bg-card disabled:cursor-not-allowed disabled:opacity-60"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+    />
+  );
+}
 
 function PayrollSummaryStrip({ rows, totals }: { rows: PayrollRow[]; totals?: { gross: number; net: number; paid: number; pending: number } }) {
   const totalEarnings = rows.reduce((s, r) => s + Number(r.allowances) + Number(r.overtimeAmount) + Number(r.bonus) + Number(r.incentives), 0);

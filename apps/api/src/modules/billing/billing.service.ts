@@ -246,6 +246,65 @@ export async function getItemSalesReport(productId: string, from?: Date, to?: Da
 }
 
 /**
+ * The drill-down behind one outlet's row in getItemSalesReport: every bill
+ * that outlet was actually charged this product on, in the same period, each
+ * with its own rate and line total — so "this outlet bought 420kg for
+ * ₹58,000" traces back to the specific invoices that add up to it, the same
+ * way collected/pending is pro-rated per bill above.
+ */
+export async function getItemSalesReportDetail(productId: string, outletId: string, from?: Date, to?: Date) {
+  const [product, outlet] = await Promise.all([
+    prisma.product.findFirst({ where: { id: productId, isDeleted: false }, select: { id: true, name: true, sku: true, unit: { select: { name: true, decimalPlaces: true } } } }),
+    prisma.outlet.findFirst({ where: { id: outletId, isDeleted: false }, select: { id: true, name: true } }),
+  ]);
+  if (!product) throw AppError.notFound('Product not found');
+  if (!outlet) throw AppError.notFound('Outlet not found');
+
+  const range = istRange(from, to);
+  const rows = await prisma.$queryRaw<Array<{
+    line_id: string; bill_id: string; bill_number: string; bill_date: Date; quantity: number; rate: number;
+    tax_amount: number; line_total: number; collected: number | null; pending: number | null;
+  }>>`
+    SELECT bi.id AS line_id, b.id AS bill_id, b.bill_number AS bill_number, b.bill_date AS bill_date,
+           bi.quantity::float AS quantity, bi.rate::float AS rate, bi.tax_amount::float AS tax_amount,
+           bi.line_total::float AS line_total,
+           (bi.line_total * b.amount_paid / NULLIF(b.grand_total, 0))::float AS collected,
+           (bi.line_total * b.balance_due / NULLIF(b.grand_total, 0))::float AS pending
+    FROM bill_items bi
+    JOIN bills b ON b.id = bi.bill_id
+    WHERE bi.is_deleted = false AND b.is_deleted = false AND b.status <> 'CANCELLED'
+      AND bi.product_id = ${productId}::uuid AND b.outlet_id = ${outletId}::uuid
+      ${range?.gte ? Prisma.sql`AND b.bill_date >= ${range.gte}` : Prisma.empty}
+      ${range?.lt ? Prisma.sql`AND b.bill_date < ${range.lt}` : Prisma.empty}
+    ORDER BY b.bill_date DESC, b.bill_number DESC
+  `;
+
+  const bills = rows.map((r) => ({
+    lineId: r.line_id,
+    billId: r.bill_id,
+    billNumber: r.bill_number,
+    billDate: r.bill_date,
+    qty: Number(r.quantity),
+    rate: Number(r.rate),
+    taxAmount: Number(r.tax_amount),
+    lineTotal: Number(r.line_total),
+    collected: Number(r.collected ?? 0),
+    pending: Number(r.pending ?? 0),
+  }));
+
+  return {
+    product: { id: product.id, name: product.name, sku: product.sku, unitName: product.unit.name, decimalPlaces: product.unit.decimalPlaces },
+    outlet: { id: outlet.id, name: outlet.name },
+    totalQty: bills.reduce((s, b) => s + b.qty, 0),
+    totalTax: bills.reduce((s, b) => s + b.taxAmount, 0),
+    totalRevenue: bills.reduce((s, b) => s + b.lineTotal, 0),
+    totalCollected: bills.reduce((s, b) => s + b.collected, 0),
+    totalPending: bills.reduce((s, b) => s + b.pending, 0),
+    bills,
+  };
+}
+
+/**
  * Every product sold in the period, one row each — the "All" view of the same
  * report above, flipped: instead of one product broken down by outlet, this is
  * every outlet's sales rolled into one figure per product. Qty isn't summed
@@ -577,5 +636,5 @@ export async function deleteBill(user: AuthUser, id: string) {
 
 export const billingService = {
   createBillForOrderTx, afterBillGenerated, listBills, getBill, regeneratePdf,
-  createManualBill, deleteBill, updateBillCharges, getItemSalesReport, getAllItemsSalesReport,
+  createManualBill, deleteBill, updateBillCharges, getItemSalesReport, getItemSalesReportDetail, getAllItemsSalesReport,
 };

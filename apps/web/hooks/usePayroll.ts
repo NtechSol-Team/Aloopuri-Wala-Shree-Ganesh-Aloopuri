@@ -131,7 +131,7 @@ export function usePayroll(period: Period) {
 export function useGeneratePayroll() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: Period) =>
+    mutationFn: async (input: Period & { employeeIds?: string[] }) =>
       (await api.post<ApiSuccess<{ period: string; created: number; updated: number; skippedPaid: number; skippedNoAttendance: string[] }>>(
         '/payroll/generate', input,
       )).data.data,
