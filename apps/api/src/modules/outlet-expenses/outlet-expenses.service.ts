@@ -1,13 +1,15 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma';
 import { AppError } from '../../shared/utils/AppError';
-import { istRange, startOfIstDay } from '../../shared/utils/date';
+import { istDayString } from '../../shared/utils/date';
 import type {
-  CreateOutletExpenseInput, ListOutletExpensesQuery, SetOpeningBalanceInput, UpdateOutletExpenseInput,
+  CreateOutletExpenseInput, CreateWithdrawalInput, MonthStatementQuery, UpdateOutletExpenseInput,
 } from './outlet-expenses.schema';
 
 // Nothing in this module writes to, or is read by, company accounting — these
-// rows live only in outlet_expenses / outlet_opening_balances.
+// rows live only in outlet_expenses / outlet_withdrawals.
+
+type Db = Prisma.TransactionClient | typeof prisma;
 
 async function assertOutlet(outletId: string) {
   const outlet = await prisma.outlet.findFirst({ where: { id: outletId, isDeleted: false }, select: { id: true, name: true } });
@@ -15,77 +17,69 @@ async function assertOutlet(outletId: string) {
   return outlet;
 }
 
-type DateWindow = { gte?: Date; lt?: Date };
-
-async function posSales(outletId: string, window?: DateWindow): Promise<number> {
-  const r = await prisma.posTransaction.aggregate({
-    _sum: { grandTotal: true },
-    where: { outletId, status: 'COMPLETED', isDeleted: false, ...(window ? { soldAt: window } : {}) },
-  });
-  return Number(r._sum.grandTotal ?? 0);
+/** [1st of the month, 1st of the next month) in IST. */
+function monthWindow(year: number, month: number) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const next = month === 12 ? { y: year + 1, m: 1 } : { y: year, m: month + 1 };
+  return {
+    gte: new Date(`${year}-${pad(month)}-01T00:00:00+05:30`),
+    lt: new Date(`${next.y}-${pad(next.m)}-01T00:00:00+05:30`),
+  };
 }
 
-async function expenseTotal(outletId: string, window?: DateWindow): Promise<number> {
-  const r = await prisma.outletExpense.aggregate({
-    _sum: { amount: true },
-    where: { outletId, isDeleted: false, ...(window ? { expenseDate: window } : {}) },
-  });
-  return Number(r._sum.amount ?? 0);
-}
-
-const net = async (outletId: string, window?: DateWindow) => {
-  const [s, e] = await Promise.all([posSales(outletId, window), expenseTotal(outletId, window)]);
-  return s - e;
-};
-
-/**
- * The ledger balance at the start of `at` (undefined = before any activity).
- * One running balance: the opening balance as of its date, plus POS sales minus
- * expenses since then (or minus those in between, for a point before it). With
- * no opening balance set it simply runs from ₹0 at the first entry. Either way,
- * any period's closing balance is exactly the next period's opening.
- */
-async function balanceAt(
-  outletId: string,
-  at: Date | undefined,
-  opening: { amount: Prisma.Decimal; asOfDate: Date } | null,
-): Promise<number> {
-  if (!opening) return at ? net(outletId, { lt: at }) : 0;
-  const anchor = startOfIstDay(opening.asOfDate);
-  const base = Number(opening.amount);
-  if (!at) return base - (await net(outletId, { lt: anchor }));
-  if (at >= anchor) return base + (await net(outletId, { gte: anchor, lt: at }));
-  return base - (await net(outletId, { gte: at, lt: anchor }));
+function assertNotFutureMonth(year: number, month: number) {
+  const [cy, cm] = istDayString(new Date()).split('-').map(Number);
+  if (year * 12 + month > cy * 12 + cm) throw AppError.badRequest('That month has not started yet', undefined, 'month');
 }
 
 /**
- * Expense list for one outlet, filtered by date / shop-or-godown / payment type,
- * with its total — plus the outlet's P&L for the date range alone (the location
- * and payment filters narrow the list, they don't change what the outlet earned).
- *
- * Opening = the running balance at the start of the period (see balanceAt);
- * closing = opening + this period's net profit.
+ * One month, standing alone — nothing carries in from the month before:
+ *   shop revenue (POS sales) − shop expenses − godown expenses = net profit
+ *   net profit − withdrawn = pending (profit still not taken out)
  */
-export async function listOutletExpenses(q: ListOutletExpensesQuery) {
+async function monthFigures(db: Db, outletId: string, year: number, month: number) {
+  const window = monthWindow(year, month);
+  const [sales, byLoc, withdrawn] = await Promise.all([
+    db.posTransaction.aggregate({ _sum: { grandTotal: true }, where: { outletId, status: 'COMPLETED', isDeleted: false, soldAt: window } }),
+    db.outletExpense.groupBy({ by: ['location'], _sum: { amount: true }, where: { outletId, isDeleted: false, expenseDate: window } }),
+    db.outletWithdrawal.aggregate({ _sum: { amount: true }, where: { outletId, isDeleted: false, year, month } }),
+  ]);
+  const shopRevenue = Number(sales._sum.grandTotal ?? 0);
+  const shopExpenses = Number(byLoc.find((r) => r.location === 'SHOP')?._sum.amount ?? 0);
+  const godownExpenses = Number(byLoc.find((r) => r.location === 'GODOWN')?._sum.amount ?? 0);
+  const netProfit = shopRevenue - shopExpenses - godownExpenses;
+  const withdrawnTotal = Number(withdrawn._sum.amount ?? 0);
+  return {
+    shopRevenue,
+    shopExpenses,
+    godownExpenses,
+    totalExpenses: shopExpenses + godownExpenses,
+    netProfit,
+    withdrawn: withdrawnTotal,
+    pending: netProfit - withdrawnTotal,
+  };
+}
+
+/** Month statement plus that month's expense list (filterable) and withdrawals. */
+export async function getMonthStatement(q: MonthStatementQuery) {
   const outlet = await assertOutlet(q.outletId);
-  const range = istRange(q.from, q.to);
-
+  const window = monthWindow(q.year, q.month);
   const where: Prisma.OutletExpenseWhereInput = {
     outletId: q.outletId,
     isDeleted: false,
-    ...(range ? { expenseDate: range } : {}),
+    expenseDate: window,
     ...(q.location ? { location: q.location } : {}),
     ...(q.paymentMethod ? { paymentMethod: q.paymentMethod } : {}),
   };
 
-  const [rows, sales, expenses, opening] = await Promise.all([
+  const [rows, summary, withdrawals] = await Promise.all([
     prisma.outletExpense.findMany({ where, orderBy: [{ expenseDate: 'desc' }, { createdAt: 'desc' }] }),
-    posSales(q.outletId, range),
-    expenseTotal(q.outletId, range),
-    prisma.outletOpeningBalance.findUnique({ where: { outletId: q.outletId } }),
+    monthFigures(prisma, q.outletId, q.year, q.month),
+    prisma.outletWithdrawal.findMany({
+      where: { outletId: q.outletId, isDeleted: false, year: q.year, month: q.month },
+      orderBy: [{ withdrawDate: 'desc' }, { createdAt: 'desc' }],
+    }),
   ]);
-
-  const openingBalance = await balanceAt(q.outletId, range?.gte, opening);
 
   const byLocation = { SHOP: 0, GODOWN: 0 };
   const byPaymentMethod = { CASH: 0, ONLINE: 0, CHEQUE: 0, BANK: 0 };
@@ -94,9 +88,10 @@ export async function listOutletExpenses(q: ListOutletExpensesQuery) {
     byPaymentMethod[r.paymentMethod] += Number(r.amount);
   }
 
-  const netProfit = sales - expenses;
   return {
     outlet,
+    period: { year: q.year, month: q.month },
+    summary,
     rows: rows.map((r) => ({
       id: r.id,
       expenseDate: r.expenseDate,
@@ -108,16 +103,13 @@ export async function listOutletExpenses(q: ListOutletExpensesQuery) {
     filteredTotal: rows.reduce((s, r) => s + Number(r.amount), 0),
     byLocation,
     byPaymentMethod,
-    summary: {
-      openingBalance,
-      posSales: sales,
-      totalExpenses: expenses,
-      netProfit,
-      closingBalance: openingBalance + netProfit,
-    },
-    opening: opening
-      ? { amount: Number(opening.amount), asOfDate: opening.asOfDate, notes: opening.notes }
-      : null,
+    withdrawals: withdrawals.map((w) => ({
+      id: w.id,
+      withdrawDate: w.withdrawDate,
+      amount: Number(w.amount),
+      paymentMethod: w.paymentMethod,
+      notes: w.notes,
+    })),
   };
 }
 
@@ -139,16 +131,52 @@ export async function deleteOutletExpense(id: string) {
   return { deleted: true };
 }
 
-export async function setOpeningBalance(input: SetOpeningBalanceInput, userId: string) {
+/**
+ * Take money out of one month's profit. Never more than is still pending — two
+ * withdrawals saved at the same moment are serialised by a per-outlet-month
+ * lock, so they can't both pass the check and over-draw the month.
+ */
+export async function createWithdrawal(input: CreateWithdrawalInput, userId: string) {
   await assertOutlet(input.outletId);
-  const data = { amount: input.amount, asOfDate: input.asOfDate, notes: input.notes ?? null };
-  return prisma.outletOpeningBalance.upsert({
-    where: { outletId: input.outletId },
-    create: { outletId: input.outletId, ...data, createdById: userId },
-    update: data,
+  assertNotFutureMonth(input.year, input.month);
+  if (input.withdrawDate < monthWindow(input.year, input.month).gte) {
+    throw AppError.badRequest('Withdrawal date cannot be before the month it is taken from', undefined, 'withdrawDate');
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`outlet-withdrawal:${input.outletId}:${input.year}-${input.month}`}))`;
+    const { pending } = await monthFigures(tx, input.outletId, input.year, input.month);
+    if (input.amount > pending + 0.001) {
+      throw AppError.badRequest(
+        pending > 0
+          ? `Only ₹${pending.toFixed(2)} of this month's profit is left to withdraw.`
+          : 'Nothing is left to withdraw for this month.',
+        undefined,
+        'amount',
+      );
+    }
+    return tx.outletWithdrawal.create({
+      data: {
+        outletId: input.outletId,
+        year: input.year,
+        month: input.month,
+        withdrawDate: input.withdrawDate,
+        amount: input.amount,
+        paymentMethod: input.paymentMethod,
+        notes: input.notes || null,
+        createdById: userId,
+      },
+    });
   });
 }
 
+export async function deleteWithdrawal(id: string) {
+  const existing = await prisma.outletWithdrawal.findFirst({ where: { id, isDeleted: false } });
+  if (!existing) throw AppError.notFound('Withdrawal not found');
+  await prisma.outletWithdrawal.update({ where: { id }, data: { isDeleted: true } });
+  return { deleted: true };
+}
+
 export const outletExpensesService = {
-  listOutletExpenses, createOutletExpense, updateOutletExpense, deleteOutletExpense, setOpeningBalance,
+  getMonthStatement, createOutletExpense, updateOutletExpense, deleteOutletExpense, createWithdrawal, deleteWithdrawal,
 };

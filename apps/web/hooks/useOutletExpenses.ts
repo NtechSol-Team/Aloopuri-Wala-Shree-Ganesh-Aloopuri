@@ -23,28 +23,45 @@ export interface OutletExpenseRow {
   location: OutletExpenseLocation;
 }
 
-export interface OutletExpensesResponse {
+export interface OutletWithdrawalRow {
+  id: string;
+  withdrawDate: string;
+  amount: number;
+  paymentMethod: OutletExpensePaymentMethod;
+  notes: string | null;
+}
+
+export interface OutletMonthStatement {
   outlet: { id: string; name: string };
+  period: { year: number; month: number };
+  summary: {
+    shopRevenue: number;
+    shopExpenses: number;
+    godownExpenses: number;
+    totalExpenses: number;
+    netProfit: number;
+    withdrawn: number;
+    pending: number;
+  };
   rows: OutletExpenseRow[];
   filteredTotal: number;
   byLocation: Record<OutletExpenseLocation, number>;
   byPaymentMethod: Record<OutletExpensePaymentMethod, number>;
-  summary: { openingBalance: number; posSales: number; totalExpenses: number; netProfit: number; closingBalance: number };
-  opening: { amount: number; asOfDate: string; notes: string | null } | null;
+  withdrawals: OutletWithdrawalRow[];
 }
 
-export interface OutletExpenseFilters {
+export interface OutletStatementParams {
   outletId: string;
-  from?: string;
-  to?: string;
+  year: number;
+  month: number;
   location?: OutletExpenseLocation;
   paymentMethod?: OutletExpensePaymentMethod;
 }
 
-export function useOutletExpenses(params: OutletExpenseFilters) {
+export function useOutletMonthStatement(params: OutletStatementParams) {
   return useQuery({
     queryKey: ['outlet-expenses', params],
-    queryFn: async () => (await api.get<ApiSuccess<OutletExpensesResponse>>('/outlet-expenses', { params })).data.data,
+    queryFn: async () => (await api.get<ApiSuccess<OutletMonthStatement>>('/outlet-expenses', { params })).data.data,
   });
 }
 
@@ -75,11 +92,19 @@ export function useDeleteOutletExpense() {
   });
 }
 
-export function useSetOutletOpeningBalance(outletId: string) {
+export function useCreateOutletWithdrawal(outletId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { amount: number; asOfDate: string; notes?: string }) =>
-      (await api.put('/outlet-expenses/opening-balance', { outletId, ...input })).data,
+    mutationFn: async (input: { year: number; month: number; withdrawDate: string; amount: number; paymentMethod: OutletExpensePaymentMethod; notes?: string }) =>
+      (await api.post('/outlet-expenses/withdrawals', { outletId, ...input })).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['outlet-expenses'] }),
+  });
+}
+
+export function useDeleteOutletWithdrawal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete(`/outlet-expenses/withdrawals/${id}`)).data,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['outlet-expenses'] }),
   });
 }

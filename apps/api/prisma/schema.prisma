@@ -1088,7 +1088,8 @@ model CashAdjustment {
 // ─────────────────────────────── OUTLET EXPENSES ────────────────────────────
 //
 // The main owner's private per-outlet ledger: what one franchise outlet costs to
-// run (rent, staff, gas…) against what its POS took. Deliberately NOT company
+// run (rent, staff, gas…) against what its POS took, month by month, and what the
+// owner withdrew from each month's profit. Deliberately NOT company
 // money — nothing in accounting (Day Book, Cash Book, P&L, expenses) reads these
 // tables, so an entry here never moves a company figure.
 
@@ -1121,19 +1122,26 @@ model OutletExpense {
   @@map("outlet_expenses")
 }
 
-// One per outlet: the balance the ledger starts from on asOfDate. Sales and
-// expenses from that date on are carried forward on top of it.
-model OutletOpeningBalance {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  outletId    String   @unique @map("outlet_id") @db.Uuid
-  amount      Decimal  @db.Decimal(12, 2)
-  asOfDate    DateTime @map("as_of_date") @db.Timestamptz(6)
-  notes       String?
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdById String?  @map("created_by") @db.Uuid
+// Money the main owner takes out of one month's outlet profit. Tied to the month
+// it comes out of (year/month), not the day it was taken — October's profit
+// withdrawn on 2 November still reduces October's pending amount. Each month
+// stands alone: nothing carries into the next.
+model OutletWithdrawal {
+  id            String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  outletId      String                     @map("outlet_id") @db.Uuid // app-enforced ref to outlets.id
+  year          Int
+  month         Int
+  withdrawDate  DateTime                   @map("withdraw_date") @db.Timestamptz(6)
+  amount        Decimal                    @db.Decimal(12, 2)
+  paymentMethod OutletExpensePaymentMethod @map("payment_method")
+  notes         String?
+  isDeleted     Boolean                    @default(false) @map("is_deleted")
+  createdAt     DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById   String?                    @map("created_by") @db.Uuid
 
-  @@map("outlet_opening_balances")
+  @@index([outletId, year, month])
+  @@map("outlet_withdrawals")
 }
 
 model BillAudit {

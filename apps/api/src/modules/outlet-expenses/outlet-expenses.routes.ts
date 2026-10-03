@@ -9,8 +9,8 @@ import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { created, ok } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import {
-  createOutletExpenseSchema, listOutletExpensesQuerySchema, setOpeningBalanceSchema, updateOutletExpenseSchema,
-  type CreateOutletExpenseInput, type ListOutletExpensesQuery, type SetOpeningBalanceInput, type UpdateOutletExpenseInput,
+  createOutletExpenseSchema, createWithdrawalSchema, monthStatementQuerySchema, updateOutletExpenseSchema,
+  type CreateOutletExpenseInput, type CreateWithdrawalInput, type MonthStatementQuery, type UpdateOutletExpenseInput,
 } from './outlet-expenses.schema';
 import { outletExpensesService } from './outlet-expenses.service';
 
@@ -28,9 +28,9 @@ const actor = (req: Request) => {
 
 router.get(
   '/',
-  validate({ query: listOutletExpensesQuerySchema }),
+  validate({ query: monthStatementQuerySchema }),
   asyncHandler(async (req: Request, res: Response) =>
-    ok(res, await outletExpensesService.listOutletExpenses(req.query as unknown as ListOutletExpensesQuery)),
+    ok(res, await outletExpensesService.getMonthStatement(req.query as unknown as MonthStatementQuery)),
   ),
 );
 
@@ -43,12 +43,20 @@ router.post(
   ),
 );
 
-router.put(
-  '/opening-balance',
+router.post(
+  '/withdrawals',
   writeRateLimiter,
-  validate({ body: setOpeningBalanceSchema }),
+  validate({ body: createWithdrawalSchema }),
   asyncHandler(async (req: Request, res: Response) =>
-    ok(res, await outletExpensesService.setOpeningBalance(req.body as SetOpeningBalanceInput, actor(req)), 'Opening balance saved'),
+    created(res, await outletExpensesService.createWithdrawal(req.body as CreateWithdrawalInput, actor(req)), 'Withdrawal recorded'),
+  ),
+);
+
+router.delete(
+  '/withdrawals/:id',
+  validate({ params: idParam }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await outletExpensesService.deleteWithdrawal(req.params.id), 'Withdrawal deleted'),
   ),
 );
 
