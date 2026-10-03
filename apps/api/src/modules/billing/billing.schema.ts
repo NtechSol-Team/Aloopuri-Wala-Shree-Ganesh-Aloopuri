@@ -12,6 +12,12 @@ export const listBillsQuerySchema = paginationQuerySchema.extend({
   sort: z.enum(['billDate', 'dueDate', 'amount']).default('billDate'),
 });
 
+export const billsSummaryQuerySchema = z.object({
+  outletId: z.string().uuid().optional(),
+  from: istDate.optional(),
+  to: istDate.optional(),
+});
+
 // Packing, transport, loading — dispatch costs on top of the goods themselves.
 // Not taxed and not part of subTotal; summed straight into grandTotal.
 const billChargeSchema = z.object({
@@ -72,6 +78,7 @@ export const itemSalesReportDetailQuerySchema = z.object({
 });
 
 export type ListBillsQuery = z.infer<typeof listBillsQuerySchema>;
+export type BillsSummaryQuery = z.infer<typeof billsSummaryQuerySchema>;
 export type CreateManualBillInput = z.infer<typeof createManualBillSchema>;
 export type UpdateBillChargesInput = z.infer<typeof updateBillChargesSchema>;
 export type ItemSalesReportQuery = z.infer<typeof itemSalesReportQuerySchema>;

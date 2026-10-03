@@ -9,8 +9,8 @@ import { writeRateLimiter } from '../../shared/middleware/rateLimit';
 import { created, ok, paginated } from '../../shared/utils/apiResponse';
 import { AppError } from '../../shared/utils/AppError';
 import {
-  createManualBillSchema, listBillsQuerySchema, updateBillChargesSchema, itemSalesReportQuerySchema, itemSalesReportDetailQuerySchema,
-  type CreateManualBillInput, type ListBillsQuery, type UpdateBillChargesInput, type ItemSalesReportQuery, type ItemSalesReportDetailQuery,
+  createManualBillSchema, listBillsQuerySchema, billsSummaryQuerySchema, updateBillChargesSchema, itemSalesReportQuerySchema, itemSalesReportDetailQuerySchema,
+  type CreateManualBillInput, type ListBillsQuery, type BillsSummaryQuery, type UpdateBillChargesInput, type ItemSalesReportQuery, type ItemSalesReportDetailQuery,
 } from './billing.schema';
 import { billingService } from './billing.service';
 import { renderBillPdf } from './billing.pdf';
@@ -31,6 +31,16 @@ router.get(
     const { rows, meta } = await billingService.listBills(user(req), req.query as unknown as ListBillsQuery);
     return paginated(res, rows, meta);
   }),
+);
+
+// Totals for the current franchise + date filter, across every bill rather than
+// the page on screen. Registered before '/:id' so "summary" isn't read as an id.
+router.get(
+  '/summary',
+  validate({ query: billsSummaryQuerySchema }),
+  asyncHandler(async (req: Request, res: Response) =>
+    ok(res, await billingService.getBillsSummary(user(req), req.query as unknown as BillsSummaryQuery)),
+  ),
 );
 
 // Back-entry of a missed sale, and deleting a sale outright — both rewrite the

@@ -15,7 +15,7 @@ import { RealtimeEvent } from '../../sockets/events';
 import { enqueue, JobName } from '../../jobs/queue';
 import type { AuthUser } from '../../shared/types/api';
 import { removeBillPdf } from './billing.storage';
-import type { CreateManualBillInput, ListBillsQuery } from './billing.schema';
+import type { BillsSummaryQuery, CreateManualBillInput, ListBillsQuery } from './billing.schema';
 
 type OrderForBill = Prisma.OutletOrderGetPayload<{
   include: { items: { include: { product: true } }; outlet: true };
@@ -101,6 +101,38 @@ function scopeFilter(user: AuthUser): Prisma.BillWhereInput {
     return { outletId: user.outletId ?? '__none__' };
   }
   return {};
+}
+
+/**
+ * Totals for the Sale tab's franchise + date filter, over every matching bill —
+ * not just the page of rows on screen. Cancelled (deleted) bills are out of the
+ * books, so they're out of these figures too.
+ */
+export async function getBillsSummary(user: AuthUser, query: BillsSummaryQuery) {
+  const dateRange = istRange(query.from, query.to);
+  const scoped = scopeFilter(user);
+  const where: Prisma.BillWhereInput = {
+    isDeleted: false,
+    status: { not: BillStatus.CANCELLED },
+    ...(scoped.outletId ? { outletId: scoped.outletId } : query.outletId ? { outletId: query.outletId } : {}),
+    ...(dateRange ? { billDate: dateRange } : {}),
+  };
+  const [all, overdue] = await Promise.all([
+    prisma.bill.aggregate({ where, _count: { _all: true }, _sum: { grandTotal: true, amountPaid: true, balanceDue: true } }),
+    prisma.bill.aggregate({
+      where: { ...where, status: { in: [BillStatus.UNPAID, BillStatus.PARTIALLY_PAID] }, dueDate: { lt: new Date() } },
+      _count: { _all: true },
+      _sum: { balanceDue: true },
+    }),
+  ]);
+  return {
+    billCount: all._count._all,
+    totalBilled: Number(all._sum.grandTotal ?? 0),
+    totalPaid: Number(all._sum.amountPaid ?? 0),
+    totalPending: Number(all._sum.balanceDue ?? 0),
+    overdueCount: overdue._count._all,
+    overduePending: Number(overdue._sum.balanceDue ?? 0),
+  };
 }
 
 export async function listBills(user: AuthUser, query: ListBillsQuery) {
@@ -635,6 +667,6 @@ export async function deleteBill(user: AuthUser, id: string) {
 }
 
 export const billingService = {
-  createBillForOrderTx, afterBillGenerated, listBills, getBill, regeneratePdf,
+  createBillForOrderTx, afterBillGenerated, listBills, getBillsSummary, getBill, regeneratePdf,
   createManualBill, deleteBill, updateBillCharges, getItemSalesReport, getItemSalesReportDetail, getAllItemsSalesReport,
 };

@@ -14,7 +14,7 @@ import { Table, THead, TBody, TR, TH, TD } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn, formatINR, ist, todayIso } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth.store';
-import { useBills, useBill, useOpenBillPdf, usePrintBillPdf, useUpdateBillCharges, type BillStatus } from '@/hooks/useBilling';
+import { useBills, useBillsSummary, useBill, useOpenBillPdf, usePrintBillPdf, useUpdateBillCharges, type BillStatus, type BillsSummary } from '@/hooks/useBilling';
 import { useCallNumber } from '@/hooks/useSettings';
 import type { PaymentRow } from '@/hooks/usePayments';
 import { ReversePaymentDialog } from '@/components/payments/reverse-payment-dialog';
@@ -23,8 +23,10 @@ import { PayDialog, type PayTarget } from '@/components/payments/pay-dialog';
 import { ManualBillDialog } from '@/components/sales/manual-bill-dialog';
 import { DeleteBillDialog, type DeleteTarget } from '@/components/sales/delete-bill-dialog';
 import { apiErrorMessage } from '@/lib/api';
-import { PERIODS, periodRange, type PeriodKey } from '@/lib/period';
+import { periodRange, type PeriodKey } from '@/lib/period';
 import toast from 'react-hot-toast';
+
+const SALE_PERIODS: Array<[PeriodKey, string]> = [['all', 'All'], ['month', 'This Month'], ['lastMonth', 'Last Month'], ['custom', 'Custom']];
 
 /** See OrdersTab — `lockedOutletId` pins the tab to the outlet card that was clicked. */
 export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
@@ -42,11 +44,22 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
   const effectiveOutletId = lockedOutletId ?? outletId;
   // Every row would repeat the outlet you already drilled into.
   const showOutletColumn = isAdmin && !lockedOutletId;
-  const { data, isLoading } = useBills({
+  const outletParam = isAdmin && effectiveOutletId ? { outletId: effectiveOutletId } : {};
+  const billsQuery = useBills({
     status: status || undefined, overdueOnly: overdueOnly || undefined, sort,
-    ...(isAdmin && effectiveOutletId ? { outletId: effectiveOutletId } : {}),
+    ...outletParam,
     ...range,
   });
+  const { isLoading } = billsQuery;
+  const data = billsQuery.data?.pages.flatMap((p) => p.rows);
+  const totalRows = billsQuery.data?.pages[0]?.total ?? 0;
+  const summary = useBillsSummary({ ...outletParam, ...range });
+  const outletName = effectiveOutletId ? (outlets ?? []).find((o) => o.id === effectiveOutletId)?.name ?? 'This franchise' : 'All franchises';
+  const periodName = period === 'all'
+    ? 'All time'
+    : period === 'custom'
+      ? `${format(ist(custom.from), 'dd MMM yyyy')} – ${format(ist(custom.to), 'dd MMM yyyy')}`
+      : format(ist(range.from), 'MMMM yyyy');
   const [detailId, setDetailId] = useState<string | null>(null);
   const [payTarget, setPayTarget] = useState<PayTarget | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
@@ -67,20 +80,32 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
       )}
       <Card className="flex flex-wrap items-end gap-3 p-3">
         <div className="space-y-1.5">
-          <Label>Period</Label>
-          <Select className="w-40" value={period} onChange={(e) => setPeriod(e.target.value as PeriodKey)}>
-            {PERIODS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-          </Select>
+          <Label>Date</Label>
+          <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-surface p-1">
+            {SALE_PERIODS.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setPeriod(key)}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-body font-medium transition-colors',
+                  period === key ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-card hover:text-foreground',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         {period === 'custom' && (
           <>
             <div className="space-y-1.5">
               <Label>From</Label>
-              <Input type="date" value={custom.from} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
+              <Input type="date" value={custom.from} max={custom.to} onChange={(e) => setCustom((c) => ({ ...c, from: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
               <Label>To</Label>
-              <Input type="date" value={custom.to} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
+              <Input type="date" value={custom.to} min={custom.from} onChange={(e) => setCustom((c) => ({ ...c, to: e.target.value }))} />
             </div>
           </>
         )}
@@ -94,6 +119,8 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
           </div>
         )}
       </Card>
+
+      <SalesSummaryStrip summary={summary.data} loading={summary.isLoading} title={`${outletName} · ${periodName}`} />
 
       <div className="flex flex-wrap items-center gap-3">
         <Select className="w-44" value={status} onChange={(e) => setStatus(e.target.value as BillStatus | '')}>
@@ -184,6 +211,14 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
               })}
             </TBody>
           </Table>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border p-3 text-caption text-muted-foreground">
+            <span>Showing {data.length} of {totalRows} bill{totalRows === 1 ? '' : 's'}</span>
+            {billsQuery.hasNextPage && (
+              <Button variant="secondary" size="sm" loading={billsQuery.isFetchingNextPage} onClick={() => billsQuery.fetchNextPage()}>
+                Load more
+              </Button>
+            )}
+          </div>
         </Card>
       )}
 
@@ -192,6 +227,36 @@ export function BillsTab({ lockedOutletId }: { lockedOutletId?: string } = {}) {
       <ManualBillDialog open={manualOpen} onOpenChange={setManualOpen} />
       <DeleteBillDialog target={deleteTarget} onClose={() => setDeleteTarget(null)} />
     </div>
+  );
+}
+
+/** Totals for the franchise + date filter — every matching bill, not just the rows loaded below. */
+function SalesSummaryStrip({ summary, loading, title }: { summary?: BillsSummary; loading: boolean; title: string }) {
+  if (loading || !summary) return <Skeleton className="h-24" />;
+  const cells: Array<{ label: string; value: string; tone?: string; sub?: string }> = [
+    { label: 'Total Bill Amount', value: formatINR(summary.totalBilled), sub: `${summary.billCount} bill${summary.billCount === 1 ? '' : 's'}` },
+    { label: 'Received', value: formatINR(summary.totalPaid), tone: 'text-success' },
+    { label: 'Pending Payment', value: formatINR(summary.totalPending), tone: summary.totalPending > 0 ? 'text-danger' : undefined },
+    {
+      label: 'Overdue',
+      value: formatINR(summary.overduePending),
+      tone: summary.overduePending > 0 ? 'text-warning' : undefined,
+      sub: `${summary.overdueCount} bill${summary.overdueCount === 1 ? '' : 's'} past due date`,
+    },
+  ];
+  return (
+    <Card className="p-4">
+      <p className="text-caption font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+      <div className="mt-2 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {cells.map((c) => (
+          <div key={c.label} className="min-w-0">
+            <p className="text-caption text-muted-foreground">{c.label}</p>
+            <p className={cn('break-words text-card-title font-bold tabular-nums', c.tone)}>{c.value}</p>
+            {c.sub && <p className="text-caption text-muted-foreground">{c.sub}</p>}
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 

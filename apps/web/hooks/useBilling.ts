@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { printPdfBlob } from '@/lib/receipt-print';
 import type { ApiSuccess } from '@/types/api';
@@ -39,10 +39,35 @@ export interface BillDetail extends Omit<BillListItem, 'outlet'> {
   }>;
 }
 
+const BILLS_PAGE = 100;
+
+/** Pages of 100 — the list used to stop silently at the newest 100 bills. */
 export function useBills(params: { status?: BillStatus; overdueOnly?: boolean; sort?: string; outletId?: string; from?: string; to?: string } = {}) {
+  return useInfiniteQuery({
+    queryKey: ['bills', 'list', params],
+    initialPageParam: 1,
+    queryFn: async ({ pageParam }) => {
+      const res = (await api.get<ApiSuccess<BillListItem[]>>('/billing', { params: { limit: BILLS_PAGE, page: pageParam, ...params } })).data;
+      return { rows: res.data, total: res.meta?.total ?? res.data.length, page: pageParam };
+    },
+    getNextPageParam: (last, pages) => (pages.length * BILLS_PAGE < last.total ? last.page + 1 : undefined),
+  });
+}
+
+export interface BillsSummary {
+  billCount: number;
+  totalBilled: number;
+  totalPaid: number;
+  totalPending: number;
+  overdueCount: number;
+  overduePending: number;
+}
+
+/** Totals for a franchise + date filter, over every matching bill (cancelled excluded). */
+export function useBillsSummary(params: { outletId?: string; from?: string; to?: string }) {
   return useQuery({
-    queryKey: ['bills', params],
-    queryFn: async () => (await api.get<ApiSuccess<BillListItem[]>>('/billing', { params: { limit: 100, ...params } })).data.data,
+    queryKey: ['bills', 'summary', params],
+    queryFn: async () => (await api.get<ApiSuccess<BillsSummary>>('/billing/summary', { params })).data.data,
   });
 }
 
